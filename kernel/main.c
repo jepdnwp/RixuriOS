@@ -2,8 +2,10 @@
 #include "mm/pmm.h"
 #include "mm/vmm.h"
 #include "mm/heap.h"
+#include "arch/x86_64/cpu.h"
 #include "arch/x86_64/gdt.h"
 #include "arch/x86_64/idt.h"
+#include "arch/x86_64/apic.h"
 
 static void halt_forever(void) {
     for (;;) __asm__ volatile ("hlt");
@@ -21,20 +23,20 @@ void kernel_main(const rixuri_boot_info_t *boot) {
         panic("missing UEFI memory map");
     }
 
-    serial_write("Boot handoff: version=");
-    serial_write_dec(boot->version);
-    serial_write(" size=");
-    serial_write_dec(boot->size);
-    serial_write("\r\n");
+    serial_write("Boot handoff: version="); serial_write_dec(boot->version);
+    serial_write(" size="); serial_write_dec(boot->size); serial_write("\r\n");
     serial_write("ACPI RSDP: "); serial_write_hex(boot->rsdp); serial_write("\r\n");
     serial_write("Framebuffer: "); serial_write_hex(boot->framebuffer_base);
     serial_write(" "); serial_write_dec(boot->framebuffer_width);
-    serial_write("x"); serial_write_dec(boot->framebuffer_height); serial_write("\r\n");
+    serial_write("x"); serial_write_dec(boot->framebuffer_height);
+    serial_write(" pitch="); serial_write_dec(boot->framebuffer_pitch); serial_write("\r\n");
 
     gdt_init();
     serial_write("GDT: initialized\r\n");
     idt_init();
     serial_write("IDT: initialized\r\n");
+
+    serial_write("CPU features: "); serial_write_hex(x86_cpu_features()); serial_write("\r\n");
 
     pmm_init((const void *)(uintptr_t)boot->memory_map,
              boot->memory_map_size,
@@ -54,6 +56,9 @@ void kernel_main(const rixuri_boot_info_t *boot) {
     heap_init();
     if (!kmalloc(1, sizeof(uintptr_t))) panic("kernel heap initialization failed");
     serial_write("KHEAP: initialized\r\n");
+
+    if (lapic_init() != 0) panic("local APIC initialization failed");
+    serial_write("LAPIC: initialized, id="); serial_write_dec(lapic_id()); serial_write("\r\n");
 
     halt_forever();
 }
