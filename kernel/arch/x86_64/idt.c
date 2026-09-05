@@ -1,4 +1,5 @@
 #include "idt.h"
+#include "../../kernel.h"
 #include <stdint.h>
 #include <stddef.h>
 
@@ -12,7 +13,6 @@ DECL(0) DECL(1) DECL(2) DECL(3) DECL(4) DECL(5) DECL(6) DECL(7) DECL(8) DECL(9) 
 DECL(16) DECL(17) DECL(18) DECL(19) DECL(20) DECL(21) DECL(22) DECL(23) DECL(24) DECL(25) DECL(26) DECL(27) DECL(28) DECL(29) DECL(30) DECL(31)
 DECL(32) DECL(33) DECL(34) DECL(35) DECL(36) DECL(37) DECL(38) DECL(39) DECL(40) DECL(41) DECL(42) DECL(43) DECL(44) DECL(45) DECL(46) DECL(47)
 #undef DECL
-extern void x86_irq_dispatch(const struct interrupt_frame *frame);
 
 static struct idt_gate idt[256] __attribute__((aligned(16)));
 
