@@ -17,7 +17,7 @@ static size_t live_count;
 
 static size_t bounded_strlen(const char *s){size_t n=0;if(!s)return 0;while(n<RIX_PROCESS_NAME_MAX-1&&s[n])n++;return n;}
 static void copy_name(char *dst,const char *src){size_t n=bounded_strlen(src);for(size_t i=0;i<n;i++)dst[i]=src[i];dst[n]=0;}
-static void clear_process(rix_process_t *p){p->pid=0;p->parent=0;p->state=RIX_PROC_UNUSED;p->uid=0;p->gid=0;p->address_space.pml4_phys=0;p->kernel_stack=0;p->kernel_stack_size=0;p->exit_status=0;p->fd_bitmap=0;p->name[0]=0;}
+static void clear_process(rix_process_t *p){p->pid=0;p->parent=0;p->state=RIX_PROC_UNUSED;p->uid=0;p->gid=0;p->address_space.pml4_phys=0;p->kernel_stack=0;p->kernel_stack_size=0;p->exit_status=0;p->fd_bitmap=0;p->signal_pending=0;p->signal_mask=0;p->name[0]=0;}
 static void zero_page(uint64_t pa){uint8_t *p=(uint8_t *)(uintptr_t)pa;for(size_t i=0;i<4096;i++)p[i]=0;}
 
 int process_init(void){
