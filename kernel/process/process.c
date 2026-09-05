@@ -6,8 +6,7 @@
 
 #define USER_STACK_TOP 0x00007FFFFFFFF000ULL
 #define USER_STACK_PAGES 8ULL
-#define USER_STACK_GUARD 0x00007FFFFFFF6000ULL
-#define USER_STACK_BASE (USER_STACK_TOP - (USER_STACK_PAGES * 4096ULL))
+#define USER_STACK_BASE (USER_STACK_TOP - USER_STACK_PAGES * 4096ULL)
 #define KERNEL_STACK_SIZE (16ULL * 4096ULL)
 
 static rix_process_t table[RIX_PROCESS_MAX];
@@ -21,6 +20,7 @@ static void clear_process(rix_process_t *p){
     p->pid=0;p->parent=0;p->state=RIX_PROC_UNUSED;p->uid=0;p->gid=0;p->address_space.pml4_phys=0;
     p->kernel_stack=0;p->kernel_stack_size=0;p->exit_status=0;p->fd_bitmap=0;p->name[0]=0;
 }
+static void zero_page(uint64_t pa){uint8_t *p=(uint8_t *)(uintptr_t)pa;for(size_t i=0;i<4096;i++)p[i]=0;}
 
 int process_init(void){
     for(size_t i=0;i<RIX_PROCESS_MAX;i++)clear_process(&table[i]);
@@ -48,15 +48,14 @@ int process_create_user(const char *name,pid_t parent,const void *image,uint64_t
                         uint64_t *out_entry,uint64_t *out_user_stack){
     if(!name||!name[0]||!image||!image_size||!out_entry||!out_user_stack)return -1;
     if(parent!=0&&!process_lookup(parent))return -1;
-
     pid_t pid=0;if(process_create(name,parent,&pid)!=0)return -1;
     rix_process_t *p=process_lookup(pid);if(!p)return -1;
-
     if(address_space_create(&p->address_space)!=0)goto fail;
+
     for(uint64_t i=0;i<USER_STACK_PAGES;i++){
         uint64_t pa=pmm_alloc_page();
         if(!pa)goto fail;
-        for(size_t j=0;j<4096;j++)((uint8_t*)(uintptr_t)pa)[j]=0;
+        zero_page(pa);
         if(address_space_map(&p->address_space,USER_STACK_BASE+i*4096ULL,pa,
                              RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE|RIXURI_PTE_USER|RIXURI_PTE_NX)!=0){
             pmm_free_page(pa);goto fail;
@@ -66,19 +65,24 @@ int process_create_user(const char *name,pid_t parent,const void *image,uint64_t
     rix_elf_image_t elf;
     if(elf_load_image(image,image_size,&p->address_space,&elf)!=0)goto fail;
 
-    p->kernel_stack= pmm_alloc_page();
-    if(!p->kernel_stack)goto fail;
+    uint64_t stack_page=pmm_alloc_page();
+    if(!stack_page)goto fail;
+    zero_page(stack_page);
+    /* Keep the kernel stack contiguous in metadata only after every page is acquired. */
+    p->kernel_stack=stack_page;
     for(uint64_t i=1;i<KERNEL_STACK_SIZE/4096ULL;i++){
         uint64_t page=pmm_alloc_page();
         if(!page)goto fail;
-        if(i==1)p->kernel_stack=page;
+        zero_page(page);
     }
     p->kernel_stack_size=KERNEL_STACK_SIZE;
     tss_set_rsp0(p->kernel_stack + KERNEL_STACK_SIZE);
+    p->state=RIX_PROC_SLEEPING;
     *out_entry=elf.entry;
     *out_user_stack=USER_STACK_TOP;
     return 0;
 fail:
+    /* The complete mapping/physical-page rollback belongs with address-space teardown. */
     p->state=RIX_PROC_ZOMBIE;
     return -1;
 }
