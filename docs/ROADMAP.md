@@ -1,516 +1,1155 @@
-# RixuriOS Master Development Roadmap
+# RixuriOS Master Development Roadmap — v4
 
-**Status:** Living engineering plan  
 **Architecture:** x86_64 / AMD64, 64-bit only  
 **Kernel:** freestanding C11/C17 + minimal x86_64 assembly  
 **Userspace:** Unix-like, musl/POSIX-oriented, dynamically linked  
-**GUI:** deliberately last
+**Product principle:** terminal-first, hardware-real, recovery-first  
+**GUI:** Phase 28 and absolutely last
 
-> **Execution rule:** implement continuously from Phase 1 through Phase 20. Do not stop at compilation. Each phase has explicit checkpoints in [`docs/CHECKPOINTS.md`](CHECKPOINTS.md). A phase cannot be marked complete until its applicable evidence exists.
+> This is an engineering roadmap, not a feature wishlist. Every item has an implementation path, dependencies, tests, failure handling and evidence gates. Compilation never closes a phase.
+
+## 0. Non-negotiable engineering rules
+
+1. Kernel target is x86_64/AMD64 only; no 32-bit kernel architecture.
+2. Kernel remains freestanding and never links to glibc, musl, POSIX or Linux kernel APIs.
+3. Userspace receives a deliberately documented RixuriOS syscall ABI and compatibility layers.
+4. Prefer small interfaces with explicit ownership, lifetime, locking and error semantics.
+5. Hardware detection is not driver completion.
+6. QEMU and physical hardware are separate evidence classes.
+7. Never manufacture packets, disk contents, keyboard events, GPU acceleration or test results.
+8. `PASS` is an evidence state, not a string printed by the program.
+9. Invalid media, unknown filesystem versions and corrupt metadata must fail safely; never auto-format.
+10. Destructive operations require explicit confirmation and disposable test targets.
+11. Every subsystem needs positive, negative, boundary, timeout and recovery coverage appropriate to its risk.
+12. Security review happens at every privilege, parser, DMA, filesystem and IPC boundary.
+13. Historical failures become permanent regression tests.
+14. Performance is measured after correctness, never used to hide correctness bugs.
+15. Documentation, diagnostics and reproducibility are part of implementation.
+16. GUI cannot consume engineering capacity while pre-GUI gates remain open.
+
+## 1. Universal phase workflow
+
+Every feature follows:
+
+`SPEC → ABI/DATA MODEL → DESIGN → IMPLEMENT → BUILD → UNIT → NEGATIVE → QEMU → INTEGRATION → HARDWARE → REGRESSION → SECURITY → PERFORMANCE → DOCUMENT → CHECKPOINT`
+
+For every implementation task the coding agent must record:
+
+- files created/changed;
+- public APIs and ABI changes;
+- ownership/lifetime rules;
+- locking/context rules;
+- error codes and recovery behavior;
+- hardware assumptions;
+- test commands and expected observations;
+- evidence artifact location;
+- unresolved limitations.
+
+## 2. Checkpoint vocabulary
+
+Each phase uses granular IDs such as `P07-NVME-12` rather than one vague phase status.
+
+- `CP0 SPEC` — requirements and ABI/layout reviewed.
+- `CP1 BUILD` — clean compile/link, warnings as errors.
+- `CP2 UNIT` — deterministic unit/negative tests.
+- `CP3 BOOT` — exercised from real boot path.
+- `CP4 INTEGRATION` — real neighboring subsystem path.
+- `CP5 HARDWARE` — physical target evidence where applicable.
+- `CP6 REGRESSION` — historical failure remains covered.
+- `CP7 SECURITY` — privilege/bounds/lifetime/failure review.
+- `CP8 PERFORMANCE` — measured baseline and no unacceptable regression.
+- `CP9 DOCS` — design, diagnostics and limitations documented.
+- `CP10 RELEASE` — reproducible artifact and release evidence.
+
+`BLOCKED`, `NOT TESTED`, `UNSUPPORTED`, `DEGRADED` and `FAIL` are valid states. None equals `COMPLETE`.
 
 ---
 
-## 0. Master engineering rules
+# PHASE 00 — Project Governance and Reproducible Build
 
-1. 64-bit x86_64 only in the kernel.
-2. Specification and ABI/layout review precede implementation.
-3. No fake functionality, fake packets, fake disk results, fake keyboard input, fake GPU acceleration or unconditional `PASS` output.
-4. Destructive disk operations require explicit confirmation and disposable test media.
-5. The kernel is freestanding and never links against glibc, musl, POSIX or Linux kernel APIs.
-6. Hardware paths must be real and QEMU/physical devices must remain distinguishable.
-7. Every historical regression becomes permanent test coverage where practical.
-8. Compilation is only `CP1 BUILD`; it never closes a phase by itself.
-9. Every feature gets positive, negative, boundary, timeout and recovery tests appropriate to its risk.
-10. Security review is required at every privilege boundary.
-11. GUI work cannot displace unfinished kernel, storage, networking, drivers, shell, libc or developer-environment work.
-12. Vulkan is a first-class graphics target and must be supported by the underlying memory/device/synchronization design.
+### Build
+- Canonical source tree.
+- Kernel/userspace/toolchain separation.
+- Host and cross-toolchain detection.
+- Reproducible compiler flags.
+- Dependency pinning.
+- Debug/release profiles.
+- symbol/map generation.
+- deterministic disk/ESP image creation.
 
-## 0.1 Checkpoint protocol
+### Engineering infrastructure
+- coding standards;
+- ABI change policy;
+- versioning policy;
+- changelog;
+- architecture decision records;
+- test-result schema;
+- checkpoint ledger;
+- crash-log format;
+- hardware inventory format.
 
-Every phase follows this sequence:
-
-`SPEC → DESIGN → IMPLEMENT → BUILD → UNIT/NEGATIVE TEST → QEMU → INTEGRATION → HARDWARE (when applicable) → REGRESSION → SECURITY → DOCUMENT → RELEASE GATE`
-
-Use the checkpoint identifiers defined in `docs/CHECKPOINTS.md`:
-
-- `CP0 SPEC`
-- `CP1 BUILD`
-- `CP2 UNIT`
-- `CP3 BOOT/QEMU`
-- `CP4 INTEGRATION`
-- `CP5 HARDWARE`
-- `CP6 REGRESSION`
-- `CP7 SECURITY`
-- `CP8 RELEASE`
-
-A blocked checkpoint is recorded as `BLOCKED`; it is never silently skipped.
+### Checkpoints
+`P00-01` clean build → `P00-02` deterministic image → `P00-03` CI → `P00-04` artifact retention → `P00-05` documentation baseline.
 
 ---
 
-# Phase 1 — UEFI Boot + Kernel Foundation
+# PHASE 01 — UEFI Boot and Firmware Handoff
 
-### 1A — UEFI
-- Validate UEFI tables and function-pointer ABI.
-- Locate loaded image/filesystem.
-- Load and validate ELF64.
-- Allocate/load PT_LOAD segments safely.
-- Discover ACPI RSDP and GOP.
-- Capture final memory map.
-- Retry `ExitBootServices()` when the map key changes.
+### Implementation
+- Correct EFI table/function-pointer layouts.
+- Loaded-image/filesystem access.
+- ELF64 validation with overflow checks.
+- PT_LOAD allocation/copy/zero-fill.
+- kernel entry contract.
+- ACPI RSDP discovery.
+- GOP discovery.
+- final UEFI memory map.
+- `ExitBootServices()` retry protocol.
+- boot handoff versioning.
 
-### 1B — Kernel entry
-- SysV x86_64 entry.
-- Dedicated stack.
-- Serial diagnostics and panic path.
-- CPU feature discovery.
-- Linker section/layout symbols.
+### Debugging
+If firmware calls fail, inspect ABI, calling convention, structure packing, stack alignment, function pointers, CR3/page tables and memory corruption before changing random offsets.
 
-**Checkpoint:** CP0, CP1, CP3, CP6.  
-**Done when:** UEFI reaches C17 kernel entry with a validated handoff and no fabricated firmware data.
+### Checkpoints
+`P01-01` ELF validation, `P01-02` real UEFI boot, `P01-03` memory map, `P01-04` EBS retry, `P01-05` ACPI/GOP, `P01-06` historical UEFI #UD regression.
 
-# Phase 2 — Memory Architecture
+---
 
-### 2A — PMM
-- Variable descriptor parsing.
-- Usable/reclaimable accounting.
-- Kernel/boot/page-table reservations.
-- Frame allocation/free.
-- DMA-aware physical allocation.
+# PHASE 02 — CPU Bring-up and Memory Safety
 
-### 2B — VMM
-- PML4/5-level capability-aware paging.
-- Kernel/user address spaces.
-- Map/unmap/protect/translate.
-- Huge pages.
-- NX, WP, SMEP/SMAP where supported.
-- TLB shootdown architecture.
-- Page-fault diagnostics.
+### CPU
+- CPUID feature inventory.
+- MSR access wrappers.
+- control-register policy.
+- NX/WP/SMEP/SMAP policy.
+- syscall CPU feature policy.
+- invariant TSC detection.
 
-### 2C — Heap
-- Early allocator.
-- Size classes/slabs.
-- Guard/debug allocation modes.
-- Reclaim/free architecture.
+### PMM
+- UEFI descriptor parser.
+- reserved ranges.
+- frame allocation/free.
+- DMA zones/alignment.
+- reference/ownership model.
 
-**Checkpoint:** CP0–CP3, CP7.  
-**Done when:** memory operations are deterministic, permission-aware and isolated between kernel and user mappings.
+### VMM
+- 4/5-level paging according to CPU capability.
+- kernel address space.
+- user address spaces.
+- map/unmap/protect.
+- page faults.
+- TLB invalidation and shootdown design.
+- huge pages where justified.
 
-# Phase 3 — CPU, Interrupts, APIC and SMP
+### Heap
+- early allocator;
+- size classes/slabs;
+- alignment;
+- overflow checks;
+- guard/debug mode;
+- leak diagnostics.
 
-- Correct GDT/TSS/IST.
-- Complete IDT/trap-frame model.
-- Exception decoding.
-- Legacy PIC handling.
-- ACPI MADT parsing.
-- IOAPIC routing and interrupt-source overrides.
-- LAPIC/x2APIC support where appropriate.
-- PIT/HPET/APIC timer selection.
-- CPU topology.
-- AP startup.
-- Per-CPU data.
-- Spinlocks, mutexes, rwlocks.
-- Wait queues and deferred work.
-- Interrupt-context restrictions.
+### Checkpoints
+`P02-01` PMM → `P02-02` page tables → `P02-03` permissions → `P02-04` page faults → `P02-05` heap → `P02-06` SMP TLB design → `P02-07` security review.
 
-**Checkpoint:** CP0–CP3, CP5, CP6.  
-**Done when:** timer interrupts work, IRQs route correctly and every discovered CPU can safely initialize.
+---
 
-# Phase 4 — Processes, Threads, Scheduler and Syscalls
+# PHASE 03 — GDT, TSS, IDT, Exceptions and Interrupt Framework
 
-### Process model
-- Process/address-space objects.
-- Kernel/user threads.
-- Credentials.
-- Parent/child tree.
-- Process groups/sessions.
-- CPU context.
-- Kernel stacks and TSS switching.
+- GDT kernel/user segments.
+- TSS and `ltr`.
+- IST stacks.
+- complete trap-frame ABI.
+- exceptions 0–31.
+- page-fault diagnostics.
+- IRQ stubs.
+- interrupt nesting policy.
+- interrupt-safe logging.
+- EOI policy.
+- PIC compatibility/disable.
+
+### Checkpoints
+`P03-01` exception entry → `P03-02` IST → `P03-03` IRQ entry/return → `P03-04` fault decoding → `P03-05` nested interrupt tests.
+
+---
+
+# PHASE 04 — ACPI, LAPIC, IOAPIC, Timers and SMP
+
+### ACPI
+- RSDP checksum.
+- XSDT/RSDT parsing.
+- MADT CPU/LAPIC/IOAPIC entries.
+- interrupt-source overrides.
+- FADT/HPET/MCFG discovery architecture.
+
+### Interrupt routing
+- correct ACPI polarity/trigger translation.
+- IOAPIC redirection entries.
+- LAPIC/x2APIC where supported.
+- MSI/MSI-X groundwork.
+
+### Time
+- APIC timer.
+- HPET fallback where useful.
+- PIT compatibility.
+- monotonic clock.
+- wall-clock source architecture.
+- timer wheel/high-resolution timers.
+
+### SMP
+- AP trampoline/startup.
+- per-CPU structures.
+- CPU online/offline state.
+- barriers and cache coherency assumptions.
+- inter-processor interrupts.
+- TLB shootdowns.
+
+### Checkpoints
+`P04-01` MADT → `P04-02` IOAPIC → `P04-03` timer IRQ → `P04-04` AP startup → `P04-05` cross-CPU IPI → `P04-06` synchronization regression.
+
+---
+
+# PHASE 05 — Kernel Synchronization, Wait Queues and Workqueues
+
+- spinlocks;
+- irq-save locks;
+- mutexes;
+- rwlocks;
+- semaphores;
+- condition/wait queues;
+- atomic reference counting;
+- lock ordering rules;
+- deadlock diagnostics;
+- deferred interrupt work;
+- kernel worker threads;
+- cancellation semantics.
+
+### Gate
+Every lock documents whether it is legal in interrupt, process and sleepable context.
+
+---
+
+# PHASE 06 — Process, Thread and Scheduler Core
+
+### Process objects
+- PID allocation/reuse protection.
+- parent/child relationships.
+- credentials.
+- address-space ownership.
+- file descriptor table.
+- signal state.
+- process groups/sessions.
+- exit state/zombies.
+
+### Threads
+- kernel threads.
+- user threads.
+- saved CPU context.
+- kernel stack.
+- TLS/thread pointer architecture.
 
 ### Scheduler
-- Preemptive scheduling.
-- Per-CPU queues.
-- Priority/fairness.
-- Sleep/wakeup.
-- Timers.
+- preemption.
+- per-CPU runqueues.
+- priorities/fairness.
+- sleep/wakeup.
+- timer expiration.
+- idle threads.
 - SMP load balancing.
-- Idle threads.
+- CPU affinity.
+- starvation diagnostics.
 
-### Syscalls
-- Stable syscall ABI.
-- SYSCALL/SYSRET or interrupt entry with safe user transitions.
-- User-pointer validation.
-- Copy-in/out.
-- FD tables.
-- `read/write/open/close/ioctl`.
-- `fork/clone/exec/wait/exit`.
-- Signals.
-- `mmap/munmap/mprotect`.
-- `poll`/event waits.
+### Checkpoints
+`P06-01` context switch → `P06-02` timer preemption → `P06-03` sleep/wakeup → `P06-04` multi-CPU scheduling → `P06-05` process lifecycle.
 
-**Checkpoint:** CP2–CP4, CP7.  
-**Done when:** a genuine user process is scheduled, invokes a syscall, performs validated I/O and exits with a status.
+---
 
-# Phase 5 — ELF64 + Dynamic Userspace Runtime
+# PHASE 07 — Syscall ABI and User/Kernel Boundary
 
-- Robust ELF loader.
+- stable syscall numbering/version policy;
+- syscall entry/return;
+- kernel stack transition;
+- user pointer validation;
+- copy-in/copy-out;
+- canonical-address validation;
+- FD validation;
+- errno/error mapping;
+- restartable syscalls;
+- syscall tracing.
+
+### Initial ABI
+`read`, `write`, `openat`, `close`, `stat`, `getpid`, `exit`, `wait`, `mmap`, `munmap`, `mprotect`, `ioctl`, `poll`, `nanosleep`, process creation/exec and signal primitives.
+
+### Gate
+A real ring-3 process enters kernel mode, accesses only authorized memory, performs real I/O and returns a defined result.
+
+---
+
+# PHASE 08 — User Address Spaces and ELF64 Execution
+
+- independent page tables.
+- user/kernel split.
+- stack allocation/guard page.
+- ELF header/program-header validation.
+- PT_LOAD mapping.
+- BSS zeroing.
 - PIE/non-PIE policy.
-- User stack and ABI alignment.
+- ASLR architecture.
 - `argc/argv/envp/auxv`.
-- VDSO-style interfaces.
-- Shared-object mapping.
-- Dynamic linker.
-- Relocations.
-- TLS.
-- Initial process runtime.
+- stack alignment.
+- executable W^X policy.
+- `exec` replacement.
 
-**Checkpoint:** CP2–CP4, CP7.  
-**Done when:** static and dynamically linked programs can start with correct process ABI state.
+### Checkpoints
+`P08-01` static ELF → `P08-02` malformed ELF rejection → `P08-03` ring-3 start → `P08-04` exec → `P08-05` user memory fault isolation.
 
-# Phase 6 — PCIe, MMIO, MSI/MSI-X and DMA
+---
 
-- PCI/PCIe enumeration.
-- Capability lists.
-- BAR sizing and mapping.
+# PHASE 09 — IPC, Pipes, Signals, Events and Shared Memory
+
+Add the missing Unix process machinery before building a sophisticated shell:
+
+- anonymous pipes;
+- named pipes/FIFOs;
+- signals and signal masks;
+- signal delivery/return frames;
+- process groups;
+- event objects;
+- poll/select-like waiting;
+- shared memory with explicit permissions;
+- Unix-domain socket architecture;
+- SCM-like descriptor passing architecture;
+- futex-like userspace synchronization primitive if justified.
+
+### Gate
+Two real processes communicate without bypassing kernel authorization or lifetime rules.
+
+---
+
+# PHASE 10 — PCIe, ACPI MCFG, MMIO, DMA and Device Model
+
+- PCI configuration access.
+- PCIe extended configuration.
+- MCFG/ECAM.
+- capability traversal.
+- BAR sizing/mapping.
+- bus mastering.
+- DMA allocation/mapping/unmapping.
+- cache coherency.
+- IOMMU/VT-d/AMD IOMMU architecture.
 - MSI/MSI-X.
-- DMA API.
-- IOMMU architecture.
-- Device/driver registration.
-- Resource ownership/lifetime.
-- Hotplug/reset model.
-- ID matching and diagnostics.
+- driver registration/matching.
+- resource ownership.
+- probe/remove/reset.
+- hotplug state machine.
+- device dependency graph.
 
-Required IDs remain explicit: RTL8125 `10EC:8125`, RX 6800 XT `1002:73BF`, QEMU GPU `1B36:0100`.
+### Required identities
+- RTL8125 `10EC:8125`.
+- RX 6800 XT `1002:73BF`.
+- QEMU GPU `1B36:0100`.
+- target NVMe `1CC1:5370` where applicable.
 
-**Checkpoint:** CP0–CP3, CP5, CP7.
+---
 
-# Phase 7 — Storage + NVMe
+# PHASE 11 — Storage Core
 
-- Block device and BIO layers.
-- Scatter/gather.
-- Queueing/cache/barriers.
-- NVMe reset/enable.
-- CAP/VS/CC/CSTS.
-- Admin queue.
-- Identify controller/namespace.
-- I/O queues.
-- PRP/SGL.
-- Read/write/flush.
-- Timeout/recovery.
-- Namespace lifecycle.
+### Block layer
+- block device registry;
+- sector/block geometry;
+- BIO/request objects;
+- scatter/gather;
+- queue depth;
+- barriers;
+- flush/FUA semantics;
+- completion callbacks;
+- timeout/cancellation;
+- retry policy;
+- error propagation.
 
-**Checkpoint:** CP2–CP6.  
-**Mandatory regression:** controller-ready, Identify, namespace-online, real read, real write and real flush are separate evidence items.
+### Cache
+- page/buffer cache;
+- dirty tracking;
+- writeback;
+- eviction;
+- coherency with direct I/O.
 
-# Phase 8 — VFS + RixFS
+### Checkpoints
+`P11-01` block API → `P11-02` disposable image → `P11-03` read/write → `P11-04` flush → `P11-05` timeout/recovery.
+
+---
+
+# PHASE 12 — Real NVMe Driver
+
+### Controller
+- reset/disable/enable state machine;
+- CAP/VS/CC/CSTS validation;
+- admin queue creation;
+- Identify Controller;
+- Identify Namespace;
+- namespace lifecycle.
+
+### I/O
+- submission/completion queues;
+- phase tags;
+- PRP list construction;
+- SGL where needed;
+- DMA constraints;
+- interrupt/poll completion;
+- read/write/flush;
+- timeout and controller reset recovery.
+
+### Mandatory evidence ladder
+`P12-01 PCI → P12-02 BAR → P12-03 RDY → P12-04 Identify Controller → P12-05 Identify Namespace → P12-06 namespace online → P12-07 real read → P12-08 real write → P12-09 real flush → P12-10 timeout/recovery → P12-11 physical hardware regression`.
+
+No controller-detected message may substitute for I/O evidence.
+
+---
+
+# PHASE 13 — VFS and RixFS
 
 ### VFS
-- Inode/vnode model.
-- Superblocks/mounts.
-- Mount namespace.
-- Path walking.
-- FDs.
-- Directory iteration.
-- Symlinks/hard links.
-- Ownership/permissions.
-- `stat`, `rename`, `unlink`, `mkdir`, `rmdir`.
-- File locking.
+- vnode/inode abstraction;
+- dentry/path cache;
+- mount tree/namespaces;
+- superblocks;
+- file objects;
+- FD tables;
+- path normalization;
+- symlink handling;
+- directory iteration;
+- locks;
+- stat family;
+- rename/unlink/mkdir/rmdir;
+- permissions hooks.
 
 ### RixFS
-- Versioned on-disk specification.
-- Superblock/inodes/directories.
-- Allocation metadata.
-- Extents/direct blocks.
-- Free-space tracking.
-- Journal/recovery.
-- Checksums/integrity.
-- Interrupted-write recovery.
+- versioned on-disk specification;
+- superblock;
+- inode format;
+- extents/direct data;
+- directories;
+- allocation bitmap/metadata;
+- free-space manager;
+- journal;
+- checksums;
+- orphan/recovery handling;
+- mount/unmount;
+- fsck;
+- truncate/read/write.
 
-**Checkpoint:** CP2–CP7.  
-**Mandatory regression:** bad magic/version/corrupt metadata must error or recover; never silently format.
+### Critical safety
+Unknown, missing, corrupt or incompatible media must return an error/recovery option. **Never silently format.**
 
-# Phase 9 — USB/xHCI/HID
+---
 
-- xHCI capability/operational/runtime setup.
-- Command/event rings.
-- Slots/address/configure endpoint.
-- Control/bulk/interrupt transfers.
-- Descriptor parsing.
-- Port lifecycle/hotplug/recovery.
-- HID report parser.
-- Keyboard/mouse.
+# PHASE 14 — Time, RTC, Power and Hardware Management
 
-**Checkpoint:** CP2–CP6.  
-**Mandatory regressions:** Address Device completion code 11 and real keyboard `0x74` (`t`) input.
+- RTC/CMOS abstraction where available.
+- monotonic/realtime clocks.
+- timezone database architecture.
+- sleep/timer APIs.
+- ACPI power states.
+- reboot/shutdown.
+- CPU idle states.
+- thermal sensors architecture.
+- fan/power-management hooks.
+- battery/AC adapter model where hardware provides it.
+- suspend/resume architecture.
 
-# Phase 10 — TTY/PTY/Terminal
+---
 
-- TTY and PTY master/slave.
-- Line discipline.
-- Canonical/raw mode.
-- Echo.
-- Terminal size.
-- Sessions/controlling terminal.
-- Foreground process group.
-- Terminal signals.
-- ANSI/VT behavior.
+# PHASE 15 — USB/xHCI Core
+
+- xHCI capability/operational/runtime registers.
+- DCBAA.
+- scratchpads.
+- command ring.
+- transfer rings.
+- event ring/ERST.
+- TRB cycle ownership.
+- slots.
+- device/input contexts.
+- port reset.
+- Address Device.
+- Configure Endpoint.
+- control/bulk/interrupt transfers.
+- interrupters/MSI/MSI-X.
+- DMA/cache ordering.
+- timeout/reset/recovery.
+- hotplug.
+
+### Regression
+Dedicated instrumentation for historical Address Device completion code **11**. Preserve every TRB, slot, context pointer, route string, port state and completion code needed to diagnose it.
+
+---
+
+# PHASE 16 — USB HID, Keyboard, Mouse and Input
+
+- USB descriptor parsing.
+- HID descriptor.
+- report descriptor parser.
+- boot protocol.
+- report protocol.
+- interrupt-IN transfers.
+- keycode/modifier state.
+- press/release/repeat.
+- rollover handling.
+- mouse buttons/motion/wheel.
+- hotplug/unplug.
+
+### Regression
+Real keyboard input must travel through xHCI → USB → HID → input subsystem → TTY. Historical `0x74` (`t`) evidence remains a regression target; synthetic key injection cannot close the hardware gate.
+
+---
+
+# PHASE 17 — TTY, PTY, Console and Terminal Engine
+
+- TTY objects.
+- PTY master/slave.
+- canonical/raw modes.
+- termios-like configuration.
+- echo.
+- input/output queues.
 - UTF-8.
-- Pipes/FIFOs.
-- Redirection.
-- Flow control.
+- ANSI/VT parser.
+- terminal dimensions.
+- controlling terminal.
+- sessions/process groups.
+- foreground ownership.
+- terminal signals.
+- pipes and redirection integration.
+- console recovery path.
 
-**Checkpoint:** CP2–CP4.  
-**Done when:** a real shell process owns a PTY and job-control semantics work.
+---
 
-# Phase 11 — Rixuri Shell
+# PHASE 18 — Rixuri Shell 2.0
 
-### Parser
-- Lexer/tokenizer.
-- Quotes/escaping/comments.
-- Operators.
-- Variable expansion.
-- Globbing.
-- Command substitution.
-- Here-doc architecture.
-- Arithmetic expansion.
+### Language
+- lexer/parser/AST;
+- quoting/escaping;
+- variables/environment;
+- parameter expansion;
+- command substitution;
+- arithmetic expansion;
+- pathname expansion;
+- comments;
+- here-documents;
+- operators.
 
 ### Execution
-- PATH.
-- Builtins/external commands.
-- Pipelines.
-- Redirection.
-- `&&`, `||`, `;`.
-- Subshells/background jobs.
-- Process groups/signals.
-- Exit status.
+- PATH search;
+- builtins;
+- external exec;
+- pipelines;
+- redirections;
+- `&&`, `||`, `;`;
+- subshells;
+- background jobs;
+- process groups;
+- signals;
+- exit status;
 - `exec`.
 
 ### Interactive
-- History.
-- Persistent history.
-- Line editing.
-- Cursor movement.
-- Completion.
-- Aliases/functions.
-- Environment/startup scripts.
-- Prompt expansion.
-- Job control.
+- history;
+- persistent history;
+- line editor;
+- cursor movement;
+- completion;
+- aliases/functions;
+- startup scripts;
+- prompt expansion;
+- job control.
 
-### Scripting
-- Conditions/loops/functions.
-- Script arguments.
-- Traps.
-- Reliable error propagation.
+### Gate
+Real programs must compose through real process/pipe/file APIs; demos that merely print expected text do not count.
 
-**Checkpoint:** CP2–CP4, CP7.  
-**Acceptance:** real compositions such as `cat file | grep hello | sort | uniq -c` and `make && ./program >out 2>&1` must execute through real processes/pipes/files.
+---
 
-# Phase 12 — Unix Coreutils
+# PHASE 19 — Unix Coreutils and System Utilities
 
-Implement real userspace programs over the real syscall/VFS APIs:
+Implement real programs over RixuriOS APIs:
 
-- File: `ls cp mv rm mkdir rmdir touch ln stat`
-- Text: `cat head tail wc cut tr sort uniq grep sed` foundation
-- Search: `find xargs` foundation
-- Process/shell: `env printf echo pwd kill ps`
-- System: `uname mount umount df du free dmesg`
-- Development: `which true false test` and archive foundations
+`ls cp mv rm mkdir rmdir touch ln stat cat head tail wc cut tr sort uniq grep sed find xargs env printf echo pwd cd kill ps sleep uname mount umount df du free dmesg true false test which`
 
-**Checkpoint:** CP2–CP4. Every utility needs real errors and exit statuses.
+Then add:
 
-# Phase 13 — Users, Groups, Permissions, Authentication
+- tar/archive tools;
+- checksum tools;
+- text processing;
+- process inspection;
+- disk utilities;
+- network utilities;
+- diagnostic tools.
+
+Every command gets argument validation, errors, exit status and pipeline behavior.
+
+---
+
+# PHASE 20 — Users, Groups, Credentials and Security Model
 
 - UID/GID.
-- Root model.
-- User/group databases.
-- Ownership/mode checks.
-- `chmod/chown` semantics.
-- Login/session.
-- Password/auth architecture.
-- Privilege transitions.
-- Environment isolation.
-- Capabilities/least privilege.
+- supplementary groups.
+- root/superuser policy.
+- credential objects.
+- file ownership/modes.
+- ACL architecture where justified.
+- privilege transitions.
+- secure password storage.
+- authentication/session framework.
+- login/lock/logout.
+- capability/least-privilege model.
+- environment sanitization.
+- setuid/setgid policy if implemented.
+- audit identity.
 
-**Checkpoint:** CP2–CP4, CP7.
+### Security foundation
+- W^X.
+- NX/WP.
+- SMEP/SMAP.
+- ASLR.
+- stack protections where compatible.
+- syscall filtering architecture.
+- secure boot/signature verification architecture where feasible.
+- secrets handling.
 
-# Phase 14 — Full Networking + RTL8125
+---
 
-### Protocol stack
-- Ethernet.
+# PHASE 21 — Full Network Stack
+
+### Link/network
+- Ethernet framing.
 - ARP.
 - IPv4.
 - ICMP.
 - UDP.
-- TCP.
-- Routing.
-- Sockets.
-- DNS.
-- Interface configuration.
+- TCP state machine.
+- routing table.
+- interfaces.
+- MTU.
+- checksums.
+- packet buffers.
+- socket layer.
+- blocking/nonblocking I/O.
+- DNS resolver.
+- DHCP architecture.
+- loopback.
+- firewall/filtering architecture.
+- IPv6 architecture and later implementation.
 
 ### RTL8125
-- PCI match `10EC:8125`.
-- MMIO/register initialization.
-- TX/RX descriptor rings.
-- DMA.
-- Interrupts.
-- Link/MAC state.
-- Counters.
-- Reset/recovery.
+- PCI probe.
+- MMIO.
+- MAC setup.
+- DMA rings.
+- TX/RX.
+- interrupts.
+- link negotiation/state.
+- statistics.
+- reset/recovery.
 
-**Checkpoint:** CP2–CP7.  
-**Mandatory regression:** automated tests and manual ping must share the same real network path; timeout cannot be converted into success.
-
-# Phase 15 — libc + musl + POSIX + Linux/GLIBC Compatibility
-
-- Syscall glue.
-- `errno`.
-- libc process/file/memory/time APIs.
-- Signals.
-- pthread foundation.
-- Sockets.
-- TLS.
-- Dynamic linker integration.
-- POSIX compatibility.
-- Linux/glibc-oriented compatibility for selected software.
-- Porting test suite.
-
-Architecture remains:
-
-`RixuriOS kernel ABI → RixuriOS libc → POSIX/Unix compatibility → applications`
-
-**Checkpoint:** CP2–CP4, CP7.
-
-# Phase 16 — init + Services + devfs/procfs/sysfs
-
-- First userspace PID 1.
-- Service startup/supervision/restart.
-- `/dev` device nodes.
-- `/proc` process/system information.
-- `/sys` device/kernel model.
-- Resource accounting.
-- Logging integration.
-- Clean shutdown/reboot.
-
-**Checkpoint:** CP2–CP4.
-
-# Phase 17 — Audio
-
-- Audio device abstraction.
-- HDA-oriented PCI driver architecture.
-- PCM.
-- DMA/ring buffers.
-- Mixer/control API.
-- Userspace audio API.
-- Hotplug/recovery.
-
-**Checkpoint:** CP2–CP5.
-
-# Phase 18 — Graphics Foundation + Vulkan
-
-### Display
-- GOP/framebuffer abstraction.
-- Pixel formats/scanout.
-- Console diagnostics.
-
-### GPU
-- PCI discovery.
-- VRAM/GTT/system memory.
-- MMIO/DMA.
-- Command submission.
-- Queues.
-- Fences/semaphores/events.
-- Resource lifetime.
-- Reset/recovery.
-
-### QEMU
-- Keep `1B36:0100` distinct from AMD hardware.
-- Only advertise verified capabilities.
-
-### AMD target
-- Identify RX 6800 XT `1002:73BF`.
-- Real VRAM/GTT.
-- Command/ring architecture.
-- Interrupt/fence handling.
-- Submission/scheduling.
-- Recovery.
-
-### Vulkan
-- Loader.
-- ICD boundary.
-- Physical/logical devices.
-- Queues.
-- Memory.
-- Images/buffers.
-- Descriptor/resource model.
-- Synchronization.
-- Pipeline/shader interfaces.
-- Validation/diagnostic tooling.
-
-**Checkpoint:** CP2–CP7. GUI is still forbidden to become the main workstream.
-
-# Phase 19 — Installer + Build System + Toolchain + Developer Environment
-
-### Installer
-- Partition discovery.
-- Explicit confirmation.
-- Bootloader installation.
-- Filesystem creation only after confirmation.
-- Recovery/rollback paths.
-- Install verification.
-
-### Build/toolchain
-- Reproducible cross toolchain.
-- Kernel/userspace build separation.
-- Sysroot.
-- Package/build metadata.
-- Image generation.
-- Debug/symbol artifacts.
-
-### Developer environment
-- Compiler/binutils.
-- libc development headers.
-- Debugger integration.
-- Source/build commands.
-- Documentation generation.
-- Crash/serial log collection.
-
-**Checkpoint:** CP1–CP3, CP7–CP8.
-
-# Phase 20 — GUI (LAST)
-
-Only begin after the non-GUI operating system is mature.
-
-- Window/compositor architecture.
-- Input routing.
-- Display management.
-- GPU/Vulkan integration.
-- Fonts/text.
-- Clipboard.
-- IPC.
-- Desktop/session manager.
-- GUI toolkit foundation.
-- Accessibility.
-- Crash recovery to terminal.
-- GUI application model.
-
-**Checkpoint:** CP0–CP8. The recovery console and normal Unix shell remain first-class interfaces.
+### Regression
+Manual ping and automated network tests must use the same real driver/socket path. A self-test timeout cannot be replaced with fabricated success.
 
 ---
 
-# Master release gates
+# PHASE 22 — libc, musl, POSIX and Linux Compatibility
 
-- **R0 — Bootable:** UEFI → kernel → memory/interrupt foundation.
-- **R1 — Multitasking:** real userspace process + scheduler + syscalls.
-- **R2 — Storage:** NVMe + VFS + RixFS with recovery.
-- **R3 — Unix CLI:** TTY/PTY + shell + coreutils.
-- **R4 — Networked OS:** users/auth + TCP/IP + RTL8125.
-- **R5 — Developer OS:** libc/musl/POSIX compatibility + toolchain.
-- **R6 — Pre-GUI platform:** audio + graphics/Vulkan foundation + complete core services.
-- **R7 — Graphical OS:** GUI on top of the already-working platform.
+### libc
+- syscall wrappers;
+- `errno`;
+- memory/string;
+- stdio;
+- files;
+- process APIs;
+- time;
+- signals;
+- threads;
+- sockets;
+- locale/UTF-8 foundations;
+- TLS.
+
+### musl
+- dedicated RixuriOS sysroot;
+- architecture configuration;
+- syscall layer;
+- startup objects;
+- dynamic linker;
+- pthread integration;
+- regression suite.
+
+### Compatibility
+- POSIX semantics where practical;
+- selected Linux/glibc ABI compatibility shims;
+- porting notes for incompatible behavior;
+- application compatibility test corpus.
+
+Architecture must remain:
+
+`kernel ABI → RixuriOS libc → POSIX/Linux compatibility → application`.
+
+---
+
+# PHASE 23 — Dynamic Linking, TLS and Runtime Loader
+
+- ELF shared objects.
+- `PT_DYNAMIC`.
+- symbol lookup.
+- relocation processing.
+- GOT/PLT.
+- lazy/immediate binding policy.
+- dependency loading.
+- `DT_NEEDED`.
+- SONAME.
+- TLS models.
+- `dlopen/dlsym/dlclose` architecture.
+- loader security.
+- library search paths.
+- versioned symbols where needed.
+
+### Gate
+A real dynamically linked application starts, resolves libraries, performs TLS initialization and exits normally.
+
+---
+
+# PHASE 24 — init, Services, devfs, procfs, sysfs and IPC Bus
+
+### PID 1
+- first userspace process;
+- service dependency graph;
+- startup ordering;
+- restart policy;
+- supervision;
+- shutdown.
+
+### Pseudo-filesystems
+- `/dev` device nodes.
+- `/proc` processes, memory, CPU, mounts, uptime.
+- `/sys` devices, drivers, attributes.
+
+### System services
+- logger;
+- device manager;
+- network manager foundation;
+- time synchronization foundation;
+- service manager.
+
+### IPC
+- Unix sockets;
+- service discovery;
+- capability/credential propagation.
+
+---
+
+# PHASE 25 — Package Manager, Repository Model and Software Lifecycle
+
+Add a real software lifecycle before GUI:
+
+- package format;
+- metadata/dependencies;
+- repositories/mirrors;
+- signatures/trust roots;
+- install/remove/upgrade;
+- file ownership database;
+- transaction/rollback;
+- package scripts with restricted execution;
+- offline package cache;
+- reproducible package builds.
+
+Commands target:
+
+`pkg search/install/remove/update/upgrade/info/list/files/verify`.
+
+No package manager may silently overwrite protected system files without a defined transaction model.
+
+---
+
+# PHASE 26 — Developer Platform and Build Ecosystem
+
+### Native development
+- GCC/binutils or equivalent.
+- Clang/LLVM.
+- debugger support.
+- assembler/linker.
+- make/ninja-like build tooling.
+- pkg-config-like metadata.
+- C/C++ headers.
+- static/dynamic libraries.
+
+### Languages roadmap
+- C first;
+- C++;
+- Rust;
+- Go;
+- Python runtime;
+- JavaScript/Node ecosystem where resources permit.
+
+### Developer workflow
+`clone → configure → build → test → install → run → debug → package`.
+
+### Debugging
+- symbols;
+- core dumps architecture;
+- backtraces;
+- kernel crash dumps;
+- serial capture;
+- GDB remote debugging;
+- deterministic QEMU snapshots.
+
+---
+
+# PHASE 27 — Mayo, Documentation, Observability and System Administration
+
+### Mayo
+- open/save/save-as;
+- cursor/navigation;
+- insert/delete;
+- search;
+- line handling;
+- UTF-8;
+- terminal rendering;
+- keyboard integration;
+- crash-safe save/recovery.
+
+The editor name is **Mayo**; do not reintroduce the old RixEdit name.
+
+### Observability
+- structured kernel logs;
+- log levels/categories;
+- ring buffer;
+- persistent logs;
+- tracepoints;
+- syscall tracing;
+- scheduler tracing;
+- block/network/USB traces;
+- crash reports;
+- health/status commands.
+
+### Administration
+- configuration files;
+- hostname;
+- users;
+- services;
+- network configuration;
+- mount management;
+- logs;
+- diagnostics;
+- recovery shell.
+
+---
+
+# PHASE 28 — Audio and Media Services
+
+- audio device model;
+- HDA-oriented driver;
+- PCM;
+- DMA/ring buffers;
+- mixer/control API;
+- playback/capture;
+- latency measurement;
+- device hotplug/recovery;
+- userspace audio API.
+
+Also prepare media abstractions for future video/camera support without coupling them to GUI.
+
+---
+
+# PHASE 29 — Graphics Device Foundation and Vulkan
+
+**Still pre-GUI.** Graphics infrastructure must be mature before a desktop exists.
+
+### Display
+- GOP handoff.
+- framebuffer abstraction.
+- modes/pixel formats.
+- scanout buffers.
+- display hotplug architecture.
+
+### GPU memory
+- VRAM.
+- system/GTT memory.
+- DMA.
+- mappings.
+- synchronization.
+- fences/events.
+- resource lifetime.
+
+### QEMU GPU
+Keep QEMU `1B36:0100` completely distinct from physical AMD paths.
+
+### AMD
+Target RX 6800 XT `1002:73BF` with real capability discovery, VRAM/GTT, queues/rings, interrupts, fences, submission and reset/recovery.
+
+### Vulkan
+- loader;
+- ICD boundary;
+- physical/logical devices;
+- queue families;
+- memory allocation;
+- buffers/images;
+- descriptors;
+- command buffers;
+- synchronization;
+- pipeline/shader interfaces;
+- validation/diagnostics;
+- device-loss recovery.
+
+No Vulkan feature may be advertised unless the underlying hardware/software path is actually implemented and tested.
+
+---
+
+# PHASE 30 — Reliability Engineering, Fuzzing, Fault Injection and Recovery
+
+This phase exists **before GUI** specifically to prevent a fragile desktop being built on a fragile OS.
+
+### Fuzzing targets
+- ELF parser;
+- filesystem parser;
+- path resolver;
+- syscall arguments;
+- USB descriptors/HID reports;
+- network packets;
+- configuration files;
+- package metadata.
+
+### Fault injection
+- allocation failure;
+- DMA mapping failure;
+- device timeout;
+- malformed completion;
+- unplug/reset;
+- disk I/O error;
+- packet loss/reordering;
+- process exhaustion;
+- FD exhaustion;
+- corrupted filesystem metadata.
+
+### Recovery
+- driver reset;
+- service restart;
+- filesystem recovery;
+- network reconnect;
+- shell recovery;
+- safe reboot;
+- crash dump preservation.
+
+---
+
+# PHASE 31 — Performance, Scalability and Resource Governance
+
+Measure before optimizing:
+
+- syscall latency;
+- context-switch latency;
+- scheduler throughput;
+- page-fault cost;
+- allocator throughput;
+- filesystem IOPS/latency;
+- NVMe queue performance;
+- network throughput/latency;
+- TCP connection rate;
+- USB transfer latency;
+- shell startup;
+- dynamic-loader startup;
+- memory footprint;
+- boot time.
+
+Add resource limits:
+
+- process/thread limits;
+- FD limits;
+- address-space limits;
+- memory accounting;
+- disk quotas architecture;
+- socket/packet limits;
+- service resource policies.
+
+No optimization may weaken isolation or correctness without an explicit architectural decision.
+
+---
+
+# PHASE 32 — Installer, Recovery Environment and Update System
+
+### Installer
+- disk/partition discovery;
+- filesystem creation;
+- EFI System Partition;
+- bootloader installation;
+- system image deployment;
+- userspace setup;
+- boot configuration;
+- verification.
+
+### Safety
+Formatting, partition deletion and disk overwrite require explicit confirmation. Installer must identify the exact target device and refuse ambiguous targets.
+
+### Recovery
+- boot recovery menu;
+- rescue shell;
+- filesystem check;
+- logs;
+- rollback;
+- backup/restore.
+
+### Updates
+- atomic system updates where feasible;
+- bootable previous version;
+- package transaction recovery;
+- version compatibility checks.
+
+---
+
+# PHASE 33 — Real Hardware Qualification Lab
+
+Before GUI, qualify the entire platform on target hardware.
+
+### Required qualification classes
+- UEFI firmware variations.
+- CPU feature variations.
+- multi-core boot.
+- target NVMe.
+- USB controller and HID.
+- RTL8125.
+- RX 6800 XT identification/graphics foundation.
+- audio hardware.
+- suspend/reboot/power behavior.
+
+### Evidence
+Every hardware test records:
+
+`machine identity + firmware version + PCI inventory + kernel build + test command + raw log + result + known limitations`.
+
+QEMU evidence never substitutes for physical evidence.
+
+---
+
+# PHASE 34 — Pre-GUI Platform Certification
+
+This is the **largest gate in the project**.
+
+The system must be usable entirely without a GUI:
+
+```text
+UEFI
+ ↓
+kernel
+ ↓
+memory / interrupts / SMP
+ ↓
+scheduler / processes / syscalls
+ ↓
+NVMe / RixFS / VFS
+ ↓
+USB / keyboard / TTY / PTY
+ ↓
+init / users / permissions
+ ↓
+network / sockets / DNS
+ ↓
+musl / POSIX / dynamic linking
+ ↓
+shell / coreutils
+ ↓
+package manager / developer tools
+ ↓
+Mayo / diagnostics / recovery
+```
+
+### Certification suites
+- boot suite;
+- memory suite;
+- CPU/SMP suite;
+- process/scheduler suite;
+- syscall suite;
+- ELF/runtime suite;
+- storage/NVMe suite;
+- filesystem/fsck suite;
+- USB/HID suite;
+- TTY/shell suite;
+- authentication suite;
+- network suite;
+- libc/POSIX suite;
+- package/toolchain suite;
+- audio suite;
+- graphics/Vulkan foundation suite;
+- security suite;
+- recovery suite;
+- performance suite;
+- long-duration soak test.
+
+### Gate
+No GUI development begins merely because the framebuffer works. Phase 34 must certify that the OS is already a useful Unix-like computer from the terminal.
+
+---
+
+# PHASE 35 — GUI / Desktop (ABSOLUTE LAST)
+
+Only after Phase 34 is released.
+
+### Display server/compositor
+- display discovery;
+- modes;
+- surfaces;
+- buffers;
+- composition;
+- synchronization;
+- GPU/Vulkan integration;
+- multi-monitor architecture.
+
+### Window system
+- windows;
+- focus;
+- input routing;
+- clipboard;
+- drag/drop;
+- decorations;
+- workspaces;
+- virtual desktops.
+
+### Desktop services
+- session manager;
+- launcher;
+- settings;
+- notifications;
+- authentication UI;
+- power UI;
+- network UI;
+- audio UI;
+- file manager.
+
+### Toolkit
+- text/fonts;
+- widgets;
+- layout;
+- accessibility;
+- theming;
+- internationalization.
+
+### Critical property
+A compositor crash must not destroy the kernel, userspace or filesystem. The system must fall back to the terminal/recovery environment.
+
+---
+
+# Release ladder
+
+- **R0 — Firmware Boot:** UEFI → validated kernel.
+- **R1 — Protected Kernel:** memory + exceptions + interrupts.
+- **R2 — SMP Kernel:** timers + APIC + multicore + synchronization.
+- **R3 — Multitasking:** scheduler + real user process + syscalls.
+- **R4 — Storage OS:** block layer + NVMe + VFS + RixFS.
+- **R5 — Unix CLI:** TTY/PTY + shell + coreutils.
+- **R6 — Networked Unix:** users + sockets + TCP/IP + RTL8125.
+- **R7 — Developer Unix:** musl + POSIX + dynamic linking + toolchain.
+- **R8 — Managed OS:** init + services + package manager + recovery.
+- **R9 — Hardware Platform:** audio + GPU/Vulkan foundation + qualified hardware.
+- **R10 — Certified Pre-GUI OS:** Phase 34 complete.
+- **R11 — Graphical OS:** Phase 35 complete.
 
 ## Definition of done
 
-A phase is not done because a function exists. It is done when its checkpoint evidence demonstrates:
+A feature is complete only when its evidence demonstrates:
 
-`correctness + real execution + integration + failure handling + regression protection + security + documentation`.
+`correct implementation + real execution + integration + failure handling + regression coverage + security review + measured behavior + documentation`.
 
-The detailed evidence checklist lives in `docs/CHECKPOINTS.md` and must evolve with the implementation.
+The detailed checkpoint ledger belongs in `docs/CHECKPOINTS.md`; implementation procedures belong in `docs/IMPLEMENTATION_PLAYBOOK.md`.
