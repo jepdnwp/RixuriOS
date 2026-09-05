@@ -23,7 +23,7 @@ void syscall_dispatch(rix_syscall_frame_t*frame){
  case RIX_SYS_KILL:if(process_signal_send((pid_t)frame->rdi,(unsigned)frame->rsi)!=0)result=-RIX_ESRCH;else result=0;break;
  case RIX_SYS_SIGMASK:if(process_signal_mask(self,frame->rdi)!=0)result=-RIX_EINVAL;else result=0;break;
  case RIX_SYS_SIGPENDING:{uint64_t pending;if(process_signal_pending(self,&pending)!=0||copy_to_user(frame->rdi,&pending,sizeof(pending))!=0)result=-RIX_EFAULT;else result=0;break;}
- case RIX_SYS_SHM_CREATE:{uint64_t size=frame->rdi;uint32_t id;if(copy_from_user(&id,frame->rsi,sizeof(id))!=0){result=-RIX_EFAULT;break;}if(shm_create(size,(rix_shm_id_t*)&id)!=0){result=-RIX_EINVAL;break;}if(copy_to_user(frame->rsi,&id,sizeof(id))!=0){(void)shm_destroy(id);result=-RIX_EFAULT;break;}result=0;break;}
+ case RIX_SYS_SHM_CREATE:{uint32_t id;if(shm_create(frame->rdi,(rix_shm_id_t*)&id)!=0){result=-RIX_EINVAL;break;}if(copy_to_user(frame->rsi,&id,sizeof(id))!=0){(void)shm_destroy(id);result=-RIX_EFAULT;break;}result=0;break;}
  case RIX_SYS_SHM_MAP:{uint32_t id=(uint32_t)frame->rdi;uint64_t va=frame->rsi,flags=frame->rdx;if(shm_map(id,self,va,flags)!=0)result=-RIX_EINVAL;else result=0;break;}
  case RIX_SYS_SHM_UNMAP:{uint32_t id=(uint32_t)frame->rdi;if(shm_unmap(id,self,frame->rsi)!=0)result=-RIX_EINVAL;else result=0;break;}
  case RIX_SYS_SHM_DESTROY:if(shm_destroy((uint32_t)frame->rdi)!=0)result=-RIX_EINVAL;else result=0;break;
