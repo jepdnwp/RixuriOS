@@ -1,5 +1,6 @@
 #include "irq.h"
 #include "apic.h"
+#include "../../sched/scheduler.h"
 #include <stddef.h>
 
 struct interrupt_frame { uint64_t vector; uint64_t error; uint64_t rip, cs, rflags, rsp, ss; };
@@ -21,4 +22,5 @@ void x86_irq_dispatch(const struct interrupt_frame *frame) {
     irq_handler_t handler = handlers[irq];
     if (handler) handler(irq, frame);
     lapic_eoi();
+    if (irq == 0) scheduler_yield();
 }
