@@ -15,9 +15,13 @@ static rix_task_t tasks[RIX_MAX_TASKS];
 static uint32_t current_index;
 static rix_task_id_t next_id;
 
+static uint64_t read_rflags(void){uint64_t v;__asm__ volatile("pushfq; popq %0":"=r"(v)::"memory");return v;}
+static void cli(void){__asm__ volatile("cli" ::: "memory");}
+static void sti(void){__asm__ volatile("sti" ::: "memory");}
+
 static void task_returned(void){ tasks[current_index].state=TASK_DEAD; for(;;) scheduler_yield(); }
 static void task_bootstrap(void){
-    __asm__ volatile("sti" ::: "memory");
+    sti();
     rix_task_t *t=&tasks[current_index];
     t->entry(t->arg);
     task_returned();
@@ -48,9 +52,13 @@ int scheduler_create_kernel_thread(rix_kernel_thread_fn entry,void *arg,rix_task
 }
 
 void scheduler_yield(void){
+    uint64_t flags=read_rflags();
+    cli();
     uint32_t old=current_index,next=old;
     for(uint32_t n=1;n<RIX_MAX_TASKS;n++){uint32_t i=(old+n)%RIX_MAX_TASKS;if(tasks[i].state==TASK_RUNNABLE){next=i;break;}}
-    if(next==old)return;
+    if(next==old){if(flags&0x200ULL)sti();return;}
     if(tasks[old].state==TASK_RUNNING)tasks[old].state=TASK_RUNNABLE;
-    tasks[next].state=TASK_RUNNING;current_index=next;rix_context_switch(&tasks[old].rsp,tasks[next].rsp);
+    tasks[next].state=TASK_RUNNING;current_index=next;
+    rix_context_switch(&tasks[old].rsp,tasks[next].rsp);
+    if(flags&0x200ULL)sti();
 }
