@@ -69,6 +69,12 @@ int scheduler_create_user_process(uint64_t pid,uint64_t entry,uint64_t user_stac
     if(out_id)*out_id=t->id;return 0;
 }
 
+__attribute__((noreturn)) void scheduler_exit_current(void){
+    cli();
+    tasks[current_index].state=TASK_DEAD;
+    for(;;) scheduler_yield();
+}
+
 void scheduler_yield(void){
     uint64_t flags=read_rflags();cli();
     uint32_t old=current_index,next=old;
