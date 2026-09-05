@@ -1,21 +1,68 @@
-.section .text
+"".section .text
 .extern x86_exception_dispatch
+.extern x86_irq_dispatch
+
+.macro SAVE_REGS
+    pushq %rax; pushq %rbx; pushq %rcx; pushq %rdx; pushq %rsi; pushq %rdi; pushq %rbp
+    pushq %r8; pushq %r9; pushq %r10; pushq %r11; pushq %r12; pushq %r13; pushq %r14; pushq %r15
+.endm
+
+.macro RESTORE_REGS
+    popq %r15; popq %r14; popq %r13; popq %r12; popq %r11; popq %r10; popq %r9; popq %r8
+    popq %rbp; popq %rdi; popq %rsi; popq %rdx; popq %rcx; popq %rbx; popq %rax
+.endm
 
 .macro ISR_NOERR n
-.global isr\n
-.type isr\n,@function
-isr\n:
+.global isr
+
+.type isr
+,@function
+isr
+:
     pushq $0
-    pushq $\n
-    jmp isr_common_noerr
+    pushq $
+
+    SAVE_REGS
+    leaq 120(%rsp), %rdi
+    call x86_exception_dispatch
+    RESTORE_REGS
+    addq $16, %rsp
+    iretq
 .endm
 
 .macro ISR_ERR n
-.global isr\n
-.type isr\n,@function
-isr\n:
-    pushq $\n
-    jmp isr_common_err
+.global isr
+
+.type isr
+,@function
+isr
+:
+    pushq $
+
+    SAVE_REGS
+    leaq 120(%rsp), %rdi
+    call x86_exception_dispatch
+    RESTORE_REGS
+    addq $8, %rsp
+    iretq
+.endm
+
+.macro IRQ n
+.global isr
+
+.type isr
+,@function
+isr
+:
+    pushq $0
+    pushq $
+
+    SAVE_REGS
+    leaq 120(%rsp), %rdi
+    call x86_irq_dispatch
+    RESTORE_REGS
+    addq $16, %rsp
+    iretq
 .endm
 
 .global isr_default
@@ -23,28 +70,13 @@ isr\n:
 isr_default:
     pushq $0
     pushq $255
-    jmp isr_common_noerr
-
-/* Fifteen general-purpose registers are preserved: 15 * 8 = 120 bytes. */
-isr_common_noerr:
-    pushq %rax; pushq %rbx; pushq %rcx; pushq %rdx; pushq %rsi; pushq %rdi; pushq %rbp
-    pushq %r8; pushq %r9; pushq %r10; pushq %r11; pushq %r12; pushq %r13; pushq %r14; pushq %r15
+    SAVE_REGS
     leaq 120(%rsp), %rdi
     call x86_exception_dispatch
-    popq %r15; popq %r14; popq %r13; popq %r12; popq %r11; popq %r10; popq %r9; popq %r8
-    popq %rbp; popq %rdi; popq %rsi; popq %rdx; popq %rcx; popq %rbx; popq %rax
+    RESTORE_REGS
     addq $16, %rsp
     iretq
-
-isr_common_err:
-    pushq %rax; pushq %rbx; pushq %rcx; pushq %rdx; pushq %rsi; pushq %rdi; pushq %rbp
-    pushq %r8; pushq %r9; pushq %r10; pushq %r11; pushq %r12; pushq %r13; pushq %r14; pushq %r15
-    leaq 120(%rsp), %rdi
-    call x86_exception_dispatch
-    popq %r15; popq %r14; popq %r13; popq %r12; popq %r11; popq %r10; popq %r9; popq %r8
-    popq %rbp; popq %rdi; popq %rsi; popq %rdx; popq %rcx; popq %rbx; popq %rax
-    addq $8, %rsp
-    iretq
+.endm
 
 ISR_NOERR 0
 ISR_NOERR 1
@@ -78,3 +110,21 @@ ISR_NOERR 28
 ISR_ERR 29
 ISR_ERR 30
 ISR_NOERR 31
+
+IRQ 32
+IRQ 33
+IRQ 34
+IRQ 35
+IRQ 36
+IRQ 37
+IRQ 38
+IRQ 39
+IRQ 40
+IRQ 41
+IRQ 42
+IRQ 43
+IRQ 44
+IRQ 45
+IRQ 46
+IRQ 47
+""
