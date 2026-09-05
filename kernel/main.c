@@ -14,6 +14,7 @@
 #include "pci/pci.h"
 #include "sched/scheduler.h"
 #include "process/process.h"
+#include "syscall/syscall.h"
 #include "vfs/vfs.h"
 #include "storage/block.h"
 
@@ -39,6 +40,7 @@ void kernel_main(const rixuri_boot_info_t *boot){
  if(process_init()!=0)panic("process subsystem initialization failed");
  if(block_init()!=0)panic("block subsystem initialization failed");
  if(vfs_init()!=0)panic("VFS initialization failed");
+ syscall_init();
  int io_ready=0;
  if(acpi_ioapic_count()&&ioapic_init()==0){
    if(ioapic_route_irq(0,32,(uint8_t)lapic_id())!=0)panic("failed to route PIT IRQ");
@@ -46,7 +48,7 @@ void kernel_main(const rixuri_boot_info_t *boot){
  }
  if(io_ready){idt_enable();serial_write("IRQ: PIT routed to vector 32; interrupts enabled\r\n");}
  else serial_write("IRQ: no usable IOAPIC; interrupts remain disabled\r\n");
- serial_write("Core services: timer/scheduler/process/PCI/block/VFS initialized\r\n");
+ serial_write("Core services: timer/scheduler/process/syscall/PCI/block/VFS initialized\r\n");
  serial_write("LAPIC: initialized, id=");serial_write_dec(lapic_id());serial_write("\r\n");
  halt_forever();
 }
