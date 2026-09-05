@@ -17,9 +17,10 @@ Valid states include: `COMPLETE`, `IN PROGRESS`, `BLOCKED`, `NOT TESTED`, `UNSUP
 The early foundation has been audited for concrete correctness gaps rather than treated as automatically complete:
 
 - UEFI loader: corrected the EFI Simple File System protocol GUID and added an ELF segment alignment safety check.
-- ACPI: hardened RSDP/SDT validation, full RSD PTR signature checking, malformed MADT rejection, and XSDT→RSDT fallback.
+- ACPI: hardened RSDP/SDT validation, full RSD PTR signature checking, malformed MADT rejection, XSDT→RSDT fallback, and MADT x2APIC processor-entry parsing.
 - PMM: separated firmware-reported managed pages from allocation state, preventing `pmm_free_page()` from manufacturing free pages outside usable memory and making total/free accounting unique.
 - PCI/MSI-X: added MSI-X table programming to the build and retained explicit IOMMU-unavailable behavior rather than faking translation support.
+- Process/userspace: user-process creation now returns its PID explicitly instead of relying on process-table ordering when launching embedded init.
 - NVMe: corrected Create I/O CQ/SQ command field placement, enabled physically-contiguous queue creation, translated I/O buffers to physical PRPs, added two-page PRP support, hardened I/O bounds/overflow checks, registered namespaces with the block layer, and reset/free queue state on initialization failure.
 - Block cache: removed direct block-device I/O while holding the cache spinlock.
 
