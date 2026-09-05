@@ -17,6 +17,10 @@
 #define RIX_SYS_WAIT 61
 #define RIX_SYS_SIGMASK 14
 #define RIX_SYS_SIGPENDING 127
+#define RIX_SYS_SHM_CREATE 128
+#define RIX_SYS_SHM_MAP 129
+#define RIX_SYS_SHM_UNMAP 130
+#define RIX_SYS_SHM_DESTROY 131
 #define RIX_SYSCALL_ABI_VERSION 1u
 typedef struct {uint64_t r15,r14,r13,r12,r11,r10,r9,r8;uint64_t rbp,rdi,rsi,rdx,rcx,rbx,rax;uint64_t vector,error;uint64_t rip,cs,rflags,rsp,ss;} rix_syscall_frame_t;
 void syscall_init(void);
