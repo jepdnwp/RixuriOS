@@ -14,6 +14,10 @@ typedef struct {
     uint8_t css;
     uint8_t admin_ready;
     uint8_t identify_valid;
+    uint16_t admin_sq_tail;
+    uint16_t admin_cq_head;
+    uint8_t admin_cq_phase;
+    uint16_t admin_cid;
     uint64_t admin_sq_phys;
     uint64_t admin_cq_phys;
     uint32_t serial[5];
