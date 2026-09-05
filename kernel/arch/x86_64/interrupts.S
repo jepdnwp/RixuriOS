@@ -1,4 +1,4 @@
-"".section .text
+.section .text
 .extern x86_exception_dispatch
 .extern x86_irq_dispatch
 
@@ -6,22 +6,16 @@
     pushq %rax; pushq %rbx; pushq %rcx; pushq %rdx; pushq %rsi; pushq %rdi; pushq %rbp
     pushq %r8; pushq %r9; pushq %r10; pushq %r11; pushq %r12; pushq %r13; pushq %r14; pushq %r15
 .endm
-
 .macro RESTORE_REGS
     popq %r15; popq %r14; popq %r13; popq %r12; popq %r11; popq %r10; popq %r9; popq %r8
     popq %rbp; popq %rdi; popq %rsi; popq %rdx; popq %rcx; popq %rbx; popq %rax
 .endm
-
 .macro ISR_NOERR n
-.global isr
-
-.type isr
-,@function
-isr
-:
+.global isr\n
+.type isr\n,@function
+isr\n:
     pushq $0
-    pushq $
-
+    pushq $\n
     SAVE_REGS
     leaq 120(%rsp), %rdi
     call x86_exception_dispatch
@@ -29,16 +23,11 @@ isr
     addq $16, %rsp
     iretq
 .endm
-
 .macro ISR_ERR n
-.global isr
-
-.type isr
-,@function
-isr
-:
-    pushq $
-
+.global isr\n
+.type isr\n,@function
+isr\n:
+    pushq $\n
     SAVE_REGS
     leaq 120(%rsp), %rdi
     call x86_exception_dispatch
@@ -46,17 +35,12 @@ isr
     addq $8, %rsp
     iretq
 .endm
-
 .macro IRQ n
-.global isr
-
-.type isr
-,@function
-isr
-:
+.global isr\n
+.type isr\n,@function
+isr\n:
     pushq $0
-    pushq $
-
+    pushq $\n
     SAVE_REGS
     leaq 120(%rsp), %rdi
     call x86_irq_dispatch
@@ -64,7 +48,6 @@ isr
     addq $16, %rsp
     iretq
 .endm
-
 .global isr_default
 .type isr_default,@function
 isr_default:
@@ -76,7 +59,6 @@ isr_default:
     RESTORE_REGS
     addq $16, %rsp
     iretq
-.endm
 
 ISR_NOERR 0
 ISR_NOERR 1
@@ -110,7 +92,6 @@ ISR_NOERR 28
 ISR_ERR 29
 ISR_ERR 30
 ISR_NOERR 31
-
 IRQ 32
 IRQ 33
 IRQ 34
@@ -127,4 +108,3 @@ IRQ 44
 IRQ 45
 IRQ 46
 IRQ 47
-""
