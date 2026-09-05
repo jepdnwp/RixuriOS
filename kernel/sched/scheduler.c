@@ -1,8 +1,6 @@
 #include "scheduler.h"
-#include "../arch/x86_64/irq.h"
-#include <stddef.h>
+#include <stdint.h>
 static volatile uint64_t ticks;
-static void sched_irq(unsigned irq,const void *frame){(void)irq;(void)frame;scheduler_tick();}
-int scheduler_init(void){ticks=0;return irq_register(0,sched_irq);}
+int scheduler_init(void){ticks=0;return 0;}
 void scheduler_tick(void){ticks++;}
 uint64_t scheduler_ticks(void){return ticks;}
