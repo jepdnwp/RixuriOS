@@ -7,7 +7,7 @@ struct gdt_ptr { uint16_t limit; uint64_t base; } __attribute__((packed));
 static uint64_t gdt[3] __attribute__((aligned(8))) = {
     0x0000000000000000ULL,
     0x00AF9A000000FFFFULL,
-    0x00AF92000000FFFFULL
+    0x00CF92000000FFFFULL
 };
 
 static void gdt_load(const struct gdt_ptr *ptr) {
