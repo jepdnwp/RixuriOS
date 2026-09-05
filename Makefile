@@ -10,7 +10,9 @@ OBJ := \
 	kernel/boot.o \
 	kernel/main.o \
 	kernel/serial.o \
+	kernel/arch/x86_64/cpu.o \
 	kernel/arch/x86_64/gdt.o \
+	kernel/arch/x86_64/idt.o \
 	kernel/arch/x86_64/idt.o \
 	kernel/mm/pmm.o \
 	kernel/mm/vmm.o \
