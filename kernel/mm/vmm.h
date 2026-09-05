@@ -4,6 +4,8 @@
 #define RIXURI_PTE_PRESENT  (1ULL << 0)
 #define RIXURI_PTE_WRITE    (1ULL << 1)
 #define RIXURI_PTE_USER     (1ULL << 2)
+/* Software-owned leaf mapping. Cleared on borrowed identity mappings. */
+#define RIXURI_PTE_OWNED   (1ULL << 9)
 #define RIXURI_PTE_NX       (1ULL << 63)
 
 void vmm_early_init(void);
