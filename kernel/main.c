@@ -12,6 +12,7 @@
 #include "arch/x86_64/pic.h"
 #include "arch/x86_64/pit.h"
 #include "sched/scheduler.h"
+#include "process/process.h"
 #include "syscall/syscall.h"
 #include "vfs/vfs.h"
 
@@ -31,12 +32,14 @@ void kernel_main(const rixuri_boot_info_t *boot){
  if(boot->rsdp){if(acpi_init(boot->rsdp)==0){serial_write("ACPI CPUs: ");serial_write_dec(acpi_cpu_count());serial_write(" IOAPICs: ");serial_write_dec(acpi_ioapic_count());serial_write("\r\n");}else serial_write("ACPI: unavailable\r\n");}
  if(lapic_init()!=0)panic("local APIC initialization failed");
  pic_disable();
- if(acpi_ioapic_count()&&ioapic_init()==0)serial_write("IOAPIC: initialized\r\n");
+ if(acpi_ioapic_count()&&ioapic_init()==0){if(ioapic_route_irq(0,32,(uint8_t)lapic_id())==0)ioapic_unmask_irq(0);serial_write("IOAPIC: initialized\r\n");}
  if(pit_init(100)!=0)panic("PIT initialization failed");
  if(scheduler_init()!=0)panic("scheduler initialization failed");
+ if(process_init()!=0)panic("process subsystem initialization failed");
  syscall_init();
  if(vfs_init()!=0)panic("VFS initialization failed");
- serial_write("Core services: scheduler/syscall/VFS initialized\r\n");
+ idt_enable();
+ serial_write("Core services: timer/scheduler/process/syscall/VFS initialized\r\n");
  serial_write("LAPIC: initialized, id=");serial_write_dec(lapic_id());serial_write("\r\n");
  halt_forever();
 }
