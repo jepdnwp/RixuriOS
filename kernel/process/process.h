@@ -1,7 +1,6 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
-
 #include "address_space.h"
 
 typedef uint64_t pid_t;
@@ -9,6 +8,7 @@ typedef enum { RIX_PROC_UNUSED=0, RIX_PROC_RUNNING=1, RIX_PROC_SLEEPING=2, RIX_P
 #define RIX_PROCESS_MAX 128
 #define RIX_PROCESS_NAME_MAX 32
 #define RIX_PROCESS_FD_MAX 64
+#define RIX_SIGNAL_MAX 64
 
 typedef struct {
     pid_t pid;
@@ -21,6 +21,8 @@ typedef struct {
     uint64_t kernel_stack_size;
     uint64_t exit_status;
     uint64_t fd_bitmap;
+    uint64_t signal_pending;
+    uint64_t signal_mask;
     char name[RIX_PROCESS_NAME_MAX];
 } rix_process_t;
 
