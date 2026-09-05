@@ -14,6 +14,7 @@ OBJ := \
 	kernel/arch/x86_64/gdt.o \
 	kernel/arch/x86_64/idt.o \
 	kernel/arch/x86_64/interrupts.o \
+	kernel/arch/x86_64/apic.o \
 	kernel/mm/pmm.o \
 	kernel/mm/vmm.o \
 	kernel/mm/heap.o
