@@ -8,6 +8,7 @@
 
 void vmm_early_init(void);
 uint64_t vmm_kernel_pml4(void);
+int vmm_map_page_in_pml4(uint64_t pml4_phys,uint64_t virtual_address,uint64_t physical_address,uint64_t flags);
 int vmm_map_page(uint64_t virtual_address,uint64_t physical_address,uint64_t flags);
 void vmm_unmap_page(uint64_t virtual_address);
 uint64_t vmm_translate(uint64_t virtual_address);
