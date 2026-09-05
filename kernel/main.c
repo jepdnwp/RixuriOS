@@ -14,6 +14,7 @@
 #include "sched/scheduler.h"
 #include "process/process.h"
 #include "vfs/vfs.h"
+#include "storage/block.h"
 
 static void halt_forever(void){for(;;)__asm__ volatile("hlt");}
 void kernel_main(const rixuri_boot_info_t *boot){
@@ -33,6 +34,7 @@ void kernel_main(const rixuri_boot_info_t *boot){
  if(pit_init(100)!=0)panic("PIT initialization failed");
  if(scheduler_init()!=0)panic("scheduler initialization failed");
  if(process_init()!=0)panic("process subsystem initialization failed");
+ if(block_init()!=0)panic("block subsystem initialization failed");
  if(vfs_init()!=0)panic("VFS initialization failed");
  int io_ready=0;
  if(acpi_ioapic_count()&&ioapic_init()==0){
@@ -41,7 +43,7 @@ void kernel_main(const rixuri_boot_info_t *boot){
  }
  if(io_ready){idt_enable();serial_write("IRQ: PIT routed to vector 32; interrupts enabled\r\n");}
  else serial_write("IRQ: no usable IOAPIC; interrupts remain disabled\r\n");
- serial_write("Core services: timer/scheduler/process/VFS initialized\r\n");
+ serial_write("Core services: timer/scheduler/process/block/VFS initialized\r\n");
  serial_write("LAPIC: initialized, id=");serial_write_dec(lapic_id());serial_write("\r\n");
  halt_forever();
 }
