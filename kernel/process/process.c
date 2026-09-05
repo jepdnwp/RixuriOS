@@ -1,6 +1,7 @@
 #include "process.h"
 #include "../elf/loader.h"
 #include "../mm/pmm.h"
+#include "../mm/vmm.h"
 #include "../arch/x86_64/tss.h"
 #include <stddef.h>
 
@@ -41,7 +42,7 @@ int process_create_user(const char *name,pid_t parent,const void *image,uint64_t
   if(address_space_map(&p->address_space,USER_STACK_BASE+i*4096ULL,pa,RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE|RIXURI_PTE_USER|RIXURI_PTE_NX)!=0){pmm_free_page(pa);goto fail;}
  }
  rix_elf_image_t elf;if(elf_load_image(image,image_size,&p->address_space,&elf)!=0)goto fail;
- uint64_t kernel_stack=pmm_alloc_page();if(!kernel_stack)goto fail;zero_page(kernel_stack);p->kernel_stack=kernel_stack;p->kernel_stack_size=KERNEL_STACK_SIZE;tss_set_rsp0(kernel_stack+KERNEL_STACK_SIZE);
+ uint64_t kernel_stack=pmm_alloc_page();if(!kernel_stack)goto fail;zero_page(kernel_stack);p->kernel_stack=kernel_stack;p->kernel_stack_size=KERNEL_STACK_SIZE;
  p->state=RIX_PROC_SLEEPING;*out_entry=elf.entry;*out_user_stack=USER_STACK_TOP;return 0;
 fail:
  address_space_destroy(&p->address_space);
@@ -49,5 +50,14 @@ fail:
  clear_process(p);if(live_count)live_count--;return -1;
 }
 
-int process_set_state(pid_t pid,rix_process_state_t state){rix_process_t *p=process_lookup(pid);if(!p||state==RIX_PROC_UNUSED)return -1;p->state=state;if(state==RIX_PROC_RUNNING)current_pid=pid;return 0;}
+int process_activate(pid_t pid){
+ if(pid==0){current_pid=0;uint64_t cr3=vmm_kernel_pml4();__asm__ volatile("mov %0,%%cr3"::"r"(cr3):"memory");return 0;}
+ rix_process_t *p=process_lookup(pid);if(!p||p->state==RIX_PROC_UNUSED||p->state==RIX_PROC_ZOMBIE||!p->address_space.pml4_phys||!p->kernel_stack||!p->kernel_stack_size)return -1;
+ current_pid=pid;tss_set_rsp0(p->kernel_stack+p->kernel_stack_size);__asm__ volatile("mov %0,%%cr3"::"r"(p->address_space.pml4_phys):"memory");return 0;
+}
+
+int process_set_state(pid_t pid,rix_process_state_t state){
+ rix_process_t *p=process_lookup(pid);if(!p||state==RIX_PROC_UNUSED)return -1;rix_process_state_t old=p->state;p->state=state;
+ if(state==RIX_PROC_RUNNING&&process_activate(pid)!=0){p->state=old;return -1;}return 0;
+}
 int process_exit(pid_t pid,uint64_t status){rix_process_t *p=process_lookup(pid);if(!p||pid==0)return -1;p->exit_status=status;p->state=RIX_PROC_ZOMBIE;if(current_pid==pid)current_pid=0;return 0;}
