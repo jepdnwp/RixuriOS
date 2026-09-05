@@ -7,7 +7,7 @@
 #define USER_STACK_TOP 0x00007FFFFFFFF000ULL
 #define USER_STACK_PAGES 8ULL
 #define USER_STACK_BASE (USER_STACK_TOP - USER_STACK_PAGES * 4096ULL)
-#define KERNEL_STACK_SIZE (16ULL * 4096ULL)
+#define KERNEL_STACK_SIZE 4096ULL
 
 static rix_process_t table[RIX_PROCESS_MAX];
 static pid_t current_pid;
@@ -65,24 +65,17 @@ int process_create_user(const char *name,pid_t parent,const void *image,uint64_t
     rix_elf_image_t elf;
     if(elf_load_image(image,image_size,&p->address_space,&elf)!=0)goto fail;
 
-    uint64_t stack_page=pmm_alloc_page();
-    if(!stack_page)goto fail;
-    zero_page(stack_page);
-    /* Keep the kernel stack contiguous in metadata only after every page is acquired. */
-    p->kernel_stack=stack_page;
-    for(uint64_t i=1;i<KERNEL_STACK_SIZE/4096ULL;i++){
-        uint64_t page=pmm_alloc_page();
-        if(!page)goto fail;
-        zero_page(page);
-    }
+    uint64_t kernel_stack=pmm_alloc_page();
+    if(!kernel_stack)goto fail;
+    zero_page(kernel_stack);
+    p->kernel_stack=kernel_stack;
     p->kernel_stack_size=KERNEL_STACK_SIZE;
-    tss_set_rsp0(p->kernel_stack + KERNEL_STACK_SIZE);
+    tss_set_rsp0(kernel_stack + KERNEL_STACK_SIZE);
     p->state=RIX_PROC_SLEEPING;
     *out_entry=elf.entry;
     *out_user_stack=USER_STACK_TOP;
     return 0;
 fail:
-    /* The complete mapping/physical-page rollback belongs with address-space teardown. */
     p->state=RIX_PROC_ZOMBIE;
     return -1;
 }
