@@ -572,7 +572,7 @@ No GUI dependency is allowed for basic audio/device testing.
 - Kernel symbol tooling.
 - Crash dumps/backtraces where possible.
 - Developer shell utilities.
-- Mayo integration.
+- Mayo text editor creation(nano like).
 - Reproducible builds.
 - Cross-compilation workflow.
 - Host-to-RixuriOS development workflow.
