@@ -4,6 +4,9 @@
 x86_enter_user:
     movq %rdi,%cr3
     cli
+    movw $0x20,%ax
+    movw %ax,%ds
+    movw %ax,%es
     pushq $0x20
     pushq %rdx
     pushfq
