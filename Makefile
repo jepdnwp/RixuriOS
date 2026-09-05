@@ -6,7 +6,7 @@ CFLAGS := -std=c17 -ffreestanding -fno-stack-protector -fno-pie -mno-red-zone -m
 LDFLAGS := -nostdlib -z max-page-size=0x1000 -T linker/kernel.ld
 OBJ := kernel/boot.o kernel/main.o kernel/serial.o \
  kernel/arch/x86_64/cpu.o kernel/arch/x86_64/gdt.o kernel/arch/x86_64/idt.o kernel/arch/x86_64/interrupts.o kernel/arch/x86_64/irq.o kernel/arch/x86_64/apic.o kernel/arch/x86_64/acpi.o kernel/arch/x86_64/ioapic.o kernel/arch/x86_64/pic.o kernel/arch/x86_64/pit.o \
- kernel/sched/scheduler.o kernel/process/process.o kernel/syscall/syscall.o kernel/vfs/vfs.o \
+ kernel/sched/scheduler.o kernel/sched/switch.o kernel/process/process.o kernel/syscall/syscall.o kernel/vfs/vfs.o \
  kernel/mm/pmm.o kernel/mm/vmm.o kernel/mm/heap.o kernel/sync/lock.o kernel/sync/waitqueue.o
 
 .PHONY: all clean check
