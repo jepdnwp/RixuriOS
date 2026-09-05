@@ -85,5 +85,14 @@ void scheduler_yield(void){
     else if(tasks[next].id==0){if(process_activate(0)!=0){if(flags&0x200ULL)sti();return;}}
     tasks[next].state=TASK_RUNNING;current_index=next;
     rix_context_switch(&tasks[old].rsp,tasks[next].rsp);
+    /* The context switch returns in the task that was waiting in this
+       function. The address space must follow the resumed task, not the task
+       that ran immediately before it. */
+    rix_task_t *resumed=&tasks[current_index];
+    if(resumed->process_pid){
+        if(process_activate(resumed->process_pid)!=0)resumed->state=TASK_DEAD;
+    }else if(resumed->id==0){
+        (void)process_activate(0);
+    }
     if(flags&0x200ULL)sti();
 }
