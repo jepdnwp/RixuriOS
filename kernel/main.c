@@ -11,6 +11,7 @@
 #include "arch/x86_64/ioapic.h"
 #include "arch/x86_64/pic.h"
 #include "arch/x86_64/pit.h"
+#include "pci/pci.h"
 #include "sched/scheduler.h"
 #include "process/process.h"
 #include "vfs/vfs.h"
@@ -31,6 +32,8 @@ void kernel_main(const rixuri_boot_info_t *boot){
  heap_init();void *probe=kmalloc(1,sizeof(uintptr_t));if(!probe)panic("kernel heap initialization failed");kfree(probe);serial_write("KHEAP: initialized\r\n");
  if(boot->rsdp){if(acpi_init(boot->rsdp)==0){serial_write("ACPI CPUs: ");serial_write_dec(acpi_cpu_count());serial_write(" IOAPICs: ");serial_write_dec(acpi_ioapic_count());serial_write("\r\n");}else serial_write("ACPI: unavailable\r\n");}
  if(lapic_init()!=0)panic("local APIC initialization failed");
+ if(pci_init()!=0)panic("PCI initialization failed");
+ serial_write("PCI: devices=");serial_write_dec(pci_device_count());serial_write("\r\n");
  if(pit_init(100)!=0)panic("PIT initialization failed");
  if(scheduler_init()!=0)panic("scheduler initialization failed");
  if(process_init()!=0)panic("process subsystem initialization failed");
@@ -43,7 +46,7 @@ void kernel_main(const rixuri_boot_info_t *boot){
  }
  if(io_ready){idt_enable();serial_write("IRQ: PIT routed to vector 32; interrupts enabled\r\n");}
  else serial_write("IRQ: no usable IOAPIC; interrupts remain disabled\r\n");
- serial_write("Core services: timer/scheduler/process/block/VFS initialized\r\n");
+ serial_write("Core services: timer/scheduler/process/PCI/block/VFS initialized\r\n");
  serial_write("LAPIC: initialized, id=");serial_write_dec(lapic_id());serial_write("\r\n");
  halt_forever();
 }
