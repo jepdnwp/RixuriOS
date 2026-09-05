@@ -1,0 +1,47 @@
+name: RixuriOS CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-qemu:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain and QEMU/UEFI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc binutils mingw-w64 qemu-system-x86 ovmf dosfstools mtools
+
+      - name: Build kernel
+        run: make CROSS= check
+
+      - name: Build UEFI loader and ESP
+        run: ./scripts/build-uefi.sh
+
+      - name: Run RixuriOS under QEMU
+        run: timeout 20s ./scripts/run-qemu.sh | tee qemu.log
+
+      - name: Validate kernel reached early initialization
+        run: |
+          grep -F "RixuriOS kernel: x86_64 / AMD64 64-bit" qemu.log
+          grep -F "Boot handoff: version=" qemu.log
+          grep -F "PMM: total=" qemu.log
+          grep -F "VMM: early identity map active" qemu.log
+          grep -F "KHEAP: initialized" qemu.log
+          grep -F "LAPIC: initialized" qemu.log
+
+      - name: Upload QEMU log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-log
+          path: qemu.log
