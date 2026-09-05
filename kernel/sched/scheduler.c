@@ -16,14 +16,18 @@ static uint32_t current_index;
 static rix_task_id_t next_id;
 
 static void task_returned(void){ tasks[current_index].state=TASK_DEAD; for(;;) scheduler_yield(); }
-static void task_bootstrap(void){ rix_task_t *t=&tasks[current_index]; t->entry(t->arg); task_returned(); }
-static void sched_irq(unsigned irq,const void *frame){ (void)irq; (void)frame; scheduler_tick(); }
+static void task_bootstrap(void){
+    __asm__ volatile("sti" ::: "memory");
+    rix_task_t *t=&tasks[current_index];
+    t->entry(t->arg);
+    task_returned();
+}
 
 int scheduler_init(void){
     ticks=0;current_index=0;next_id=1;
     for(uint32_t i=0;i<RIX_MAX_TASKS;i++){tasks[i].id=0;tasks[i].state=TASK_UNUSED;tasks[i].rsp=0;tasks[i].entry=NULL;tasks[i].arg=NULL;}
     tasks[0].id=0;tasks[0].state=TASK_RUNNING;
-    return irq_register(0,sched_irq);
+    return 0;
 }
 void scheduler_tick(void){ticks++;}
 uint64_t scheduler_ticks(void){return ticks;}
