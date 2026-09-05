@@ -1,4 +1,5 @@
 #include "kernel.h"
+#include "serial.h"
 #include "mm/pmm.h"
 #include "mm/vmm.h"
 #include "mm/heap.h"
@@ -6,59 +7,36 @@
 #include "arch/x86_64/gdt.h"
 #include "arch/x86_64/idt.h"
 #include "arch/x86_64/apic.h"
+#include "arch/x86_64/acpi.h"
+#include "arch/x86_64/ioapic.h"
+#include "arch/x86_64/pic.h"
+#include "arch/x86_64/pit.h"
+#include "sched/scheduler.h"
+#include "syscall/syscall.h"
+#include "vfs/vfs.h"
 
-static void halt_forever(void) {
-    for (;;) __asm__ volatile ("hlt");
-}
-
-void kernel_main(const rixuri_boot_info_t *boot) {
-    serial_init();
-    serial_write("RixuriOS kernel: x86_64 / AMD64 64-bit\r\n");
-
-    if (!boot || boot->magic != RIXURI_BOOT_MAGIC ||
-        boot->version != RIXURI_BOOT_VERSION || boot->size < sizeof(*boot)) {
-        panic("invalid UEFI boot handoff");
-    }
-    if (!boot->memory_map || !boot->memory_descriptor_size || !boot->memory_map_size) {
-        panic("missing UEFI memory map");
-    }
-
-    serial_write("Boot handoff: version="); serial_write_dec(boot->version);
-    serial_write(" size="); serial_write_dec(boot->size); serial_write("\r\n");
-    serial_write("ACPI RSDP: "); serial_write_hex(boot->rsdp); serial_write("\r\n");
-    serial_write("Framebuffer: "); serial_write_hex(boot->framebuffer_base);
-    serial_write(" "); serial_write_dec(boot->framebuffer_width);
-    serial_write("x"); serial_write_dec(boot->framebuffer_height);
-    serial_write(" pitch="); serial_write_dec(boot->framebuffer_pitch); serial_write("\r\n");
-
-    gdt_init();
-    serial_write("GDT: initialized\r\n");
-    idt_init();
-    serial_write("IDT: initialized\r\n");
-
-    serial_write("CPU features: "); serial_write_hex(x86_cpu_features()); serial_write("\r\n");
-
-    pmm_init((const void *)(uintptr_t)boot->memory_map,
-             boot->memory_map_size,
-             boot->memory_descriptor_size,
-             boot->kernel_phys_base,
-             boot->kernel_phys_end,
-             (uint64_t)(uintptr_t)boot,
-             sizeof(*boot));
-    if (pmm_free_pages() == 0) panic("physical memory allocator has no free pages");
-    serial_write("PMM: total="); serial_write_dec(pmm_total_pages());
-    serial_write(" free="); serial_write_dec(pmm_free_pages()); serial_write("\r\n");
-
-    vmm_early_init();
-    if (vmm_kernel_pml4() == 0) panic("VMM initialization failed");
-    serial_write("VMM: early identity map active\r\n");
-
-    heap_init();
-    if (!kmalloc(1, sizeof(uintptr_t))) panic("kernel heap initialization failed");
-    serial_write("KHEAP: initialized\r\n");
-
-    if (lapic_init() != 0) panic("local APIC initialization failed");
-    serial_write("LAPIC: initialized, id="); serial_write_dec(lapic_id()); serial_write("\r\n");
-
-    halt_forever();
+static void halt_forever(void){for(;;)__asm__ volatile("hlt");}
+void kernel_main(const rixuri_boot_info_t *boot){
+ serial_init();serial_write("RixuriOS kernel: x86_64 / AMD64 64-bit\r\n");
+ if(!boot||boot->magic!=RIXURI_BOOT_MAGIC||boot->version!=RIXURI_BOOT_VERSION||boot->size<sizeof(*boot))panic("invalid UEFI boot handoff");
+ if(!boot->memory_map||!boot->memory_descriptor_size||!boot->memory_map_size)panic("missing UEFI memory map");
+ serial_write("Boot handoff: version=");serial_write_dec(boot->version);serial_write(" size=");serial_write_dec(boot->size);serial_write("\r\n");
+ serial_write("ACPI RSDP: ");serial_write_hex(boot->rsdp);serial_write("\r\n");
+ gdt_init();idt_init();serial_write("GDT/IDT: initialized\r\n");
+ pmm_init((const void*)(uintptr_t)boot->memory_map,boot->memory_map_size,boot->memory_descriptor_size,boot->kernel_phys_base,boot->kernel_phys_end,(uint64_t)(uintptr_t)boot,sizeof(*boot));
+ if(!pmm_free_pages())panic("physical memory allocator has no free pages");
+ serial_write("PMM: total=");serial_write_dec(pmm_total_pages());serial_write(" free=");serial_write_dec(pmm_free_pages());serial_write("\r\n");
+ vmm_early_init();if(!vmm_kernel_pml4())panic("VMM initialization failed");serial_write("VMM: initialized\r\n");
+ heap_init();if(!kmalloc(1,sizeof(uintptr_t)))panic("kernel heap initialization failed");serial_write("KHEAP: initialized\r\n");
+ if(boot->rsdp){if(acpi_init(boot->rsdp)==0){serial_write("ACPI CPUs: ");serial_write_dec(acpi_cpu_count());serial_write(" IOAPICs: ");serial_write_dec(acpi_ioapic_count());serial_write("\r\n");}else serial_write("ACPI: unavailable\r\n");}
+ if(lapic_init()!=0)panic("local APIC initialization failed");
+ pic_disable();
+ if(acpi_ioapic_count()&&ioapic_init()==0)serial_write("IOAPIC: initialized\r\n");
+ if(pit_init(100)!=0)panic("PIT initialization failed");
+ if(scheduler_init()!=0)panic("scheduler initialization failed");
+ syscall_init();
+ if(vfs_init()!=0)panic("VFS initialization failed");
+ serial_write("Core services: scheduler/syscall/VFS initialized\r\n");
+ serial_write("LAPIC: initialized, id=");serial_write_dec(lapic_id());serial_write("\r\n");
+ halt_forever();
 }
