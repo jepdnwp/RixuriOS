@@ -1,5 +1,6 @@
 #include "syscall.h"
 #include "../process/process.h"
+#include "../sched/scheduler.h"
 #include "../mm/uaccess.h"
 #include "../../include/kernel.h"
 #include <stdint.h>
@@ -18,7 +19,10 @@ void syscall_dispatch(rix_syscall_frame_t *frame){
             char buffer[RIX_MAX_WRITE];if(len&&copy_from_user(buffer,src,(size_t)len)!=0){result=-(int64_t)RIX_EFAULT;break;}
             serial_write_n(buffer,(size_t)len);result=(int64_t)len;break;
         }
-        case RIX_SYS_EXIT: result=process_exit(process_current(),frame->rdi)==0?0:-(int64_t)RIX_EINVAL;break;
+        case RIX_SYS_EXIT:
+            if(process_exit(process_current(),frame->rdi)!=0)result=-(int64_t)RIX_EINVAL;
+            else scheduler_exit_current();
+            break;
         default: break;
     }
     frame->rax=(uint64_t)result;
