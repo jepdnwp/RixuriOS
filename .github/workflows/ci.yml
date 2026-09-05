@@ -25,10 +25,10 @@ jobs:
         run: make CROSS= check
 
       - name: Build UEFI loader and ESP
-        run: ./scripts/build-uefi.sh
+        run: bash scripts/build-uefi.sh
 
       - name: Run RixuriOS under QEMU
-        run: timeout 20s ./scripts/run-qemu.sh | tee qemu.log
+        run: timeout 20s bash scripts/run-qemu.sh | tee qemu.log
 
       - name: Validate kernel reached early initialization
         run: |
