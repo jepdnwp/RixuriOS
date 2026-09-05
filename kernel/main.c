@@ -2,6 +2,8 @@
 #include "mm/pmm.h"
 #include "mm/vmm.h"
 #include "mm/heap.h"
+#include "arch/x86_64/gdt.h"
+#include "arch/x86_64/idt.h"
 
 static void halt_forever(void) {
     for (;;) __asm__ volatile ("hlt");
@@ -19,7 +21,11 @@ void kernel_main(const rixuri_boot_info_t *boot) {
         panic("missing UEFI memory map");
     }
 
-    serial_write("UEFI boot handoff: OK\r\n");
+    gdt_init();
+    serial_write("GDT: initialized\r\n");
+    idt_init();
+    serial_write("IDT: initialized\r\n");
+
     pmm_init((const void *)(uintptr_t)boot->memory_map,
              boot->memory_map_size,
              boot->memory_descriptor_size,
