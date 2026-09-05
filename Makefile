@@ -2,6 +2,8 @@ CROSS ?= x86_64-elf-
 CC := $(CROSS)gcc
 LD := $(CROSS)ld
 OBJCOPY := $(CROSS)objcopy
+READELF := $(CROSS)readelf
+OBJDUMP := $(CROSS)objdump
 CFLAGS := -std=c17 -ffreestanding -fno-stack-protector -fno-pie -mno-red-zone -m64 -Wall -Wextra -Werror -O2 -Iinclude
 LDFLAGS := -nostdlib -z max-page-size=0x1000 -T linker/kernel.ld
 OBJ := kernel/boot.o kernel/main.o kernel/serial.o \
@@ -9,18 +11,46 @@ OBJ := kernel/boot.o kernel/main.o kernel/serial.o \
  kernel/pci/pci.o kernel/sched/scheduler.o kernel/sched/switch.o kernel/process/process.o kernel/process/address_space.o kernel/syscall/syscall.o kernel/vfs/vfs.o kernel/elf/elf.o kernel/elf/loader.o \
  kernel/mm/pmm.o kernel/mm/vmm.o kernel/mm/uaccess.o kernel/mm/heap.o kernel/sync/lock.o kernel/sync/waitqueue.o kernel/ipc/channel.o kernel/tty/tty.o \
  kernel/storage/block.o kernel/storage/nvme.o kernel/usb/xhci.o
-.PHONY: all clean check
+.PHONY: all clean check image run qemu build-run test
+
 all: build/kernel.elf
-build/kernel.elf: $(OBJ) linker/kernel.ld
+
+build:
 	mkdir -p build
+
+build/kernel.elf: $(OBJ) linker/kernel.ld | build
 	$(LD) $(LDFLAGS) -o $@ $(OBJ)
+	$(READELF) -h $@ >/dev/null
+	$(READELF) -l $@ >/dev/null
+
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
+
 %.o: %.S
 	$(CC) $(CFLAGS) -c $< -o $@
+
 check: all
-	$(CROSS)objdump -f build/kernel.elf
-	$(CROSS)readelf -h build/kernel.elf
-	$(CROSS)readelf -l build/kernel.elf
+	$(OBJDUMP) -f build/kernel.elf
+	$(READELF) -h build/kernel.elf
+	$(READELF) -l build/kernel.elf
+	$(OBJDUMP) -drwC build/kernel.elf > build/kernel.disasm
+
+image: all
+	./scripts/build-uefi.sh
+
+run: image
+	./scripts/run-qemu.sh
+
+qemu: run
+
+build-run: clean
+	$(MAKE) all
+	$(MAKE) check
+	$(MAKE) image
+	$(MAKE) run
+
+test: check
+	@echo 'Static kernel build checks completed.'
+
 clean:
 	rm -rf build kernel/*.o kernel/mm/*.o kernel/arch/x86_64/*.o kernel/pci/*.o kernel/sched/*.o kernel/process/*.o kernel/syscall/*.o kernel/vfs/*.o kernel/elf/*.o kernel/sync/*.o kernel/storage/*.o kernel/usb/*.o kernel/ipc/*.o kernel/tty/*.o
