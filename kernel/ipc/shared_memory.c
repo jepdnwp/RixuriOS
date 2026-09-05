@@ -1,9 +1,9 @@
 #include "shared_memory.h"
 #include "../mm/pmm.h"
+#include "../mm/vmm.h"
 #include <stddef.h>
 
 #define PAGE_SIZE 4096ULL
-#define PAGE_MASK ~(PAGE_SIZE-1ULL)
 
 typedef struct { uint8_t used; uint32_t refs; uint64_t size; uint64_t pages[RIX_SHM_MAX_PAGES]; } shm_object_t;
 static shm_object_t objects[RIX_SHM_MAX];
@@ -24,19 +24,20 @@ int shm_create(uint64_t size,rix_shm_id_t *out_id){
     return -1;
 }
 int shm_map(rix_shm_id_t id,pid_t pid,uint64_t va,uint64_t flags){
-    shm_object_t *o=lookup(id);rix_process_t *p=process_lookup(pid);if(!o||!p||!p->address_space.pml4_phys||!va||((va&0xfffULL)!=0))return -1;
+    shm_object_t *o=lookup(id);rix_process_t *p=process_lookup(pid);if(!o||!p||!p->address_space.pml4_phys||!va||(va&0xfffULL))return -1;
     if(va>=0x0000800000000000ULL||o->size>0x0000800000000000ULL-va)return -1;
-    for(uint64_t off=0;off<o->size;off+=PAGE_SIZE)if(address_space_map_shared(&p->address_space,va+off,o->pages[off/PAGE_SIZE],flags)!=0){
-        for(uint64_t rollback=0;rollback<off;rollback+=PAGE_SIZE)address_space_map_shared(&p->address_space,va+rollback,0,0);
+    uint64_t mapped=0;
+    for(;mapped<o->size;mapped+=PAGE_SIZE)if(address_space_map_shared(&p->address_space,va+mapped,o->pages[mapped/PAGE_SIZE],flags)!=0){
+        for(uint64_t rollback=0;rollback<mapped;rollback+=PAGE_SIZE)vmm_unmap_page_in_pml4(p->address_space.pml4_phys,va+rollback);
         return -1;
     }
     o->refs++;return 0;
 }
 int shm_unmap(rix_shm_id_t id,pid_t pid,uint64_t va){
     shm_object_t *o=lookup(id);rix_process_t *p=process_lookup(pid);if(!o||!p||!p->address_space.pml4_phys||!va||(va&0xfffULL))return -1;
-    /* Unmapping is deliberately page-table removal only; the object owns the physical pages. */
-    for(uint64_t off=0;off<o->size;off+=PAGE_SIZE){if(address_space_query_flags(&p->address_space,va+off)&RIXURI_PTE_OWNED)return -1;}
-    return 0;
+    for(uint64_t off=0;off<o->size;off+=PAGE_SIZE){uint64_t f=address_space_query_flags(&p->address_space,va+off);if(!(f&RIXURI_PTE_PRESENT)||(f&RIXURI_PTE_OWNED))return -1;}
+    for(uint64_t off=0;off<o->size;off+=PAGE_SIZE)if(vmm_unmap_page_in_pml4(p->address_space.pml4_phys,va+off)!=0)return -1;
+    if(o->refs)o->refs--;return 0;
 }
 int shm_destroy(rix_shm_id_t id){
     shm_object_t *o=lookup(id);if(!o||o->refs)return -1;
