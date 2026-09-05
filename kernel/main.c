@@ -13,7 +13,6 @@
 #include "arch/x86_64/pit.h"
 #include "sched/scheduler.h"
 #include "process/process.h"
-#include "syscall/syscall.h"
 #include "vfs/vfs.h"
 
 static void halt_forever(void){for(;;)__asm__ volatile("hlt");}
@@ -28,18 +27,21 @@ void kernel_main(const rixuri_boot_info_t *boot){
  if(!pmm_free_pages())panic("physical memory allocator has no free pages");
  serial_write("PMM: total=");serial_write_dec(pmm_total_pages());serial_write(" free=");serial_write_dec(pmm_free_pages());serial_write("\r\n");
  vmm_early_init();if(!vmm_kernel_pml4())panic("VMM initialization failed");serial_write("VMM: initialized\r\n");
- heap_init();if(!kmalloc(1,sizeof(uintptr_t)))panic("kernel heap initialization failed");serial_write("KHEAP: initialized\r\n");
+ heap_init();void *probe=kmalloc(1,sizeof(uintptr_t));if(!probe)panic("kernel heap initialization failed");kfree(probe);serial_write("KHEAP: initialized\r\n");
  if(boot->rsdp){if(acpi_init(boot->rsdp)==0){serial_write("ACPI CPUs: ");serial_write_dec(acpi_cpu_count());serial_write(" IOAPICs: ");serial_write_dec(acpi_ioapic_count());serial_write("\r\n");}else serial_write("ACPI: unavailable\r\n");}
  if(lapic_init()!=0)panic("local APIC initialization failed");
- pic_disable();
- if(acpi_ioapic_count()&&ioapic_init()==0){if(ioapic_route_irq(0,32,(uint8_t)lapic_id())==0)ioapic_unmask_irq(0);serial_write("IOAPIC: initialized\r\n");}
  if(pit_init(100)!=0)panic("PIT initialization failed");
  if(scheduler_init()!=0)panic("scheduler initialization failed");
  if(process_init()!=0)panic("process subsystem initialization failed");
- syscall_init();
  if(vfs_init()!=0)panic("VFS initialization failed");
- idt_enable();
- serial_write("Core services: timer/scheduler/process/syscall/VFS initialized\r\n");
+ int io_ready=0;
+ if(acpi_ioapic_count()&&ioapic_init()==0){
+   if(ioapic_route_irq(0,32,(uint8_t)lapic_id())!=0)panic("failed to route PIT IRQ");
+   ioapic_unmask_irq(0);pic_disable();io_ready=1;
+ }
+ if(io_ready){idt_enable();serial_write("IRQ: PIT routed to vector 32; interrupts enabled\r\n");}
+ else serial_write("IRQ: no usable IOAPIC; interrupts remain disabled\r\n");
+ serial_write("Core services: timer/scheduler/process/VFS initialized\r\n");
  serial_write("LAPIC: initialized, id=");serial_write_dec(lapic_id());serial_write("\r\n");
  halt_forever();
 }
