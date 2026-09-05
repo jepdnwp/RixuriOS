@@ -19,7 +19,7 @@ jobs:
       - name: Inspect ELF
         run: make CROSS=x86_64-linux-gnu- check
       - name: Build UEFI image
-        run: ./scripts/build-uefi.sh
+        run: bash ./scripts/build-uefi.sh
       - name: Verify image contents
         run: |
           test -s build/kernel.elf
@@ -30,7 +30,7 @@ jobs:
         timeout-minutes: 2
         run: |
           set +e
-          timeout 45s ./scripts/run-qemu.sh > build/qemu.log 2>&1
+          timeout 45s bash ./scripts/run-qemu.sh > build/qemu.log 2>&1
           rc=$?
           set -e
           cat build/qemu.log
