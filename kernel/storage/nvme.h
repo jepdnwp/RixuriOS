@@ -27,6 +27,7 @@ typedef struct {
     uint8_t admin_ready;
     uint8_t io_ready;
     uint8_t identify_valid;
+    uint8_t io_failed;
     uint16_t admin_sq_tail;
     uint16_t admin_cq_head;
     uint8_t admin_cq_phase;
