@@ -28,5 +28,7 @@ typedef struct rixuri_boot_info {
 
 void serial_init(void);
 void serial_write(const char *s);
+void serial_write_hex(uint64_t value);
+void serial_write_dec(uint64_t value);
 void panic(const char *reason);
 void kernel_main(const rixuri_boot_info_t *boot);
