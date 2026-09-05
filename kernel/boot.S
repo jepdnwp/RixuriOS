@@ -4,7 +4,7 @@
 
 _start:
     cli
-    mov %rdi, %rdi
+    /* SysV x86_64 ABI: RDI already contains the boot-info pointer. */
     lea stack_top(%rip), %rsp
     and $-16, %rsp
     call kernel_main
