@@ -1,6 +1,7 @@
 #include "kernel.h"
 #include "mm/pmm.h"
 #include "mm/vmm.h"
+#include "mm/heap.h"
 
 static void halt_forever(void) {
     for (;;) __asm__ volatile ("hlt");
@@ -32,6 +33,10 @@ void kernel_main(const rixuri_boot_info_t *boot) {
     vmm_early_init();
     if (vmm_kernel_pml4() == 0) panic("VMM initialization failed");
     serial_write("VMM: early identity map active\r\n");
+
+    heap_init();
+    if (!kmalloc(1, sizeof(uintptr_t))) panic("kernel heap initialization failed");
+    serial_write("KHEAP: initialized\r\n");
 
     halt_forever();
 }
