@@ -1,6 +1,7 @@
 .section .text
 .extern x86_exception_dispatch
 .extern x86_irq_dispatch
+.extern syscall_dispatch
 
 .macro SAVE_REGS
     pushq %rax; pushq %rbx; pushq %rcx; pushq %rdx; pushq %rsi; pushq %rdi; pushq %rbp
@@ -48,6 +49,7 @@ isr\n:
     addq $16, %rsp
     iretq
 .endm
+
 .global isr_default
 .type isr_default,@function
 isr_default:
@@ -58,6 +60,18 @@ isr_default:
     call x86_exception_dispatch
     RESTORE_REGS
     addq $16, %rsp
+    iretq
+
+.global isr128
+.type isr128,@function
+isr128:
+    pushq $0
+    pushq $128
+    SAVE_REGS
+    movq %rsp,%rdi
+    call syscall_dispatch
+    RESTORE_REGS
+    addq $16,%rsp
     iretq
 
 ISR_NOERR 0
