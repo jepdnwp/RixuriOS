@@ -27,7 +27,7 @@ build/user_init.elf: build/user_init.o user/init.ld | build
 	$(READELF) -l $@ >/dev/null
 
 kernel/user_init_blob.o: build/user_init.elf | build
-	$(OBJCOPY) -I elf64-x86-64 -O elf64-x86-64 -B i386:x86-64 $< $@
+	$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
 
 user-init: build/user_init.elf
 
