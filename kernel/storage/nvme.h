@@ -2,6 +2,18 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define RIX_NVME_MAX_NAMESPACES 32
+
+typedef struct {
+    uint8_t used;
+    uint32_t nsid;
+    uint64_t size_lba;
+    uint64_t capacity_lba;
+    uint64_t utilization_lba;
+    uint32_t lba_size;
+    uint8_t lba_format;
+} rix_nvme_namespace_t;
+
 typedef struct {
     uint8_t bus, device, function;
     uint64_t bar0;
@@ -20,13 +32,15 @@ typedef struct {
     uint16_t admin_cid;
     uint64_t admin_sq_phys;
     uint64_t admin_cq_phys;
-    uint32_t serial[5];
-    uint32_t model[10];
-    uint32_t firmware[2];
+    char serial[21];
+    char model[41];
+    char firmware[9];
     uint32_t nn;
+    rix_nvme_namespace_t namespaces[RIX_NVME_MAX_NAMESPACES];
 } rix_nvme_controller_t;
 
 int nvme_init(void);
 size_t nvme_controller_count(void);
 const rix_nvme_controller_t *nvme_controller(size_t index);
 int nvme_identify_controller(size_t index);
+int nvme_identify_namespace(size_t index, uint32_t nsid);
