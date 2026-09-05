@@ -36,10 +36,10 @@ check: all
 	$(OBJDUMP) -drwC build/kernel.elf > build/kernel.disasm
 
 image: all
-	./scripts/build-uefi.sh
+	bash ./scripts/build-uefi.sh
 
 run: image
-	./scripts/run-qemu.sh
+	bash ./scripts/run-qemu.sh
 
 qemu: run
 
