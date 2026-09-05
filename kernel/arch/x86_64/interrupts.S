@@ -25,10 +25,11 @@ isr_default:
     pushq $255
     jmp isr_common_noerr
 
+/* Fifteen general-purpose registers are preserved: 15 * 8 = 120 bytes. */
 isr_common_noerr:
     pushq %rax; pushq %rbx; pushq %rcx; pushq %rdx; pushq %rsi; pushq %rdi; pushq %rbp
     pushq %r8; pushq %r9; pushq %r10; pushq %r11; pushq %r12; pushq %r13; pushq %r14; pushq %r15
-    leaq 128(%rsp), %rdi
+    leaq 120(%rsp), %rdi
     call x86_exception_dispatch
     popq %r15; popq %r14; popq %r13; popq %r12; popq %r11; popq %r10; popq %r9; popq %r8
     popq %rbp; popq %rdi; popq %rsi; popq %rdx; popq %rcx; popq %rbx; popq %rax
@@ -38,7 +39,7 @@ isr_common_noerr:
 isr_common_err:
     pushq %rax; pushq %rbx; pushq %rcx; pushq %rdx; pushq %rsi; pushq %rdi; pushq %rbp
     pushq %r8; pushq %r9; pushq %r10; pushq %r11; pushq %r12; pushq %r13; pushq %r14; pushq %r15
-    leaq 128(%rsp), %rdi
+    leaq 120(%rsp), %rdi
     call x86_exception_dispatch
     popq %r15; popq %r14; popq %r13; popq %r12; popq %r11; popq %r10; popq %r9; popq %r8
     popq %rbp; popq %rdi; popq %rsi; popq %rdx; popq %rcx; popq %rbx; popq %rax
