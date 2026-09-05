@@ -7,11 +7,13 @@ x86_enter_user:
     movw $0x20,%ax
     movw %ax,%ds
     movw %ax,%es
+    movw %ax,%ss
     pushq $0x20
     pushq %rdx
     pushfq
     popq %rax
-    orq $0x200,%rax
+    orq $0x202,%rax
+    andq $~0x3000,%rax
     pushq %rax
     pushq $0x18
     pushq %rsi
