@@ -21,6 +21,16 @@ void kernel_main(const rixuri_boot_info_t *boot) {
         panic("missing UEFI memory map");
     }
 
+    serial_write("Boot handoff: version=");
+    serial_write_dec(boot->version);
+    serial_write(" size=");
+    serial_write_dec(boot->size);
+    serial_write("\r\n");
+    serial_write("ACPI RSDP: "); serial_write_hex(boot->rsdp); serial_write("\r\n");
+    serial_write("Framebuffer: "); serial_write_hex(boot->framebuffer_base);
+    serial_write(" "); serial_write_dec(boot->framebuffer_width);
+    serial_write("x"); serial_write_dec(boot->framebuffer_height); serial_write("\r\n");
+
     gdt_init();
     serial_write("GDT: initialized\r\n");
     idt_init();
@@ -34,7 +44,8 @@ void kernel_main(const rixuri_boot_info_t *boot) {
              (uint64_t)(uintptr_t)boot,
              sizeof(*boot));
     if (pmm_free_pages() == 0) panic("physical memory allocator has no free pages");
-    serial_write("PMM: initialized\r\n");
+    serial_write("PMM: total="); serial_write_dec(pmm_total_pages());
+    serial_write(" free="); serial_write_dec(pmm_free_pages()); serial_write("\r\n");
 
     vmm_early_init();
     if (vmm_kernel_pml4() == 0) panic("VMM initialization failed");
