@@ -1,5 +1,6 @@
 #include "kernel.h"
 #include "serial.h"
+#include "user_init.h"
 #include "mm/pmm.h"
 #include "mm/vmm.h"
 #include "mm/heap.h"
@@ -47,6 +48,17 @@ void kernel_main(const rixuri_boot_info_t *boot){
  if(block_init()!=0)panic("block subsystem initialization failed");
  if(vfs_init()!=0)panic("VFS initialization failed");
  syscall_init();
+
+ uint64_t user_entry=0,user_stack=0;pid_t user_pid=0;rix_task_id_t user_task=0;
+ if(process_create_user("init",0,rixuri_user_init_image(),rixuri_user_init_image_size(),&user_entry,&user_stack)!=0)
+     panic("failed to create embedded user init");
+ rix_process_t *user_proc=process_lookup(process_count()>1?1:0);
+ if(!user_proc)panic("embedded user init process lookup failed");
+ user_pid=user_proc->pid;
+ if(scheduler_create_user_process(user_pid,user_entry,user_stack,&user_task)!=0)
+     panic("failed to create user init task");
+ serial_write("USER: embedded init prepared, pid=");serial_write_dec(user_pid);serial_write(" task=");serial_write_dec(user_task);serial_write("\r\n");
+
  int io_ready=0;
  if(acpi_ioapic_count()&&ioapic_init()==0){
    if(ioapic_route_irq(0,32,(uint8_t)lapic_id())!=0)panic("failed to route PIT IRQ");
@@ -57,5 +69,11 @@ void kernel_main(const rixuri_boot_info_t *boot){
  serial_write("Core services: timer/scheduler/process/syscall/PCI/NVMe/xHCI/block/VFS initialized\r\n");
  serial_write("LAPIC: initialized, id=");serial_write_dec(lapic_id());serial_write("\r\n");
  serial_write("RIXURI:KERNEL_READY\r\n");
+
+ /* Run the actual ring-3 ELF once. With a PIT this also begins preemptive
+    scheduling; without an IOAPIC the user program can still run and exit via
+    this explicit cooperative handoff. */
+ scheduler_yield();
+ serial_write("USER: init returned to kernel\r\n");
  halt_forever();
 }
