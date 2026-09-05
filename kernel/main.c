@@ -18,6 +18,7 @@
 #include "vfs/vfs.h"
 #include "storage/block.h"
 #include "storage/nvme.h"
+#include "usb/xhci.h"
 
 static void halt_forever(void){for(;;)__asm__ volatile("hlt");}
 void kernel_main(const rixuri_boot_info_t *boot){
@@ -38,6 +39,8 @@ void kernel_main(const rixuri_boot_info_t *boot){
  serial_write("PCI: devices=");serial_write_dec(pci_device_count());serial_write("\r\n");
  if(nvme_init()!=0)panic("NVMe initialization failed");
  serial_write("NVMe: controllers=");serial_write_dec(nvme_controller_count());serial_write("\r\n");
+ if(xhci_init()!=0)panic("xHCI initialization failed");
+ serial_write("xHCI: controllers=");serial_write_dec(xhci_controller_count());serial_write("\r\n");
  if(pit_init(100)!=0)panic("PIT initialization failed");
  if(scheduler_init()!=0)panic("scheduler initialization failed");
  if(process_init()!=0)panic("process subsystem initialization failed");
@@ -51,7 +54,7 @@ void kernel_main(const rixuri_boot_info_t *boot){
  }
  if(io_ready){idt_enable();serial_write("IRQ: PIT routed to vector 32; interrupts enabled\r\n");}
  else serial_write("IRQ: no usable IOAPIC; interrupts remain disabled\r\n");
- serial_write("Core services: timer/scheduler/process/syscall/PCI/NVMe/block/VFS initialized\r\n");
+ serial_write("Core services: timer/scheduler/process/syscall/PCI/NVMe/xHCI/block/VFS initialized\r\n");
  serial_write("LAPIC: initialized, id=");serial_write_dec(lapic_id());serial_write("\r\n");
  halt_forever();
 }
