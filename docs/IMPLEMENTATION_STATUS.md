@@ -2,9 +2,9 @@
 
 ## Current position
 
-RixuriOS is an x86_64/AMD64-only kernel moving from early kernel/device foundations into the first real userspace process milestone.
+RixuriOS is an x86_64/AMD64-only kernel moving from early kernel/device foundations through userspace and device-subsystem milestones.
 
-The repository contains real implementations for the early boot, memory, interrupt, scheduler/process, syscall, VFS/block, NVMe capability discovery, xHCI capability discovery, and initial ELF/address-space paths. These are implementation baselines, not blanket completion claims.
+The repository contains real implementations for early boot, memory, interrupt, scheduler/process, syscall, VFS/block, NVMe capability discovery, xHCI capability discovery, ELF/address-space loading, IPC channels, signals, shared-memory mapping, PCI ECAM discovery, DMA page allocation, PCI BAR sizing, and MSI-X capability discovery. These are implementation baselines, not blanket completion claims.
 
 ## Evidence rule
 
@@ -12,18 +12,16 @@ A subsystem is **COMPLETE** only after its required implementation, real executi
 
 Valid states include: `COMPLETE`, `IN PROGRESS`, `BLOCKED`, `NOT TESTED`, `UNSUPPORTED`, `DEGRADED`, and `FAIL`.
 
-## Immediate focus
+## Current implementation focus
 
-1. Make user address spaces safe with respect to kernel-owned mappings and page ownership.
-2. Make ELF loading transactional and permission-correct.
-3. Make process/scheduler activation and ring-3 entry robust.
-4. Establish a real embedded/user ELF launch path.
-5. Harden syscall/user-pointer validation and return paths.
-6. Add negative/regression coverage before moving to later userspace phases.
+- Phase 08: user address spaces and ELF64 launch path are implemented at foundation level; ring-3 execution still requires real boot/integration proof and stronger fault/return-path validation.
+- Phase 09: process wait/reap, signal pending/masking, shared-memory map/unmap, and IRQ-safe IPC channels are implemented at foundation level. Blocking IPC, full pipe/file-descriptor objects, signal delivery frames, and complete IPC syscall surface remain.
+- Phase 10: ACPI MCFG/ECAM discovery, PCI capability traversal, BAR sizing, DMA page allocation, and MSI-X table discovery are implemented at foundation level. IOMMU programming, safe MMIO lifecycle, interrupt-vector allocation/programming, and device-driver integration remain.
+- Phase 11+: storage/network/filesystem/device-driver and userspace work continues in roadmap order.
 
 ## Not claimed as complete
 
-Preemptive SMP scheduling, ring-3 execution, the complete syscall surface, IPC/signals/pipes/shared memory, full PCIe ECAM/DMA/IOMMU/MSI-X, complete NVMe I/O/recovery, RixFS, complete xHCI transfer machinery, HID, TTY/PTY/shell userspace, networking/RTL8125, libc/musl/POSIX/Linux compatibility, dynamic linking, init/services/package management, developer platform, audio/graphics, installer/recovery, physical-hardware qualification, pre-GUI certification, and GUI remain incomplete.
+Preemptive SMP scheduling, ring-3 execution qualification, the complete syscall surface, blocking IPC/pipes/full signal delivery, full PCIe DMA/IOMMU/MSI-X programming, complete NVMe I/O/recovery, RixFS, complete xHCI transfer machinery, HID, TTY/PTY/shell userspace, networking/RTL8125, libc/musl/POSIX/Linux compatibility, dynamic linking, init/services/package management, developer platform, audio/graphics, installer/recovery, physical-hardware qualification, pre-GUI certification, and GUI remain incomplete.
 
 ## Local validation
 
