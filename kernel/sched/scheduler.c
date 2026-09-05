@@ -50,7 +50,7 @@ static int task_alloc(rix_task_t **out){
     return -1;
 }
 static void task_init_stack(rix_task_t *t){
-    uintptr_t top=(uintptr_t)t->stack+RIX_STACK_SIZE;top&=~(uintptr_t)0xFULL;uint64_t *sp=(uint64_t*)top;
+    uintptr_t top=(uintptr_t)t->stack+RIX_STACK_SIZE;top=(top&~(uintptr_t)0xFULL)+8ULL;uint64_t *sp=(uint64_t*)top;
     *--sp=(uint64_t)(uintptr_t)task_bootstrap;
     for(unsigned r=0;r<6;r++)*--sp=0;
     t->rsp=(uint64_t)(uintptr_t)sp;
