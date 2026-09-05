@@ -56,5 +56,6 @@ void kernel_main(const rixuri_boot_info_t *boot){
  else serial_write("IRQ: no usable IOAPIC; interrupts remain disabled\r\n");
  serial_write("Core services: timer/scheduler/process/syscall/PCI/NVMe/xHCI/block/VFS initialized\r\n");
  serial_write("LAPIC: initialized, id=");serial_write_dec(lapic_id());serial_write("\r\n");
+ serial_write("RIXURI:KERNEL_READY\r\n");
  halt_forever();
 }
