@@ -12,7 +12,6 @@ OBJ := \
 	kernel/serial.o \
 	kernel/arch/x86_64/gdt.o \
 	kernel/arch/x86_64/idt.o \
-	kernel/arch/x86_64/idt_asm.o \
 	kernel/mm/pmm.o \
 	kernel/mm/vmm.o \
 	kernel/mm/heap.o
