@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include <stddef.h>
 
 #define ACPI_MAX_CPUS 64
 #define ACPI_MAX_IOAPICS 16
