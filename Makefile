@@ -11,7 +11,8 @@ OBJ := \
 	kernel/main.o \
 	kernel/serial.o \
 	kernel/mm/pmm.o \
-	kernel/mm/vmm.o
+	kernel/mm/vmm.o \
+	kernel/mm/heap.o
 
 .PHONY: all clean check
 
