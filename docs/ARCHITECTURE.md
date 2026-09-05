@@ -1,24 +1,39 @@
 # RixuriOS Architecture
 
-## Target
+RixuriOS is a 64-bit-only x86_64/AMD64 Unix-like operating system.
 
-- AMD64 / x86_64, 64-bit only.
-- Kernel: freestanding C17 with minimal x86_64 assembly.
-- Boot: UEFI firmware -> UEFI loader -> ELF64 kernel.
-- Userspace target: musl + POSIX APIs with an explicit Linux/glibc compatibility layer where useful.
+## Current layering
 
-## Implementation order
+```text
+UEFI
+  -> ELF64 loader / boot handoff
+  -> x86_64 kernel entry
+  -> GDT / IDT / CPU primitives
+  -> PMM / VMM / kernel heap
+  -> APIC / IRQ infrastructure
+  -> scheduler / processes / syscalls
+  -> PCI / DMA / device model
+  -> NVMe / xHCI / HID / network / audio / GPU
+  -> VFS / RixFS
+  -> init / devfs / procfs / sysfs
+  -> libc / musl / POSIX / dynamic linking
+  -> TTY / PTY
+  -> Rixuri Shell / coreutils
+  -> developer environment / Mayo
+  -> graphics / Vulkan
+  -> GUI (deferred)
+```
 
-1. UEFI boot and ELF64 handoff
-2. GDT/IDT, exceptions and APIC
-3. Physical/virtual memory and SMP
-4. Scheduler, processes, threads and syscall ABI
-5. ELF64 userspace and initial process
-6. VFS/RixFS/block storage/NVMe
-7. xHCI/HID/TTY/networking/RTL8125
-8. libc/musl/POSIX/Linux compatibility
-9. shell/coreutils/users/auth/Mayo
-10. installer, build toolchain, QEMU and real-hardware regression
-11. performance, security, release gates and final acceptance
+## Kernel language boundary
 
-All stages must remain buildable and must not silently replace required interfaces with stubs. Unsupported hardware or features must be reported explicitly.
+The kernel uses freestanding C11/C17 and minimal x86_64 assembly. It must not depend on glibc, musl, POSIX, or Linux kernel APIs.
+
+Userspace may use musl and Unix/POSIX compatibility layers. The syscall ABI is the explicit boundary between the kernel and userspace.
+
+## Graphics boundary
+
+Framebuffer/GOP and GPU infrastructure are kernel/device concerns. Vulkan is a first-class userspace graphics target with a loader/ICD boundary and real device capability reporting. GUI work is blocked until the pre-GUI operating-system gate is substantially complete.
+
+## Development order
+
+The authoritative detailed sequence is `docs/ROADMAP.md`. Do not skip unfinished lower layers merely to produce a visible demo. Real functionality and regression coverage take priority over appearance.
