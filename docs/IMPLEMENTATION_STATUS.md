@@ -342,3 +342,8 @@ Temporary QEMU diagnostics established that xargs consumes the input pipe to EOF
 ## Fork child return-frame boundary — 2026-09-06
 
 An isolated second-fork regression reproduced the failure without xargs or child exec. Context creation and scheduler entry carried the correct user RIP/RSP, but the child faulted on return to user mode with an ASCII string address as RIP. The unresolved area is therefore the syscall ISR/return frame or kernel-stack corruption after context entry, not pipe refcounting. No temporary diagnostics or unverified fix remains in the tree.
+
+
+## Fork/address-space redesign
+
+The implementation design for removing physical identity-mapping assumptions from `fork` and address-space construction is recorded in [`FORK_ADDRESS_SPACE_DESIGN.md`](FORK_ADDRESS_SPACE_DESIGN.md). It defines the kernel mapping window, ownership metadata, transactional clone rollback, CR3 sequencing, kernel-stack policy and QEMU acceptance gates. This is design-only until the phased implementation passes the listed harness cases.

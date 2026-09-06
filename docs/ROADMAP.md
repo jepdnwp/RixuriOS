@@ -1183,3 +1183,8 @@ Before closing the xargs gate, add a focused disposable-image QEMU regression fo
 ### Minimal fork-return regression
 
 Add a standalone QEMU case where the second-fork child executes only `_exit(7)`. Log the syscall ISR frame pointer, saved user RIP/RSP, and the exact five-word `iretq` frame immediately before `x86_enter_user_context`. Compare parent and child kernel-stack bounds and verify no user buffer write overlaps the frame. This must pass before returning to nested `execve` and xargs.
+
+
+### Fork/address-space redesign
+
+Implement the phased design in [`docs/FORK_ADDRESS_SPACE_DESIGN.md`](FORK_ADDRESS_SPACE_DESIGN.md): first introduce a permanent kernel page-table mapping window, then ownership journals and transactional clone rollback, followed by kernel-stack/scratch-storage hardening and the minimal fork-return regression. Only after those gates pass should xargs be re-enabled as the final pipeline acceptance test.
