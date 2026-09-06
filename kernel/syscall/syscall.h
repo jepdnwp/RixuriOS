@@ -5,6 +5,7 @@
 #define RIX_SYS_OPENAT 2
 #define RIX_SYS_CLOSE 3
 #define RIX_SYS_PIPE 22
+#define RIX_SYS_DUP 32
 #define RIX_SYS_STAT 4
 #define RIX_SYS_MKDIR 83
 #define RIX_SYS_UNLINK 87

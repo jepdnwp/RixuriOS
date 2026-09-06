@@ -138,4 +138,5 @@ Phase 15 continuation: add device-manager policy around port-event attach/detach
 - Added a bounded `rix_pipe_t` wrapper over the existing IPC channel with explicit read/write ownership, half-close operations and closed-peer error propagation.
 - Linked the pipe object into the kernel build and exposed it through the VFS per-process FD table.
 - Added `RIX_SYS_PIPE` and a userspace `pipe(int fds[2])` wrapper. The syscall allocates read/write endpoints, validates the user result pointer and rolls back both descriptors on copy failure.
-- The current process model still has no fork/exec or FD-table duplication, so Phase 17 pipe transport is integrated at the single-process ABI level but is not yet a completed multi-process shell pipeline.
+- Added `vfs_dup()` plus `RIX_SYS_DUP` and a userspace `dup()` wrapper; regular file descriptor state and pipe endpoint references can now be duplicated within one process.
+- The current process model still has no fork/exec or cross-process FD inheritance, so Phase 17 pipe transport is ABI-integrated but is not yet a completed multi-process shell pipeline.
