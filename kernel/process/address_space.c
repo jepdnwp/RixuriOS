@@ -63,8 +63,9 @@ static int clone_user_level(const uint64_t *source, unsigned level, uint64_t bas
         if (entry & PTE_PS) return -1;
         uint64_t page = pmm_alloc_page();
         if (!page) return -1;
-        uint8_t *src = (uint8_t *)(uintptr_t)(entry & PAGE_MASK);
-        uint8_t *dst = (uint8_t *)(uintptr_t)page;
+        uint8_t *src = (uint8_t *)pt_kmap(entry & PAGE_MASK);
+        uint8_t *dst = (uint8_t *)pt_kmap(page);
+        if (!src || !dst) { pmm_free_page(page); return -1; }
         for (size_t j = 0; j < 4096u; ++j) dst[j] = src[j];
         uint64_t flags = entry & (RIXURI_PTE_PRESENT | RIXURI_PTE_WRITE |
                                   RIXURI_PTE_USER | RIXURI_PTE_NX);
