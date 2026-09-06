@@ -19,6 +19,7 @@ typedef struct { uint64_t inode; uint32_t mode; uint32_t uid; uint32_t gid; uint
 typedef struct { rix_block_device_t *device; rixfs_superblock_t super; uint8_t mounted; } rixfs_t;
 int rixfs_mount(rix_block_device_t *device,rixfs_t *fs);
 int rixfs_format(rix_block_device_t *device,uint64_t inode_count);
+int rixfs_format_standard_tree(rix_block_device_t *device,uint64_t inode_count);
 int rixfs_read_inode(rixfs_t *fs,uint64_t inode,rixfs_inode_disk_t *out);
 int rixfs_write_inode(rixfs_t *fs,uint64_t inode,const rixfs_inode_disk_t *in);
 int rixfs_read(rixfs_t *fs,uint64_t inode,uint64_t offset,void *buffer,size_t size);
