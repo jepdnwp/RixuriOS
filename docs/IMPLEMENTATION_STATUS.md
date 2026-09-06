@@ -339,6 +339,13 @@ The detailed provisional ABI design for the deferred system utilities is recorde
 The failure was isolated to nested `fork -> execve -> fork` address-space teardown. Newly allocated process PDPT/PD/PT links were not explicitly marked as owned, while destroy recursively freed borrowed kernel-derived tables and could return a live process PML4 page to PMM. The fix marks process-created table links as `RIXURI_PTE_OWNED`, strips ownership from copied kernel entries, and makes teardown recurse only through owned links. Permanent PMM reservations protect static VMM tables. The clean Phase 19 QEMU harness and regression harnesses now pass without exception or timeout.
 
 
+## Phase 19 nested fork/exec follow-up — 2026-09-06
+
+Review of the checked-out `f806170` tree found a regression introduced by the diagnostic cleanup commit `d61ccd5`: `address_space_create()` no longer switched to the kernel template CR3 while copying template page tables, no longer restored the caller CR3 on all exits, and no longer used the common ownership-aware rollback path. This made nested `fork -> execve -> fork` sensitive to the active user address space and could leave partially allocated page-table state behind. The implementation now switches to the kernel CR3 for template reads, restores the prior CR3 on success and failure, and rolls back through `address_space_destroy()` so only owned process links are reclaimed. The pipe implementation was not changed.
+
+The page-fault dispatcher now records PID, parent PID, CR3, CR2, RIP, error code, current address-space pointer, process PML4 physical address, PML4E/PDPTE/PDE/PTE values, and the best-known physical page. The patched tree then passed the strict kernel build, host USB/HID/TTY/shell/pipe tests, the Phase 19 QEMU utility harness, the QEMU process-utility harness, the QEMU pipe-stress harness, and an explicit QEMU run of `echo one two | /usr/bin/xargs /bin/echo` followed by `echo after-xargs`. No CPU exception, page fault, panic, timeout, or prompt loss was observed. Phase 19 is therefore `IMPLEMENTED / QEMU-VALIDATED` for this nested fork/exec regression scope.
+
+
 ## Fork/address-space validation boundary — 2026-09-06
 
 The nested fork child now receives a distinct PML4 and a valid mapping for its fork return RIP. The previously observed page fault and prompt loss no longer reproduce. Temporary lifecycle and fault diagnostics were removed before the final commit.
