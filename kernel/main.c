@@ -20,8 +20,8 @@
 #include "storage/block.h"
 #include "storage/nvme.h"
 #include "usb/xhci.h"
-
 static void halt_forever(void){for(;;)__asm__ volatile("hlt");}
+static void try_mount_root(void){const char *names[]={"nvme0n1","nvme0n1p1","nvme1n1","nvme1n1p1"};for(size_t i=0;i<sizeof(names)/sizeof(names[0]);i++){rix_block_device_t*d=block_find(names[i]);if(!d)continue;int rc=vfs_mount_root(d);serial_write("VFS: mount ");serial_write(names[i]);serial_write(" rc=");serial_write_dec((uint64_t)(rc<0?-rc:rc));serial_write("\r\n");if(rc==0)return;}}
 void kernel_main(const rixuri_boot_info_t *boot){
  serial_init();serial_write("RixuriOS kernel: x86_64 / AMD64 64-bit\r\n");
  if(!boot||boot->magic!=RIXURI_BOOT_MAGIC||boot->version!=RIXURI_BOOT_VERSION||boot->size<sizeof(*boot))panic("invalid UEFI boot handoff");
@@ -42,33 +42,19 @@ void kernel_main(const rixuri_boot_info_t *boot){
  if(vfs_init()!=0)panic("VFS initialization failed");
  if(nvme_init()!=0)panic("NVMe initialization failed");
  serial_write("NVMe: controllers=");serial_write_dec(nvme_controller_count());serial_write("\r\n");
+ try_mount_root();
  if(xhci_init()!=0)panic("xHCI initialization failed");
  serial_write("xHCI: controllers=");serial_write_dec(xhci_controller_count());serial_write("\r\n");
  if(pit_init(100)!=0)panic("PIT initialization failed");
  if(scheduler_init()!=0)panic("scheduler initialization failed");
  if(process_init()!=0)panic("process initialization failed");
  syscall_init();
-
  uint64_t user_entry=0,user_stack=0;pid_t user_pid=0;rix_task_id_t user_task=0;
- if(process_create_user("init",0,rixuri_user_init_image(),rixuri_user_init_image_size(),&user_pid,&user_entry,&user_stack)!=0)
-     panic("failed to create embedded user init");
- rix_process_t *user_proc=process_lookup(user_pid);
- if(!user_proc)panic("embedded user init process lookup failed");
- if(scheduler_create_user_process(user_pid,user_entry,user_stack,&user_task)!=0)
-     panic("failed to create user init task");
+ if(process_create_user("init",0,rixuri_user_init_image(),rixuri_user_init_image_size(),&user_pid,&user_entry,&user_stack)!=0)panic("failed to create embedded user init");
+ rix_process_t *user_proc=process_lookup(user_pid);if(!user_proc)panic("embedded user init process lookup failed");
+ if(scheduler_create_user_process(user_pid,user_entry,user_stack,&user_task)!=0)panic("failed to create user init task");
  serial_write("USER: embedded init prepared, pid=");serial_write_dec(user_pid);serial_write(" task=");serial_write_dec(user_task);serial_write("\r\n");
-
- int io_ready=0;
- if(acpi_ioapic_count()&&ioapic_init()==0){
-   if(ioapic_route_irq(0,32,(uint8_t)lapic_id())!=0)panic("failed to route PIT IRQ");
-   ioapic_unmask_irq(0);pic_disable();io_ready=1;
- }
- if(io_ready){idt_enable();serial_write("IRQ: PIT routed to vector 32; interrupts enabled\r\n");}
- else serial_write("IRQ: no usable IOAPIC; interrupts remain disabled\r\n");
- serial_write("Core services: timer/scheduler/process/syscall/PCI/NVMe/xHCI/block/VFS initialized\r\n");
- serial_write("LAPIC: initialized, id=");serial_write_dec(lapic_id());serial_write("\r\n");
- serial_write("RIXURI:KERNEL_READY\r\n");
- scheduler_yield();
- serial_write("USER: init returned to kernel\r\n");
- halt_forever();
+ int io_ready=0;if(acpi_ioapic_count()&&ioapic_init()==0){if(ioapic_route_irq(0,32,(uint8_t)lapic_id())!=0)panic("failed to route PIT IRQ");ioapic_unmask_irq(0);pic_disable();io_ready=1;}
+ if(io_ready){idt_enable();serial_write("IRQ: PIT routed to vector 32; interrupts enabled\r\n");}else serial_write("IRQ: no usable IOAPIC; interrupts remain disabled\r\n");
+ serial_write("Core services: timer/scheduler/process/syscall/PCI/NVMe/xHCI/block/VFS initialized\r\n");serial_write("LAPIC: initialized, id=");serial_write_dec(lapic_id());serial_write("\r\n");serial_write("RIXURI:KERNEL_READY\r\n");scheduler_yield();serial_write("USER: init returned to kernel\r\n");halt_forever();
 }
