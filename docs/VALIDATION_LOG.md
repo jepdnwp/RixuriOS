@@ -478,3 +478,34 @@ The current conclusion is narrower and actionable: pipe EOF/refcount handling is
 A temporary `/usr/bin/proc-test` extension isolated a second `fork` before any child `execve`. The first pipe writer fork completed. For the second fork, diagnostics showed matching values at both creation and scheduler entry: `FORKCTX rip=0x0000008000000613 rsp=0x00007fffffffef18` and `USERCTX` with the same RIP/RSP. The child nevertheless faulted immediately after returning to user mode, with the exception RIP equal to `0x0a72657466612d6b`, which is ASCII data from the parent’s `proc:fork-after` string rather than an executable address.
 
 This excludes the xargs tokenizer, pipe EOF, and the basic context-copy operation as the immediate cause. The remaining fault class is the fork child’s user return frame or kernel-stack/syscall-return corruption after `USERCTX` entry. The temporary instrumentation and test extension were reverted. The next required test is a minimal child that performs only `_exit(7)` after the second fork, with diagnostics around the syscall ISR frame and the `iretq` frame; do not change xargs or claim a fix until that test is stable.
+
+## 2026-09-07 — Phase 20 cross-UID CAP_KILL continuation
+
+The Phase 20 credential QEMU harness was extended with `/usr/bin/killtest` and now runs credential, ACL, owner/group/other, set-id environment-sanitization, cross-UID signal and session checks over disposable copies of the RixFS image and UEFI ESP. The harness imports the process environment explicitly and can be reproduced with `make phase20-test`.
+
+`/usr/bin/killtest` forks a child that transitions to UID 2000 and blocks on an inherited pipe. While the caller retains `CAP_KILL`, a cross-UID `SIGUSR1` is accepted and interrupts the child’s blocking read. The caller then drops only `CAP_KILL`; a second UID-2000 child remains releasable through the pipe, while the cross-UID signal attempt is rejected with `-EACCES`. Both children exit and are reaped successfully, preventing the test from confusing authorization with process-lifetime leakage.
+
+The observed serial evidence was:
+
+```text
+cap=PASS
+acl=PASS
+matrix=PASS
+setid=PASS
+kill=PASS
+qemu Phase 20 credential/permission test: PASS
+session=PASS
+qemu session lifecycle test: PASS
+```
+
+Validation commands completed successfully:
+
+```text
+git diff --check
+make clean CROSS=
+make test CROSS=
+make image CROSS=
+make phase20-test CROSS=
+```
+
+No page fault, CPU exception, kernel panic, timeout or prompt-loss marker was observed. This closes the bounded QEMU evidence gap for cross-UID `CAP_KILL`; it does not claim physical-hardware security qualification, persistent account/password authentication, capability delegation across ordinary exec, or metadata-preserving `cp`/`mv` semantics.

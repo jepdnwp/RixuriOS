@@ -52,6 +52,10 @@ with tempfile.TemporaryDirectory(prefix="rixurios-phase20-") as temporary:
         process.stdin.flush()
         if not until(b"rixuri$ ", 20):
             raise RuntimeError("prompt")
+        process.stdin.write(b"/usr/bin/killtest\n")
+        process.stdin.flush()
+        if not until(b"rixuri$ ", 20):
+            raise RuntimeError("killtest prompt")
     finally:
         process.terminate()
         try:
@@ -68,7 +72,8 @@ for marker in (
     b"acl=PASS",
     b"cap=PASS",
     b"matrix=PASS",
-    b"setid=PASS",
+    b"setid=PASS\n",
+    b"kill=PASS\n",
 ):
     if marker not in out:
         raise SystemExit(f"missing {marker!r}")
