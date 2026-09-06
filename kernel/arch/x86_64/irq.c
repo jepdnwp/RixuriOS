@@ -22,5 +22,8 @@ void x86_irq_dispatch(const struct interrupt_frame *frame) {
     irq_handler_t handler = handlers[irq];
     if (handler) handler(irq, frame);
     lapic_eoi();
-    if (irq == 0) scheduler_yield();
+    /* Interrupt entry frames are not task stacks. Timer IRQs only account time;
+       voluntary yields perform context switches until a dedicated IRQ-return
+       scheduler path is implemented. */
+    if (irq == 0) scheduler_tick();
 }

@@ -82,3 +82,9 @@ Phase 15 continuation: add device-manager policy around port-event attach/detach
 - The probe consumes pending Port Status Change Events and records attach/detach controller, port and slot diagnostics without fabricating device enumeration evidence.
 - A continuously scheduled worker was intentionally not introduced because the current cooperative scheduler’s runtime worker/user transition still requires a separate regression fix; QEMU remains clean with the bounded startup probe.
 - Runtime controller-backed enumeration, endpoint configuration, HID polling and negative-path hardware evidence remain open.
+
+## Latest continuation — scheduler transition safety
+
+- Corrected kernel task bootstrap stack initialization so the saved context-switch stack pointer remains inside the task-owned stack allocation instead of being offset one pointer slot beyond its aligned top.
+- Changed PIT IRQ handling to account timer ticks without directly performing a context switch from an interrupt-entry frame; voluntary yields remain the supported transition path until a dedicated IRQ-return scheduler path is implemented.
+- Re-enabled the cooperative xHCI hotplug worker after the scheduler fix. QEMU now reaches `RIXURI:KERNEL_READY` and returns from the embedded user init without an exception.
