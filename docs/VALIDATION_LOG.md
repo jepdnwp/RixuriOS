@@ -385,3 +385,27 @@ qemu head/tail test: PASS
 ```
 
 No CPU exception or panic marker was observed. This is QEMU evidence for the default stdin/path scenarios only; options, multi-file output labels, and large-file tail behavior remain open.
+
+## 2026-09-06 — Phase 19 text-core utilities
+
+Added `/usr/bin/wc`, `/usr/bin/cut`, `/usr/bin/tr`, `/usr/bin/sort`, and `/usr/bin/uniq`. A real QEMU harness exercised them through shell pipelines and checked a missing-path error:
+
+```text
+/bin/echo alpha | /usr/bin/wc
+1 1 6
+/bin/echo a:b:c | /usr/bin/cut -d : -f 2
+b
+/bin/echo abc | /usr/bin/tr abc xyz
+xyz
+/usr/bin/args z a | /usr/bin/sort
+argc=3
+argv[0]=/usr/bin/args
+/usr/bin/args z a | /usr/bin/uniq
+argc=3
+argv[0]=/usr/bin/args
+/usr/bin/wc /missing
+wc: failed to open path
+qemu text utilities test: PASS
+```
+
+This is QEMU evidence for the bounded stdin/pipeline and missing-path scenarios; it does not claim complete POSIX option or locale semantics.

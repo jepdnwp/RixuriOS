@@ -276,3 +276,15 @@ The tested external-command, argv/envp, redirection, pipeline, conditional, and 
 - Hardware validation: NOT TESTED; QEMU NVMe-backed disposable image only.
 - Remaining limitations: `head`/`tail` currently implement the default ten-line behavior only; option parsing and multi-file labels are unsupported. `tail` uses a bounded 8192-byte buffer and the current pipe EOF ABI remains degraded for some timing/error distinctions.
 - Status: IMPLEMENTED / QEMU-VALIDATED for the observed default stdin/path scenarios.
+
+### 2026-09-06 — Phase 19 text-core utilities: `wc`, `cut`, `tr`, `sort`, `uniq`
+
+- Problem: Phase 19 text-processing utility grubunun tamamı eksikti.
+- Root cause: Kullanıcı programları ve image entegrasyonu yoktu; mevcut freestanding ABI yalnızca temel read/write/openat/close işlemlerini sağlıyor.
+- Changed: Added bounded freestanding implementations for `wc`, `cut`, `tr`, `sort`, and `uniq`; integrated them at `/usr/bin`; added a real QEMU pipeline harness.
+- Files: `user/programs/wc.c`, `user/programs/cut.c`, `user/programs/tr.c`, `user/programs/sort.c`, `user/programs/uniq.c`, `scripts/qemu_text_utils_test.py`, `Makefile`.
+- Tests: `make CROSS=x86_64-linux-gnu- test image` passed with `-Wall -Wextra -Werror`; host USB/HID/TTY/shell/pipe tests passed.
+- QEMU validation: PASS for `wc`, delimiter/field `cut`, byte translation `tr`, bounded stdin execution of `sort` and `uniq`, missing-path error handling, shell prompt recovery, and no exception/panic marker.
+- Hardware validation: NOT TESTED; disposable QEMU NVMe image only.
+- Remaining limitations: advanced option matrices, multi-file labels, locale/collation, large-input behavior beyond each bounded buffer, and comprehensive duplicate-line fixtures remain open. The current pipe EOF ABI can return a degraded negative result after partial data; utilities handle the observed data-after-EOF case.
+- Status: IMPLEMENTED / QEMU-VALIDATED for the observed bounded default/pipeline scenarios.
