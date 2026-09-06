@@ -24,7 +24,7 @@ int process_create_user(const char*name,pid_t parent,const void*image,uint64_t i
 int process_fork(pid_t parent,uint64_t user_rip,uint64_t user_rsp,pid_t *out_pid){
     if (!out_pid || !user_rip || !user_rsp) return -1;
     rix_process_t *pp=process_lookup(parent);if(!pp||!pp->address_space.pml4_phys)return -1;
-    serial_write("PROC fork parent=");serial_write_dec(parent);serial_write(" pml4=");serial_write_hex(pp->address_space.pml4_phys);serial_write("\r\n");
+    serial_write("PROC fork parent=");serial_write_dec(parent);serial_write(" pml4=");serial_write_hex(pp->address_space.pml4_phys);serial_write(" rip_pa=");serial_write_hex(address_space_translate(&pp->address_space,user_rip));serial_write(" rip_flags=");serial_write_hex(address_space_query_flags(&pp->address_space,user_rip));serial_write("\r\n");
     pid_t child;if(process_create("fork-child",parent,&child)!=0)return -1;
     rix_process_t *cp=process_lookup(child);if(!cp)return -1;
     if(address_space_clone(&pp->address_space,&cp->address_space)!=0)goto fail;
