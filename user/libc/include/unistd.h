@@ -3,6 +3,7 @@
 #include <stdint.h>
 typedef int64_t rix_ssize_t;
 typedef uint64_t rix_pid_t;
+typedef struct { uint64_t sec; uint64_t nsec; } rix_timespec_t;
 rix_ssize_t read(int fd, void *buf, size_t count);
 rix_ssize_t write(int fd,const void *buf,size_t count);
 int openat(int dirfd, const char *path, uint32_t flags, uint32_t mode);
@@ -14,6 +15,7 @@ rix_pid_t spawn(const char *name, const void *image, size_t image_size);
 rix_pid_t fork(void);
 rix_pid_t wait(rix_pid_t child, uint64_t *status);
 rix_pid_t waitpid(rix_pid_t child, uint64_t *status, uint32_t options);
+int nanosleep(const rix_timespec_t *request, rix_timespec_t *remaining);
 int execve(const char *path, char *const argv[], char *const envp[]);
 rix_pid_t getpid(void);
 _Noreturn void _exit(int status);

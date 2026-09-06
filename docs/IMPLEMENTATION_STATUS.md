@@ -22,7 +22,7 @@ A subsystem is not marked COMPLETE merely because source exists. Completion requ
 - Power: hardware reboot path and ACPI S5 shutdown path when validated FADT/DSDT power data is available; otherwise shutdown returns unsupported rather than faking success.
 - USB/xHCI: controller/capability, multi-endpoint transfer rings, HID report delivery adapters and port-event polling are implemented; hardware qualification remains open.
 - GUI: deliberately untouched; GUI remains last in the roadmap.
-- Shell: Phase 18 bounded lexer/parser frontend, callback-driven variable/arithmetic/command substitution expansion, prefix autocomplete and persistent-format history/navigation are implemented and host-tested for quoting, escaping, comments, pipelines, logical/sequential/background operators and input/output/append redirections; real execution remains open.
+- Shell: Phase 18 bounded lexer/parser frontend, callback-driven variable/arithmetic/command substitution expansion, prefix autocomplete and persistent-format history/navigation are implemented and host-tested for quoting, escaping, comments, pipelines, logical/sequential/background operators and input/output/append redirections; real execution is QEMU-validated for the documented external-command, redirection, three-stage pipeline, and background-launch scenarios.
 - TTY: canonical/raw input, line readiness, echo/output queues, termios-like canonical/echo/ISIG/UTF-8 flags, foreground process-group state, PTY master/slave byte/line flow, terminal dimensions, bounded ANSI/VT screen state, control-signal delivery and controlling-terminal session state are implemented and host-tested; shell/pipeline policy remains open.
 - Linker hardening: kernel program headers are explicitly split into `R-X`, `R--`, `RW-`, with a non-executable `GNU_STACK`; the prior generated-blob executable-stack warning no longer produces an executable stack.
 
@@ -69,6 +69,22 @@ The current source tree has now passed a clean strict build and a real UEFI-to-k
 - Added bounded interactive history with consecutive-duplicate suppression, previous/next navigation, newline-delimited export/import and capacity-safe copying.
 - Added overflow-checked arithmetic evaluation for unary/binary `+ - * / %` and parentheses, plus callback-driven nested `$(...)` substitution with trailing-newline trimming and bounded command/output buffers.
 - Added `xhci_poll_port_status_change()` for cycle-aware, non-destructive event-ring peeking that consumes only Port Status Change Events and reports the current connection state.
+
+## Latest continuation — process and shell integration hardening
+
+- Hardened bounded PID allocation so a newly created process cannot reuse an identifier still held by a live or zombie process.
+- Hardened failed child creation rollback: inherited descriptor references are closed before the process slot is cleared, preventing pipe endpoint leaks.
+- Made process exit reject repeated zombie transitions and close the exiting process's descriptors before publishing its zombie state.
+- Restored the legacy `process_exec_user()` API by constructing a valid one-argument initial stack; the argument-aware `execve` path remains unchanged.
+- Re-ran the strict suite with `make CROSS=x86_64-linux-gnu- test`; the kernel warning-as-error build and USB/HID/TTY/shell host tests completed successfully.
+- Exercised the disposable NVMe-backed RixFS image through the real serial TTY in QEMU. Observed append redirection (`>` followed by `>>`), a three-stage pipeline, background launch, and a foreground command after the background launch; the expected `one`, `two`, `alpha`, and `foreground` outputs were emitted.
+- Completed the initial exec stack ABI shape with zero-argument support, `argc`/`argv`/`envp` terminators, an `AT_NULL` auxiliary-vector pair, and 16-byte stack-pointer alignment across supported vector sizes. Image replacement remains atomic on allocation, ELF, copy, or stack-construction failure.
+- Extended the real `args` validation binary to inspect the auxiliary-vector area and report whether an `AT_NULL` pair is present. After correcting an over-conservative stack capacity check, QEMU produced `argc=3`, the expected argv/envp values, and `auxv_at_null=1` through the NVMe/RixFS shell execution path.
+- Added `EINTR` interruption checks to blocking TTY reads, pipe reads, and blocking waits when an unmasked pending signal is available; this is strict-build validated but lacks a dedicated QEMU control-signal run.
+- Added the strict `pipe-test` host target covering bounded writes, partial I/O, EOF after writer closure, and write rejection after reader closure; scheduler-level blocked-reader/writer wakeup stress remains open.
+- Implemented the real `nanosleep` syscall and `/bin/sleep` utility. A QEMU run executed `/bin/sleep 0` followed by `/bin/echo after-sleep`; this also exposed and verified a correction to the exec stack bound so vector space is measured within the mapped stack below copied strings.
+
+This remains `IMPLEMENTED / NOT YET VALIDATED` for the broader process/shell phase because PID-reuse and rollback negative cases lack a dedicated runtime harness, background completion notification was not observed in this bounded run, foreground signal interruption and malformed-pointer runtime tests remain open, scheduler-level pipe wakeup stress remains open, and the broader Phase 19 coreutils set is not complete.
 
 This remains `IMPLEMENTED / NOT YET VALIDATED`. The control-transfer, multi-endpoint, HID adapter and port-event paths are source/build validated but not hardware-exercised: QEMU reported zero xHCI controllers. Device-manager policy for automatic attach/enumeration after a port event, hardware evidence and the historical completion-code-11 regression remain open.
 

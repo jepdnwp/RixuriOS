@@ -565,6 +565,12 @@ Real keyboard input must travel through xHCI → USB → HID → input subsystem
 ### Gate
 Real programs must compose through real process/pipe/file APIs; demos that merely print expected text do not count.
 
+### Current evidence — 2026-09-06
+
+The disposable NVMe-backed RixFS image was exercised through the real serial-to-TTY shell path after a strict build. The observed commands included `echo one > /tmp`, `echo two >> /tmp`, `cat /tmp`, a three-stage `echo | grep | grep` pipeline, a background `true &`, and a foreground command following the background launch. The console produced the expected `one`, `two`, `alpha`, and `foreground` results, with `NVMe: controllers=1`, `VFS: mount nvme0n1 rc=0`, and `RIXURI:KERNEL_READY` in the same run.
+
+This closes the observed execution cases for append redirection, pipeline depth greater than two, and background launch. It does not close the broader Phase 18 gate: background completion notification, explicit `waitpid(WNOHANG)` output, foreground process-group signal behavior, subshells, here-documents, malformed-pointer runtime tests, and physical USB keyboard input remain open.
+
 ---
 
 # PHASE 19 — Unix Coreutils and System Utilities

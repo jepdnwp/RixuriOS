@@ -136,3 +136,68 @@ recovered
 These observations cover the real serial-input-to-TTY-to-shell-to-fork/exec-to-argv/envp-stack-to-VFS/pipe/dup2/read/write-to-wait-to-prompt path for the listed scenarios. An attempted non-interactive stdin pipe was intentionally not counted as evidence because QEMU consumed input before shell initialization in one run and produced a bounded `qemu_rc=124`; the accepted evidence above came from the live interactive serial session, not from that failed capture.
 
 The evidence does not close all Phase 18 gates. Append redirection, multi-stage pipeline depth, background job lifecycle and notifications, `waitpid(WNOHANG)`, foreground process-group signal delivery, malformed-pointer runtime cases, permission/error matrices, and a `sleep` executable remain open. QEMU reported zero xHCI controllers, so physical USB keyboard/HID evidence and the historical completion-code-11 / keyboard `0x74` regressions remain blocked.
+
+## 2026-09-06 — process lifecycle hardening regression
+
+The process lifecycle hardening increment added collision-free PID selection across the bounded process table, rollback of inherited descriptor references when child creation fails, idempotence protection for repeated exit attempts, and descriptor cleanup at the transition to zombie state. The legacy `process_exec_user()` entry point now also constructs a valid single-argument initial stack rather than passing an invalid zero-argument vector.
+
+The strict suite completed successfully with the installed cross-toolchain:
+
+```text
+make CROSS=x86_64-linux-gnu- test
+```
+
+The result included a warning-as-error kernel link, `hid report tests: PASS`, `tty tests: PASS`, `shell parser tests: PASS`, and `Static kernel build checks completed.` This is build and host-test evidence; the lifecycle changes are not marked as independently QEMU-proven until a disposable runtime scenario exercises PID reuse, failed fork rollback, and repeated exit paths.
+
+## 2026-09-06 — exec initial-stack ABI hardening
+
+The exec image-construction path now accepts valid zero-argument requests, retains bounded argv/envp validation, emits the required `argc`, `argv[]`, `NULL`, `envp[]`, `NULL` layout, and appends an `AT_NULL` auxiliary-vector type/value pair. Stack-vector padding is selected so the initial user stack pointer remains 16-byte aligned for all supported argument and environment cardinalities. The replacement address space is still committed only after ELF loading, stack allocation, string copying, vector construction and alignment checks succeed.
+
+The post-change strict suite completed successfully with `make CROSS=x86_64-linux-gnu- test`. The kernel compiled and linked with `-Wall -Wextra -Werror`; `hid report tests: PASS`, `tty tests: PASS`, `shell parser tests: PASS`, and the static kernel checks completed. A dedicated runtime test that introspects auxiliary vectors from userspace remains to be added; existing `args` execution evidence validates argv/envp but does not yet print auxv.
+
+## 2026-09-06 — signal interruption of blocking syscalls
+
+Blocking TTY reads, pipe reads, and parent waits now check for a pending unmasked signal before yielding again. When one is available, the syscall consumes the pending signal and returns `-EINTR` (`-4`) rather than sleeping indefinitely. `waitpid()` retains its `WNOHANG` behavior and only applies interruption to the blocking path. The change passed the strict kernel build and all existing host tests; a dedicated QEMU Ctrl-C/Ctrl-Z interruption scenario remains outstanding.
+
+The attempted auxv QEMU run rebuilt the real image and confirmed `NVMe: controllers=1`, `VFS: mount nvme0n1 rc=0`, and `RIXURI:KERNEL_READY`, but the injected command was not consumed by the shell before the bounded run ended. No auxv runtime result is claimed from that attempt.
+
+## 2026-09-06 — real auxv execution and exec capacity regression fix
+
+The previous auxv attempt exposed a real regression in the new stack-capacity check: it reserved two unnecessary pointer words and rejected a valid `argc=3`, `envc=2` image. The check now accounts only for the actual auxiliary-vector, environment, argument, argc, and optional alignment words.
+
+After rebuilding the disposable image, the real serial-to-TTY-to-shell-to-NVMe/RixFS-to-fork/exec path produced:
+
+```text
+NVMe: controllers=1
+VFS: mount nvme0n1 rc=0
+RIXURI:KERNEL_READY
+argc=3
+argv[0]=/usr/bin/args
+argv[1]=arg1
+argv[2]=arg2
+envp=PATH=/bin:/usr/bin:/sbin:/usr/sbin
+envp=PWD=/
+auxv_at_null=1
+```
+
+This is real userspace evidence that the constructed initial stack exposes the expected argv/envp values and terminates the auxiliary-vector area with an `AT_NULL` pair. The bounded command ended by timeout after the prompt returned; no exception or exec failure was observed.
+
+## 2026-09-06 — pipe lifecycle regression coverage
+
+Added a strict host regression target, `pipe-test`, compiled with `-Wall -Wextra -Werror`. It exercises a full-capacity write with partial-write status, full-buffer readback, writer-close EOF, reader-close write failure, and zero-count error propagation. The test passed as part of `make CROSS=x86_64-linux-gnu- test` with `pipe tests: PASS`. This covers bounded channel semantics and endpoint closure; it does not replace a scheduler-level blocked-reader/writer wakeup stress test.
+
+A real QEMU Ctrl-C harness was also attempted against a foreground blocking `/bin/cat`. The shell prompt and kernel boot were observed, but the serial input did not reach the command before the bounded harness ended, so no foreground signal-interruption PASS is claimed. The harness remains available for follow-up timing/debugging.
+
+## 2026-09-06 — nanosleep and mapped-stack regression
+
+Implemented `RIX_SYS_NANOSLEEP` using the monotonic PIT-backed clock and cooperative scheduler yields, with malformed timespec, overflow, and pending-signal interruption checks. Added the real `/bin/sleep` userspace utility and integrated it into the disposable RixFS image.
+
+The first QEMU run exposed an exec failure for both `sleep` and `echo` after the stack ABI changes. Source inspection identified that the stack-capacity check measured unused space above the copied strings instead of available mapped space below them. After correcting the bound, QEMU successfully executed:
+
+```text
+/bin/sleep 0
+/bin/echo after-sleep
+after-sleep
+```
+
+The same run recorded `NVMe: controllers=1`, `VFS: mount nvme0n1 rc=0`, and `RIXURI:KERNEL_READY`, with no exec failure or exception output.

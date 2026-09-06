@@ -12,6 +12,7 @@ rix_pid_t spawn(const char *name,const void *image,size_t image_size){return(rix
 rix_pid_t fork(void){return(rix_pid_t)rix_sys(57,0,0,0);}
 rix_pid_t wait(rix_pid_t child,uint64_t*status){return(rix_pid_t)rix_sys(61,(long)child,(long)status,0);}
 rix_pid_t waitpid(rix_pid_t child,uint64_t*status,uint32_t options){return(rix_pid_t)rix_sys(247,(long)child,(long)status,(long)options);}
+int nanosleep(const rix_timespec_t *request, rix_timespec_t *remaining){return(int)rix_sys(35,(long)request,(long)remaining,0);}
 int execve(const char *path,char *const argv[],char *const envp[]){return(int)rix_sys(59,(long)path,(long)argv,(long)envp);}
 rix_pid_t getpid(void){return(rix_pid_t)rix_sys(39,0,0,0);}
 _Noreturn void _exit(int status){(void)rix_sys(60,status,0,0);for(;;)__asm__ volatile("hlt");}

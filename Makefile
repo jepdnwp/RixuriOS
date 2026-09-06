@@ -13,11 +13,11 @@ OBJ := kernel/boot.o kernel/main.o kernel/serial.o kernel/user_init_blob.o \
  kernel/mm/pmm.o kernel/mm/vmm.o kernel/mm/uaccess.o kernel/mm/heap.o kernel/sync/lock.o kernel/sync/waitqueue.o kernel/ipc/channel.o kernel/ipc/pipe.o kernel/ipc/shared_memory.o kernel/tty/tty.o \
  kernel/storage/block.o kernel/storage/block_cache.o kernel/storage/nvme.o kernel/usb/xhci.o kernel/usb/usb.o kernel/usb/hid.o kernel/time/rtc.o kernel/time/time.o kernel/power/power.o
 
-PROGRAM_NAMES := echo cat args grep true false
+PROGRAM_NAMES := echo cat args grep true false sleep
 PROGRAM_ELFS := $(addprefix build/programs/,$(addsuffix .elf,$(PROGRAM_NAMES)))
 PROGRAM_START_OBJ := build/programs/start.o
 
-.PHONY: all clean check image run qemu build-run test user-init programs rixfs-image usb-test hid-test tty-test shell-test
+.PHONY: all clean check image run qemu build-run test user-init programs rixfs-image usb-test hid-test tty-test shell-test pipe-test
 all: build/kernel.elf
 
 build:
@@ -58,6 +58,7 @@ build/rixfs.img: programs scripts/build-rixfs-image.py | build
 		--file /bin/true=build/programs/true.elf \
 		--file /usr/bin/args=build/programs/args.elf \
 		--file /usr/bin/grep=build/programs/grep.elf \
+		--file /bin/sleep=build/programs/sleep.elf \
 		--file /sbin/false=build/programs/false.elf \
 		--file /usr/sbin/true=build/programs/true.elf
 rixfs-image: build/rixfs.img
@@ -100,9 +101,13 @@ tty-test: | build
 	build/tty_test
 shell-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/shell_test.c user/shell/shell.c -o build/shell_test
-	build/shell_test
+		build/shell_test
 
-test: check usb-test hid-test tty-test shell-test
+pipe-test: | build
+	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -DRIX_HOST_TEST -I. tests/pipe_test.c kernel/ipc/channel.c kernel/ipc/pipe.c kernel/sync/lock.c -o build/pipe_test
+		build/pipe_test
+
+test: check usb-test hid-test tty-test shell-test pipe-test
 	@echo 'Static kernel build checks completed.'
 
 clean:

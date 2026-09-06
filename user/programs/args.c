@@ -46,5 +46,20 @@ int program_main(int argc, char **argv, char **envp) {
         out(envp[index]);
         out("\n");
     }
+    int auxv_terminated = 0;
+    if (envp) {
+        uint64_t *auxv = (uint64_t *)(void *)(envp + 1);
+        for (size_t index = 0; index < 32u; index += 2u) {
+            uint64_t type = auxv[index];
+            uint64_t value = auxv[index + 1u];
+            if (type == 0u && value == 0u) {
+                auxv_terminated = 1;
+                break;
+            }
+        }
+    }
+    out("auxv_at_null=");
+    out_u64((uint64_t)auxv_terminated);
+    out("\n");
     return 0;
 }
