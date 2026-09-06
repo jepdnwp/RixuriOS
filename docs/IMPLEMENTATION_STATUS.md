@@ -52,6 +52,7 @@ The current source tree has now passed a clean strict build and a real UEFI-to-k
 - Added a bounds-checked HID short/long-item report descriptor parser that identifies keyboard/mouse usages, report IDs and aggregate input size, with malformed/truncated host tests.
 - Added `xhci_get_hid_report_descriptor()` for the USB class-specific interface `GET_DESCRIPTOR` request (`0x81`, descriptor type `0x22`), connecting enumeration metadata to the HID report parser.
 - Added HID class control helpers for `SET_PROTOCOL`, `SET_IDLE` and `GET_PROTOCOL`, with interface/protocol validation; interrupt report adapters now reject lengths that cannot be represented by the boot-report parser instead of truncating them.
+- Added dedicated completion-code-11 diagnostics for command and transfer events, recording controller/event TRB, parameter, control/status, slot/DCI, port/speed/route, DCBAA device context, input context and endpoint-ring state.
 - Added `xhci_poll_port_status_change()` for cycle-aware, non-destructive event-ring peeking that consumes only Port Status Change Events and reports the current connection state.
 
 This remains `IMPLEMENTED / NOT YET VALIDATED`. The control-transfer, multi-endpoint, HID adapter and port-event paths are source/build validated but not hardware-exercised: QEMU reported zero xHCI controllers. Device-manager policy for automatic attach/enumeration after a port event, hardware evidence and the historical completion-code-11 regression remain open.

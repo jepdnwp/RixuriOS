@@ -2,6 +2,7 @@
 #include "../pci/pci.h"
 #include "../mm/vmm.h"
 #include "../mm/pmm.h"
+#include "../serial.h"
 #include <stddef.h>
 
 #define XHCI_MAX 4
@@ -58,6 +59,7 @@
 #define XHCI_TRB_DIR (1u << 16)
 #define XHCI_TRB_CYCLE (1u << 0)
 #define XHCI_COMPLETION_SUCCESS 1u
+#define XHCI_COMPLETION_CONTEXT_STATE 11u
 #define XHCI_POLL_LIMIT 1000000u
 #define XHCI_CMD_RING_TRBS 64u
 #define XHCI_EVENT_RING_TRBS 64u
@@ -101,6 +103,7 @@ typedef struct {
     uint8_t addressed;
     uint8_t port;
     uint8_t speed;
+    uint32_t route_string;
     uint64_t device_context_phys;
     uint64_t input_context_phys;
     uint64_t ep0_ring_phys;
@@ -367,6 +370,53 @@ static void acknowledge_event(const rix_xhci_controller_t *c, xhci_runtime_t *rt
     *(volatile uint64_t *)(runtime_base(c) + 0x38) = erdp | XHCI_ERDP_EHB;
 }
 
+static void trace_context_state_error(const rix_xhci_controller_t *c, xhci_runtime_t *rt,
+                                      uint64_t event_phys, uint64_t parameter,
+                                      uint32_t control, uint32_t status,
+                                      uint8_t slot_id, uint8_t endpoint_id) {
+    if ((status >> 24) != XHCI_COMPLETION_CONTEXT_STATE) return;
+    serial_write("xHCI: completion-code-11 context-state-error\r\n");
+    serial_write("xHCI: controller=");
+    serial_write_dec((uint64_t)(c - controllers));
+    serial_write(" event-trb=");
+    serial_write_hex(event_phys);
+    serial_write(" parameter=");
+    serial_write_hex(parameter);
+    serial_write(" control=");
+    serial_write_hex(control);
+    serial_write(" status=");
+    serial_write_hex(status);
+    serial_write(" slot=");
+    serial_write_dec(slot_id);
+    serial_write(" endpoint=");
+    serial_write_dec(endpoint_id);
+    serial_write("\r\n");
+    if (slot_id == 0u) return;
+    const xhci_slot_runtime_t *slot = &rt->slots[slot_id];
+    serial_write("xHCI: port=");
+    serial_write_dec(slot->port);
+    serial_write(" speed=");
+    serial_write_dec(slot->speed);
+    serial_write(" route=");
+    serial_write_hex(slot->route_string);
+    serial_write(" dcba=");
+    serial_write_hex(slot->device_context_phys);
+    serial_write(" input-context=");
+    serial_write_hex(slot->input_context_phys);
+    serial_write(" ep0-ring=");
+    serial_write_hex(slot->ep0_ring_phys);
+    serial_write("\r\n");
+    if (endpoint_id < 32u) {
+        serial_write("xHCI: endpoint-ring=");
+        serial_write_hex(slot->endpoints[endpoint_id].ring_phys);
+        serial_write(" cycle=");
+        serial_write_dec(slot->endpoints[endpoint_id].cycle);
+        serial_write(" enqueue=");
+        serial_write_dec(slot->endpoints[endpoint_id].enqueue);
+        serial_write("\r\n");
+    }
+}
+
 int xhci_poll_port_status_change(size_t controller, uint8_t *port, uint8_t *connected) {
     if (port) *port = 0;
     if (connected) *connected = 0;
@@ -427,6 +477,10 @@ static int wait_command(const rix_xhci_controller_t *c, xhci_runtime_t *rt,
         uint64_t parameter = ((uint64_t)event->parameter_hi << 32) | event->parameter_lo;
         uint8_t slot = (uint8_t)(control >> XHCI_TRB_SLOT_SHIFT);
         uint8_t completion = (uint8_t)(event->status >> 24);
+        uint64_t event_phys = c->event_ring_phys +
+                              (uint64_t)rt->event_dequeue * sizeof(xhci_trb_t);
+        trace_context_state_error(c, rt, event_phys, parameter, control, event->status,
+                                  slot, 0u);
         acknowledge_event(c, rt);
         if (type != XHCI_TRB_COMMAND_COMPLETION || parameter != command_phys) continue;
         if (out_slot) *out_slot = slot;
@@ -522,6 +576,7 @@ static void release_slot_context(const rix_xhci_controller_t *c, uint8_t slot_id
     slot->addressed = 0;
     slot->port = 0;
     slot->speed = 0;
+    slot->route_string = 0;
 }
 
 static int prepare_address_context(size_t controller, uint8_t slot_id, uint8_t port, uint8_t speed) {
@@ -645,6 +700,10 @@ static int wait_transfer(const rix_xhci_controller_t *c, xhci_runtime_t *rt,
         uint8_t endpoint = (uint8_t)((control >> 16) & 0x1fu);
         uint8_t completion = (uint8_t)(event->status >> 24);
         uint32_t residual = event->status & 0x00ffffffu;
+        uint64_t event_phys = c->event_ring_phys +
+                              (uint64_t)rt->event_dequeue * sizeof(xhci_trb_t);
+        trace_context_state_error(c, rt, event_phys, parameter, control, event->status,
+                                  event_slot, endpoint);
         acknowledge_event(c, rt);
         if (type != XHCI_TRB_TRANSFER_EVENT || parameter != last_trb ||
             event_slot != slot_id || endpoint != expected_endpoint) continue;
