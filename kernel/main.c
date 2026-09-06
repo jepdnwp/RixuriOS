@@ -27,6 +27,7 @@
 static void halt_forever(void){for(;;)__asm__ volatile("hlt");}
 #define RIX_XHCI_CONFIG_CAPACITY 4096u
 static uint8_t xhci_configuration[RIX_XHCI_CONFIG_CAPACITY];
+static uint8_t xhci_hid_report[2048];
 static rix_usb_interface_info_t xhci_interfaces[RIX_USB_MAX_INTERFACES];
 static rix_usb_endpoint_info_t xhci_endpoints[RIX_USB_MAX_ENDPOINTS];
 static int xhci_enumerate_and_configure(size_t controller, const rix_xhci_device_t *device){
@@ -45,6 +46,27 @@ static int xhci_enumerate_and_configure(size_t controller, const rix_xhci_device
                                       endpoint->max_packet_size,endpoint->interval,0};
   rc=xhci_configure_endpoint(controller,device->slot_id,&config);
   if(rc!=0)return rc;
+ }
+ for(size_t i=0;i<interface_count;i++){
+  const rix_usb_interface_info_t *interface=&xhci_interfaces[i];
+  if(interface->class_code!=3u || interface->hid_report_descriptor_length==0u)continue;
+  if(interface->hid_report_descriptor_length>sizeof(xhci_hid_report))return -7;
+  uint16_t actual_report=0;
+  rc=xhci_get_hid_report_descriptor(controller,device->slot_id,interface->number,
+                                     xhci_hid_report,interface->hid_report_descriptor_length,
+                                     &actual_report);
+  if(rc!=0 || actual_report!=interface->hid_report_descriptor_length)return -8;
+  rix_hid_report_info_t report_info;
+  if(hid_parse_report_descriptor(xhci_hid_report,actual_report,&report_info)!=0)continue;
+  if(!report_info.has_keyboard && !report_info.has_mouse)continue;
+  rc=xhci_hid_set_protocol(controller,device->slot_id,interface->number,1u);
+  if(rc!=0)return -9;
+  rc=xhci_hid_set_idle(controller,device->slot_id,interface->number,report_info.report_id,0u);
+  if(rc!=0)return -10;
+  serial_write("xHCI: HID interface=");serial_write_dec(interface->number);
+  serial_write(" keyboard=");serial_write_dec(report_info.has_keyboard);
+  serial_write(" mouse=");serial_write_dec(report_info.has_mouse);
+  serial_write(" report-id=");serial_write_dec(report_info.report_id);serial_write("\r\n");
  }
  serial_write("xHCI: enumerated vid=");serial_write_hex(usb_device.vendor_id);
  serial_write(" pid=");serial_write_hex(usb_device.product_id);

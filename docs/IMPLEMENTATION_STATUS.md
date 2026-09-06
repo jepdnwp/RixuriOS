@@ -107,3 +107,10 @@ Phase 15 continuation: add device-manager policy around port-event attach/detach
 - Added report-ID aware xHCI interrupt-IN polling wrappers for keyboard and mouse devices.
 - The wrappers preserve transfer errors and actual-length reporting, then route reports through the existing report-ID validation and rollover-safe parsers.
 - Phase 15 remains `IMPLEMENTED / NOT YET VALIDATED` because real xHCI controller evidence and the completion-code-11 regression gate are still open; Phase 16 source work has now resumed without claiming hardware completion.
+
+## Latest continuation — Phase 16 HID device initialization
+
+- Connected parsed HID interface metadata to hotplug enumeration: HID report descriptors are fetched, parsed and validated before protocol initialization.
+- Keyboard/mouse HID interfaces request report protocol and zero idle duration through the existing class-control helpers; unsupported HID usages are left available without being falsely claimed as keyboard or mouse devices.
+- Oversized or failed report-descriptor transfers fail the attach configuration path and trigger slot cleanup.
+- QEMU still exposes zero xHCI controllers, so this remains source/build validated rather than physical HID evidence.
