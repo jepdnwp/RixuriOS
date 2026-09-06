@@ -409,3 +409,24 @@ qemu text utilities test: PASS
 ```
 
 This is QEMU evidence for the bounded stdin/pipeline and missing-path scenarios; it does not claim complete POSIX option or locale semantics.
+
+## 2026-09-06 — Phase 19 environment/shell utilities
+
+Added `/usr/bin/env`, `/usr/bin/printf`, `/bin/pwd`, and `/usr/bin/which`. Real QEMU output included:
+
+```text
+/usr/bin/env
+PATH=/bin:/usr/bin:/sbin:/usr/sbin
+PWD=/
+/usr/bin/printf x=%s,n=%d hello 42
+x=hello,n=42
+/bin/pwd
+/
+/usr/bin/which echo
+/bin/echo
+/usr/bin/which absent-command
+which: not found
+qemu environment utilities test: PASS
+```
+
+The output confirms the current embedded environment, basic formatting, root working-directory model, fixed PATH lookup, and missing-command handling. Full POSIX environment mutation and formatting semantics are not claimed.

@@ -288,3 +288,15 @@ The tested external-command, argv/envp, redirection, pipeline, conditional, and 
 - Hardware validation: NOT TESTED; disposable QEMU NVMe image only.
 - Remaining limitations: advanced option matrices, multi-file labels, locale/collation, large-input behavior beyond each bounded buffer, and comprehensive duplicate-line fixtures remain open. The current pipe EOF ABI can return a degraded negative result after partial data; utilities handle the observed data-after-EOF case.
 - Status: IMPLEMENTED / QEMU-VALIDATED for the observed bounded default/pipeline scenarios.
+
+### 2026-09-06 — Phase 19 environment/shell utilities: `env`, `printf`, `pwd`, `which`
+
+- Problem: Phase 19 environment and basic shell utility grubunun kullanıcı programları eksikti.
+- Root cause: Existing shell/environment data was available through `envp` and stat/path APIs, but no standalone utilities exposed it.
+- Changed: Added bounded freestanding `/usr/bin/env`, `/usr/bin/printf`, `/bin/pwd`, and `/usr/bin/which`; integrated all four into the image.
+- Files: `user/programs/env.c`, `user/programs/printf.c`, `user/programs/pwd.c`, `user/programs/which.c`, `scripts/qemu_env_utils_test.py`, `Makefile`.
+- Tests: `make CROSS=x86_64-linux-gnu- test image` passed with strict warnings; host USB/HID/TTY/shell/pipe tests passed.
+- QEMU validation: PASS for environment output, `%s`/`%d`/`%%` printf forms, root pwd, PATH lookup of `/bin/echo`, missing-command failure, and no exception/panic marker.
+- Hardware validation: NOT TESTED; disposable QEMU NVMe image only.
+- Remaining limitations: `env` assignment/command mode, full printf formatting, dynamic cwd, and PATH parsing from environment are unsupported; `which` uses the fixed RixuriOS standard directories.
+- Status: IMPLEMENTED / QEMU-VALIDATED for the observed bounded scenarios.
