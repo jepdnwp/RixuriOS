@@ -27,6 +27,7 @@ uint32_t getuid(void){return(uint32_t)rix_sys(102,0,0,0);}
 uint32_t getgid(void){return(uint32_t)rix_sys(104,0,0,0);}
 int setuid(uint32_t uid){return(int)rix_sys(105,(long)uid,0,0);}
 int setgid(uint32_t gid){return(int)rix_sys(106,(long)gid,0,0);}
+int chmod(const char *path,uint32_t mode){return(int)rix_sys(90,(long)path,(long)mode,0);}
 int getgroups(size_t capacity,uint32_t *groups){return(int)rix_sys(115,(long)capacity,(long)groups,0);}
 int setgroups(size_t count,const uint32_t *groups){return(int)rix_sys(116,(long)count,(long)groups,0);}
 int execve(const char *path,char *const argv[],char *const envp[]){return(int)rix_sys(59,(long)path,(long)argv,(long)envp);}

@@ -471,3 +471,24 @@ qemu Phase 20 credential/permission test: PASS
 ```
 
 The strict cross build and host regressions pass with this implementation. Phase 20 remains **IN PROGRESS** because saved IDs, set-id exec policy, environment sanitization, and broader owner/group/other QEMU matrices are still outstanding.
+
+
+## Phase 20 saved credentials, chmod, and set-id exec — 2026-09-07
+
+The credential model now maintains real, effective, and saved UID/GID state in an out-of-line PID-indexed table, preserving the stable `rix_process_t` layout. Fork and process creation inherit this state. Root transitions update the real/effective/saved triplet as an irreversible privilege drop; a non-root process may only return to its recorded real or saved identity. Supplementary groups remain bounded and inherited separately.
+
+RixFS mode metadata can now be changed through an owner-or-root-only `chmod` syscall. The implementation preserves the inode type bits and supports special mode bits, including setuid and setgid. The generated QEMU image marks `/usr/bin/id` with both setuid and setgid bits for the security regression.
+
+`execve` now reads inode owner and mode metadata before loading the image. After the replacement address space and argument stack are built successfully, setuid/setgid bits update effective and saved credentials atomically with the successful exec path. Privileged exec receives an empty environment, while ordinary exec preserves the bounded inherited environment. The test target reports `uid=0 gid=0` only when both transitions occurred.
+
+The real-QEMU credential regression now covers root chmod, post-drop unauthorized chmod, irreversible UID/GID recovery rejection, supplementary-group count and full-buffer copying, and fork/exec of the setuid/setgid target with environment sanitization. The final observed output was:
+
+```text
+before uid=0 gid=0
+after uid=1000 gid=1000
+uid=0 gid=0
+setid=PASS
+qemu Phase 20 credential/permission test: PASS
+```
+
+The strict cross-build and USB/HID/TTY/shell/pipe host regressions pass. No page fault, CPU exception, kernel panic, timeout, or prompt loss was observed. Phase 20 remains **IN PROGRESS** because broader owner/group/other access matrices, group-owned file QEMU coverage, and final security regression breadth remain open. The colored shell prompt remains deferred until those gates are closed.

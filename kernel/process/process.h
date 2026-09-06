@@ -43,3 +43,4 @@ int process_setgid(pid_t pid,uint32_t gid);
 int process_in_group(pid_t pid,uint32_t gid);
 int process_getgroups(pid_t pid,uint32_t *groups,size_t capacity,size_t *count);
 int process_setgroups(pid_t pid,const uint32_t *groups,size_t count);
+int process_apply_exec_credentials(pid_t pid,uint32_t uid,uint32_t gid,int setuid_bit,int setgid_bit);
