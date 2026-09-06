@@ -75,5 +75,10 @@ int rix_shell_history_import(rix_shell_history_t *history, const char *input);
 int rix_shell_arithmetic_eval(const char *expression, int64_t *result);
 typedef int (*rix_shell_command_runner_t)(const char *command, char *output,
                                           size_t capacity, void *context);
+typedef int (*rix_shell_pipeline_runner_t)(const rix_shell_command_t *command,
+                                           int input_fd, int output_fd, void *context);
+int rix_shell_execute_pipeline(const rix_shell_pipeline_t *pipeline,
+                               rix_shell_pipeline_runner_t runner, void *context,
+                               int *status);
 int rix_shell_command_substitute(const char *input, char *output, size_t capacity,
                                  rix_shell_command_runner_t runner, void *context);

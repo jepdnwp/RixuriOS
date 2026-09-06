@@ -513,3 +513,30 @@ int rix_shell_expand_pathname(const char *pattern, const char *const *candidates
     if (match_count) *match_count = matches;
     return 0;
 }
+
+int rix_shell_execute_pipeline(const rix_shell_pipeline_t *pipeline,
+                               rix_shell_pipeline_runner_t runner, void *context,
+                               int *status) {
+    if (!pipeline || !runner || !status || pipeline->command_count == 0 ||
+        pipeline->command_count > RIX_SHELL_MAX_COMMANDS) return -1;
+    int input_fd = 0;
+    int last_status = 0;
+    for (size_t i = 0; i < pipeline->command_count; ++i) {
+        int output_fd = (i + 1u < pipeline->command_count) ? (int)(i + 1u) : 1;
+        int rc = runner(&pipeline->command[i], input_fd, output_fd, context);
+        if (rc != 0) {
+            *status = rc;
+            return rc;
+        }
+        last_status = rc;
+        if (i + 1u < pipeline->command_count) {
+            if (pipeline->connector[i] != RIX_SHELL_PIPE) {
+                *status = -2;
+                return -2;
+            }
+            input_fd = output_fd;
+        }
+    }
+    *status = last_status;
+    return 0;
+}

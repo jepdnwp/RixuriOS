@@ -21,6 +21,18 @@ static int run_command(const char *command, char *output, size_t capacity, void 
     return 0;
 }
 
+static int pipeline_calls;
+static int pipeline_inputs[4];
+static int pipeline_outputs[4];
+static int run_pipeline(const rix_shell_command_t *command, int input_fd, int output_fd, void *context) {
+    (void)context;
+    if (!command || command->argc != 1 || pipeline_calls >= 4) return -1;
+    pipeline_inputs[pipeline_calls] = input_fd;
+    pipeline_outputs[pipeline_calls] = output_fd;
+    ++pipeline_calls;
+    return 0;
+}
+
 int main(void) {
     rix_shell_tokens_t tokens;
     if (expect(rix_shell_lex("echo 'hello world' a\\ b # comment", &tokens) == 0 &&
@@ -37,6 +49,13 @@ int main(void) {
                 pipeline.command[2].argc == 2 && pipeline.connector[0] == RIX_SHELL_PIPE &&
                 pipeline.connector[1] == RIX_SHELL_AND,
                 "pipeline AST")) return 1;
+    int exec_status = -1;
+    if (expect(rix_shell_lex("left | right", &tokens) == 0 &&
+                rix_shell_parse_pipeline(&tokens, &pipeline) == 0 &&
+                (pipeline_calls = 0, rix_shell_execute_pipeline(&pipeline, run_pipeline, NULL, &exec_status) == 0) &&
+                pipeline_calls == 2 && pipeline_inputs[0] == 0 && pipeline_outputs[0] == 1 &&
+                pipeline_inputs[1] == 1 && pipeline_outputs[1] == 1 && exec_status == 0,
+                "pipeline executor wiring")) return 1;
     if (expect(rix_shell_lex("echo \"unterminated", &tokens) != 0,
                 "unterminated quote rejected")) return 1;
     char expanded[64];
