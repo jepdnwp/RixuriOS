@@ -320,7 +320,7 @@ The tested external-command, argv/envp, redirection, pipeline, conditional, and 
 - Added all four ELF targets to the strict userspace build and disposable RixFS image. The userspace compilation completed with `-Wall -Wextra -Werror`; full UEFI image packaging also completed after installing the environment-only build dependencies.
 - `find` is bounded and recursively traverses real VFS directories, with optional basename filtering and failure propagation. `sed` implements bounded basic `s/old/new/` and `g` substitution for stdin or one file. `test` implements bounded string/unary and integer comparison forms with 0/1/2 status semantics. `xargs` implements bounded whitespace tokenization and one batch `fork`/`execve`/`wait` invocation.
 - The real QEMU boot path passed through NVMe discovery, RixFS mount, `RIXURI:KERNEL_READY`, shell startup and prompt. A dedicated QEMU Phase 19 harness was added for utility and pipeline scenarios.
-- The harness reached the `xargs` pipeline but the prompt closed before completion; this is recorded as a runtime failure, not a PASS. The xargs implementation remains `IMPLEMENTED / NOT YET VALIDATED` pending scheduler/pipe/exec diagnosis. No success is fabricated.
+- The dedicated QEMU Phase 19 harness now passes find, sed pipeline, xargs pipeline, test true/&&, test false/||, sequential status and grep pipeline cases in one clean image. It rejects missing prompts, timeouts and CPU exceptions.
 - `df`, `free`, `dmesg`, `mount` and `umount` remain intentionally unimplemented. The current kernel exposes no stable filesystem free-space/statfs ABI, memory-accounting snapshot ABI, bounded kernel-log reader, or mount namespace/device-management ABI sufficient to implement them honestly.
 
 ## Next kernel API design required before system utilities
@@ -334,14 +334,14 @@ The tested external-command, argv/envp, redirection, pipeline, conditional, and 
 The detailed provisional ABI design for the deferred system utilities is recorded in [`docs/PHASE19_KERNEL_API.md`](PHASE19_KERNEL_API.md). It remains a design artifact only; no syscall is claimed until implementation and QEMU evidence exist.
 
 
-## xargs runtime debug boundary — 2026-09-06
+## xargs runtime resolution — 2026-09-06
 
-Temporary QEMU diagnostics established that xargs consumes the input pipe to EOF and reaches its child-launch boundary. The subsequent page fault occurs in nested fork/exec address-space setup, not in the xargs tokenizer or the initial pipe read. Experimental CR3 switching and early VMM page-table PMM reservation were tested and reverted after failing to remove the fault. No unverified kernel patch was retained or pushed.
+The failure was isolated to nested `fork -> execve -> fork` address-space teardown. Newly allocated process PDPT/PD/PT links were not explicitly marked as owned, while destroy recursively freed borrowed kernel-derived tables and could return a live process PML4 page to PMM. The fix marks process-created table links as `RIXURI_PTE_OWNED`, strips ownership from copied kernel entries, and makes teardown recurse only through owned links. Permanent PMM reservations protect static VMM tables. The clean Phase 19 QEMU harness and regression harnesses now pass without exception or timeout.
 
 
-## Fork child return-frame boundary — 2026-09-06
+## Fork/address-space validation boundary — 2026-09-06
 
-An isolated second-fork regression reproduced the failure without xargs or child exec. Context creation and scheduler entry carried the correct user RIP/RSP, but the child faulted on return to user mode with an ASCII string address as RIP. The unresolved area is therefore the syscall ISR/return frame or kernel-stack corruption after context entry, not pipe refcounting. No temporary diagnostics or unverified fix remains in the tree.
+The nested fork child now receives a distinct PML4 and a valid mapping for its fork return RIP. The previously observed page fault and prompt loss no longer reproduce. Temporary lifecycle and fault diagnostics were removed before the final commit.
 
 
 ## Fork/address-space redesign
@@ -351,4 +351,4 @@ The implementation design for removing physical identity-mapping assumptions fro
 
 ## Fork/address-space redesign Phase A — in progress
 
-A strict-build-safe `vmm_phys_ptr()` boundary was added and address-space table access now goes through it. This is an API/validation seam, not yet the permanent mapping window described by the design; it still uses the existing identity-mapped physical region. QEMU fork/xargs acceptance remains open until the real mapped window replaces that fallback.
+A strict-build-safe `vmm_phys_ptr()` boundary remains in place and address-space table access goes through it. The permanent mapping-window redesign remains future work; however, the current identity-backed implementation now passes the Phase 19 fork/exec/xargs acceptance harness with explicit page-table ownership semantics.
