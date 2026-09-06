@@ -9,7 +9,6 @@
 #define PCI_SUBCLASS_USB 0x03
 #define PCI_PROGIF_XHCI 0x30
 #define PCI_COMMAND 0x04
-#define PCI_COMMAND_IO (1u << 0)
 #define PCI_COMMAND_MEMORY (1u << 1)
 #define PCI_COMMAND_BUS_MASTER (1u << 2)
 #define XHCI_CAPLENGTH 0x00
@@ -23,6 +22,15 @@
 #define XHCI_CRCR 0x18
 #define XHCI_DCBAAP 0x30
 #define XHCI_CONFIG 0x38
+#define XHCI_PORTSC_BASE 0x400
+#define XHCI_PORT_STRIDE 0x10
+#define XHCI_PORT_CCS (1u << 0)
+#define XHCI_PORT_PED (1u << 1)
+#define XHCI_PORT_PR (1u << 4)
+#define XHCI_PORT_SPEED_SHIFT 10
+#define XHCI_PORT_SPEED_MASK (0xFu << XHCI_PORT_SPEED_SHIFT)
+#define XHCI_PORT_CSC (1u << 17)
+#define XHCI_PORT_PRC (1u << 21)
 #define XHCI_CMD_RS (1u << 0)
 #define XHCI_CMD_HCRST (1u << 1)
 #define XHCI_STS_HCH (1u << 0)
@@ -49,6 +57,7 @@ static rix_xhci_controller_t controllers[XHCI_MAX];
 static size_t count;
 
 static int map_range(uint64_t base, uint64_t length) {
+    if (length == 0 || base > UINT64_MAX - (length - 1u)) return -1;
     uint64_t first = base & ~0xFFFULL;
     uint64_t last = (base + length - 1u) & ~0xFFFULL;
     for (uint64_t page = first;; page += 0x1000ULL) {
@@ -201,3 +210,43 @@ int xhci_init(void) {
 
 size_t xhci_controller_count(void) { return count; }
 const rix_xhci_controller_t *xhci_controller(size_t index) { return index < count ? &controllers[index] : NULL; }
+
+static volatile uint32_t *port_reg(const rix_xhci_controller_t *c, uint8_t port) {
+    if (!c || !c->running || port == 0 || port > c->max_ports) return NULL;
+    volatile uint8_t *base = (volatile uint8_t *)(uintptr_t)c->bar0;
+    return (volatile uint32_t *)(base + c->cap_length + XHCI_PORTSC_BASE +
+                                  (uint32_t)(port - 1u) * XHCI_PORT_STRIDE);
+}
+
+int xhci_port_status(size_t controller, uint8_t port, rix_xhci_port_status_t *out) {
+    if (!out) return -1;
+    const rix_xhci_controller_t *c = xhci_controller(controller);
+    volatile uint32_t *reg = port_reg(c, port);
+    if (!reg) return -2;
+    uint32_t v = *reg;
+    out->connected = (v & XHCI_PORT_CCS) != 0u;
+    out->enabled = (v & XHCI_PORT_PED) != 0u;
+    out->speed = (uint8_t)((v & XHCI_PORT_SPEED_MASK) >> XHCI_PORT_SPEED_SHIFT);
+    out->reset_complete = (v & XHCI_PORT_PRC) != 0u;
+    return 0;
+}
+
+int xhci_reset_port(size_t controller, uint8_t port) {
+    const rix_xhci_controller_t *c = xhci_controller(controller);
+    volatile uint32_t *reg = port_reg(c, port);
+    if (!reg) return -1;
+    uint32_t v = *reg;
+    if ((v & XHCI_PORT_CCS) == 0u) return -2;
+    v &= ~(XHCI_PORT_CSC | XHCI_PORT_PRC);
+    v |= XHCI_PORT_PR;
+    *reg = v;
+    for (uint32_t i = 0; i < XHCI_POLL_LIMIT; ++i) {
+        uint32_t s = *reg;
+        if ((s & XHCI_PORT_PR) == 0u) {
+            if ((s & XHCI_PORT_PRC) != 0u) return 0;
+            if ((s & XHCI_PORT_CCS) == 0u) return -3;
+            return -4;
+        }
+    }
+    return -5;
+}
