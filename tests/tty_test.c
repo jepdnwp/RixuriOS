@@ -31,6 +31,22 @@ int main(void) {
     uint32_t pgrp = 0;
     if (expect(tty_get_foreground_pgrp(0, &pgrp) == 0 && pgrp == 42,
                 "get foreground pgrp")) return 1;
+    unsigned pty = 0;
+    if (expect(tty_pty_open(&pty) == 0, "open pty")) return 1;
+    size_t written = 0;
+    if (expect(tty_pty_master_write(pty, "cmd\n", 4, &written) == 0 && written == 4,
+                "pty master writes input")) return 1;
+    if (expect(tty_pty_slave_read(pty, buffer, sizeof(buffer), &count) == 0 &&
+                count == 4 && memcmp(buffer, "cmd\n", 4) == 0,
+                "pty slave reads canonical line")) return 1;
+    if (expect(tty_pty_master_read(pty, output, sizeof(output), &count) == 0 &&
+                count == 4 && memcmp(output, "cmd\n", 4) == 0,
+                "pty master reads echo")) return 1;
+    if (expect(tty_pty_slave_write(pty, "ok\n", 3, &written) == 0 && written == 3 &&
+                tty_pty_master_read(pty, output, sizeof(output), &count) == 0 &&
+                count == 3 && memcmp(output, "ok\n", 3) == 0,
+                "pty slave writes output")) return 1;
+    if (expect(tty_pty_close(pty) == 0, "close pty")) return 1;
     puts("tty tests: PASS");
     return 0;
 }

@@ -5,6 +5,7 @@
 #define RIX_TTY_COUNT 4u
 #define RIX_TTY_INPUT 4096u
 #define RIX_TTY_OUTPUT 4096u
+#define RIX_PTY_COUNT 4u
 
 typedef struct {
     uint8_t input[RIX_TTY_INPUT];
@@ -32,3 +33,10 @@ int tty_set_canonical(unsigned id, int enabled);
 int tty_set_echo(unsigned id, int enabled);
 int tty_set_foreground_pgrp(unsigned id, uint32_t pgrp);
 int tty_get_foreground_pgrp(unsigned id, uint32_t *pgrp);
+
+int tty_pty_open(unsigned *pty_id);
+int tty_pty_close(unsigned pty_id);
+int tty_pty_master_write(unsigned pty_id, const void *buf, size_t n, size_t *written);
+int tty_pty_master_read(unsigned pty_id, void *buf, size_t n, size_t *out);
+int tty_pty_slave_write(unsigned pty_id, const void *buf, size_t n, size_t *written);
+int tty_pty_slave_read(unsigned pty_id, void *buf, size_t n, size_t *out);

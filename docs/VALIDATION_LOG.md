@@ -61,7 +61,7 @@ The historical completion-code-11 regression now has dedicated runtime instrumen
 
 Phase 16 report-protocol work now includes report-ID framing helpers for keyboard and mouse reports. The helpers validate the expected report ID before dispatching to the existing boot parsers; keyboard rollover error usages are rejected and mouse signed motion/wheel fields are covered by host tests. This remains parser-level evidence until a real report-protocol HID device is exercised.
 
-Phase 17 TTY work now has host evidence (`tty tests: PASS`) for canonical reads waiting on newline, raw reads returning immediately, echo flowing through a separate output queue, and foreground process-group state. PTY master/slave objects, signal generation, ANSI/VT parsing, session ownership and shell integration remain open; no full Phase 17 completion claim is made.
+Phase 17 TTY work now has host evidence (`tty tests: PASS`) for canonical reads waiting on newline, raw reads returning immediately, echo flowing through a separate output queue, foreground process-group state, and PTY master/slave input/output flow. Signal generation, ANSI/VT parsing, session ownership and shell integration remain open; no full Phase 17 completion claim is made.
 
 The linker was hardened during the Phase 0–17 audit. Explicit PHDRS now produce separate `R-X`, `R--` and `RW-` load segments plus a read-only `GNU_STACK`; `readelf -l build/kernel.elf` confirms no `RWE` segment. USB, HID and TTY host tests and the UEFI/QEMU boot smoke test continue to pass after this change.
 
