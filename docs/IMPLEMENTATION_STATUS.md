@@ -94,3 +94,10 @@ Phase 15 continuation: add device-manager policy around port-event attach/detach
 - Added explicit detached, addressed and error states to the xHCI device result model.
 - `xhci_service_hotplug()` now clears output fields before polling, preserves the affected port on attach failure, and reports detach failure instead of incorrectly claiming a clean detach.
 - Strict build, USB/HID/TTY/shell host tests and QEMU boot remain successful; real controller-backed hotplug evidence is still unavailable in the current QEMU profile.
+
+## Latest continuation — automatic enumeration policy
+
+- Connected successful hotplug attach events to bounded USB device/configuration descriptor enumeration.
+- Added automatic configuration of parsed interrupt and bulk endpoints; control and isochronous endpoints are explicitly left outside this policy until their dedicated paths are qualified.
+- Enumeration or endpoint-configuration failure now triggers device cleanup through slot detach rather than leaving an addressed but unmanaged device.
+- QEMU has no xHCI controller, so the new path is build-validated but not hardware-exercised.

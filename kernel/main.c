@@ -25,6 +25,33 @@
 #include "time/rtc.h"
 #include "time/time.h"
 static void halt_forever(void){for(;;)__asm__ volatile("hlt");}
+#define RIX_XHCI_CONFIG_CAPACITY 4096u
+static uint8_t xhci_configuration[RIX_XHCI_CONFIG_CAPACITY];
+static rix_usb_interface_info_t xhci_interfaces[RIX_USB_MAX_INTERFACES];
+static rix_usb_endpoint_info_t xhci_endpoints[RIX_USB_MAX_ENDPOINTS];
+static int xhci_enumerate_and_configure(size_t controller, const rix_xhci_device_t *device){
+ rix_usb_device_descriptor_t usb_device;rix_usb_configuration_info_t configuration;
+ size_t interface_count=0,endpoint_count=0;
+ int rc=xhci_enumerate_device(controller,device->slot_id,&usb_device,xhci_configuration,
+                              sizeof(xhci_configuration),&configuration,xhci_interfaces,
+                              RIX_USB_MAX_INTERFACES,xhci_endpoints,RIX_USB_MAX_ENDPOINTS,
+                              &interface_count,&endpoint_count);
+ if(rc!=0)return rc;
+ for(size_t i=0;i<endpoint_count;i++){
+  const rix_usb_endpoint_info_t *endpoint=&xhci_endpoints[i];
+  uint8_t transfer=endpoint->attributes&RIX_USB_EP_TRANSFER_MASK;
+  if(transfer==RIX_USB_EP_CONTROL||transfer==RIX_USB_EP_ISOCHRONOUS)continue;
+  rix_xhci_endpoint_config_t config={endpoint->address,endpoint->attributes,
+                                      endpoint->max_packet_size,endpoint->interval,0};
+  rc=xhci_configure_endpoint(controller,device->slot_id,&config);
+  if(rc!=0)return rc;
+ }
+ serial_write("xHCI: enumerated vid=");serial_write_hex(usb_device.vendor_id);
+ serial_write(" pid=");serial_write_hex(usb_device.product_id);
+ serial_write(" interfaces=");serial_write_dec(interface_count);
+ serial_write(" endpoints=");serial_write_dec(endpoint_count);serial_write("\r\n");
+ return 0;
+}
 static int terminal_signal_group(uint32_t process_group,unsigned signal){return process_signal_group((pid_t)process_group,signal);}
 static void xhci_hotplug_worker(void *arg){
  (void)arg;
@@ -37,6 +64,14 @@ static void xhci_hotplug_worker(void *arg){
     serial_write(" controller=");serial_write_dec(controller);
     serial_write(" port=");serial_write_dec(device.port);
     serial_write(" slot=");serial_write_dec(device.slot_id);serial_write("\r\n");
+    if(connected){
+     int enum_rc=xhci_enumerate_and_configure(controller,&device);
+     if(enum_rc!=0){
+      serial_write("xHCI: enumeration/configuration failed=");
+      serial_write_dec((uint64_t)(-enum_rc));serial_write("\r\n");
+      (void)xhci_device_detach(controller,device.slot_id);
+     }
+    }
    } else if(rc<0){
     serial_write("xHCI: hotplug service error=");serial_write_dec((uint64_t)(-rc));
     serial_write(" controller=");serial_write_dec(controller);serial_write("\r\n");
