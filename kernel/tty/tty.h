@@ -18,6 +18,13 @@ typedef struct {
     size_t output_count;
     size_t line_chars;
     size_t canonical_ready;
+    uint16_t rows;
+    uint16_t columns;
+    uint16_t cursor_row;
+    uint16_t cursor_column;
+    uint16_t vt_value[2];
+    uint8_t vt_state;
+    uint8_t vt_value_index;
     uint8_t canonical;
     uint8_t echo;
     uint32_t foreground_pgrp;
@@ -33,6 +40,9 @@ int tty_set_canonical(unsigned id, int enabled);
 int tty_set_echo(unsigned id, int enabled);
 int tty_set_foreground_pgrp(unsigned id, uint32_t pgrp);
 int tty_get_foreground_pgrp(unsigned id, uint32_t *pgrp);
+int tty_set_dimensions(unsigned id, uint16_t rows, uint16_t columns);
+int tty_get_dimensions(unsigned id, uint16_t *rows, uint16_t *columns);
+int tty_get_cursor(unsigned id, uint16_t *row, uint16_t *column);
 
 int tty_pty_open(unsigned *pty_id);
 int tty_pty_close(unsigned pty_id);

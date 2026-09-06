@@ -2,6 +2,10 @@
 
 static rix_tty_t ttys[RIX_TTY_COUNT];
 
+#define VT_NORMAL 0u
+#define VT_ESC 1u
+#define VT_CSI 2u
+
 typedef struct {
     uint8_t opened;
     rix_tty_t slave;
@@ -12,6 +16,77 @@ typedef struct {
 } rix_pty_t;
 
 static rix_pty_t ptys[RIX_PTY_COUNT];
+
+static uint16_t vt_clamp(uint16_t value, uint16_t limit) {
+    return value >= limit ? (uint16_t)(limit - 1u) : value;
+}
+
+static void vt_move(rix_tty_t *t, int row_delta, int column_delta) {
+    int row = (int)t->cursor_row + row_delta;
+    int column = (int)t->cursor_column + column_delta;
+    if (row < 0) row = 0;
+    if (column < 0) column = 0;
+    t->cursor_row = vt_clamp((uint16_t)row, t->rows);
+    t->cursor_column = vt_clamp((uint16_t)column, t->columns);
+}
+
+static void vt_consume(rix_tty_t *t, uint8_t ch) {
+    if (t->vt_state == VT_NORMAL) {
+        if (ch == 0x1bu) {
+            t->vt_state = VT_ESC;
+        } else if (ch == '\n') {
+            vt_move(t, 1, 0);
+        } else if (ch == '\r') {
+            t->cursor_column = 0;
+        } else if (ch == 8u) {
+            vt_move(t, 0, -1);
+        } else if (ch >= 0x20u && ch != 0x7fu) {
+            vt_move(t, 0, 1);
+        }
+        return;
+    }
+    if (t->vt_state == VT_ESC) {
+        if (ch == '[') {
+            t->vt_state = VT_CSI;
+            t->vt_value[0] = 0;
+            t->vt_value[1] = 0;
+            t->vt_value_index = 0;
+        } else {
+            t->vt_state = VT_NORMAL;
+        }
+        return;
+    }
+    if (ch >= '0' && ch <= '9') {
+        uint16_t *value = &t->vt_value[t->vt_value_index];
+        if (*value <= 999u) *value = (uint16_t)(*value * 10u + (ch - '0'));
+        return;
+    }
+    if (ch == ';') {
+        if (t->vt_value_index == 0u) t->vt_value_index = 1u;
+        return;
+    }
+    uint16_t first = t->vt_value[0] ? t->vt_value[0] : 1u;
+    uint16_t second = t->vt_value[1] ? t->vt_value[1] : 1u;
+    switch (ch) {
+        case 'A': vt_move(t, -(int)first, 0); break;
+        case 'B': vt_move(t, (int)first, 0); break;
+        case 'C': vt_move(t, 0, (int)first); break;
+        case 'D': vt_move(t, 0, -(int)first); break;
+        case 'G': t->cursor_column = vt_clamp((uint16_t)(first - 1u), t->columns); break;
+        case 'H':
+        case 'f':
+            t->cursor_row = vt_clamp((uint16_t)(first - 1u), t->rows);
+            t->cursor_column = vt_clamp((uint16_t)(second - 1u), t->columns);
+            break;
+        case 'J':
+        case 'K':
+        case 'm':
+            break;
+        default:
+            break;
+    }
+    t->vt_state = VT_NORMAL;
+}
 
 static rix_tty_t *tty_valid(unsigned id) {
     return id < RIX_TTY_COUNT ? &ttys[id] : NULL;
@@ -28,6 +103,14 @@ void tty_init(void) {
         t->output_count = 0;
         t->line_chars = 0;
         t->canonical_ready = 0;
+        t->rows = 25;
+        t->columns = 80;
+        t->cursor_row = 0;
+        t->cursor_column = 0;
+        t->vt_state = VT_NORMAL;
+        t->vt_value_index = 0;
+        t->vt_value[0] = 0;
+        t->vt_value[1] = 0;
         t->canonical = 1;
         t->echo = 1;
         t->foreground_pgrp = 0;
@@ -49,6 +132,7 @@ int tty_output(unsigned id, const void *buf, size_t n, size_t *written) {
         t->output[t->output_tail] = src[done++];
         t->output_tail = (t->output_tail + 1u) % RIX_TTY_OUTPUT;
         t->output_count++;
+        vt_consume(t, src[done - 1u]);
     }
     if (written) *written = done;
     return done == n ? 0 : -2;
@@ -153,6 +237,32 @@ int tty_get_foreground_pgrp(unsigned id, uint32_t *pgrp) {
     return 0;
 }
 
+int tty_set_dimensions(unsigned id, uint16_t rows, uint16_t columns) {
+    rix_tty_t *t = tty_valid(id);
+    if (!t || rows == 0u || columns == 0u) return -1;
+    t->rows = rows;
+    t->columns = columns;
+    t->cursor_row = vt_clamp(t->cursor_row, rows);
+    t->cursor_column = vt_clamp(t->cursor_column, columns);
+    return 0;
+}
+
+int tty_get_dimensions(unsigned id, uint16_t *rows, uint16_t *columns) {
+    rix_tty_t *t = tty_valid(id);
+    if (!t || !rows || !columns) return -1;
+    *rows = t->rows;
+    *columns = t->columns;
+    return 0;
+}
+
+int tty_get_cursor(unsigned id, uint16_t *row, uint16_t *column) {
+    rix_tty_t *t = tty_valid(id);
+    if (!t || !row || !column) return -1;
+    *row = t->cursor_row;
+    *column = t->cursor_column;
+    return 0;
+}
+
 static rix_pty_t *pty_valid(unsigned id) {
     return id < RIX_PTY_COUNT && ptys[id].opened ? &ptys[id] : NULL;
 }
@@ -187,6 +297,14 @@ int tty_pty_open(unsigned *pty_id) {
         ptys[i].slave.count = 0;
         ptys[i].slave.line_chars = 0;
         ptys[i].slave.canonical_ready = 0;
+        ptys[i].slave.rows = 25;
+        ptys[i].slave.columns = 80;
+        ptys[i].slave.cursor_row = 0;
+        ptys[i].slave.cursor_column = 0;
+        ptys[i].slave.vt_state = VT_NORMAL;
+        ptys[i].slave.vt_value_index = 0;
+        ptys[i].slave.vt_value[0] = 0;
+        ptys[i].slave.vt_value[1] = 0;
         ptys[i].slave.canonical = 1;
         ptys[i].slave.echo = 1;
         ptys[i].slave.foreground_pgrp = 0;
