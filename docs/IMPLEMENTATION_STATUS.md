@@ -20,7 +20,7 @@ A subsystem is not marked COMPLETE merely because source exists. Completion requ
 - VFS: persistent root mount, hierarchical path traversal, per-process file descriptors, open/read/write/readdir/stat/mkdir/unlink.
 - Time: CMOS RTC read in binary/BCD and 12/24-hour modes, Unix epoch conversion, PIT-backed monotonic clock, RTC-backed realtime clock.
 - Power: hardware reboot path and ACPI S5 shutdown path when validated FADT/DSDT power data is available; otherwise shutdown returns unsupported rather than faking success.
-- USB/xHCI: controller/capability foundation exists; full HID keyboard/mouse and hotplug qualification remain future phases.
+- USB/xHCI: controller/capability, multi-endpoint transfer rings, HID report delivery adapters and port-event polling are implemented; hardware qualification remains open.
 - GUI: deliberately untouched; GUI remains last in the roadmap.
 
 ## Validation boundary
@@ -44,11 +44,15 @@ The current source tree has now passed a clean strict build and a real UEFI-to-k
 - Added EP0 control-transfer submission with Setup/Data/Status TRB construction, doorbell routing, transfer-event polling, residual-length accounting, timeout propagation and correct Status Stage direction handling.
 - Added a standard `xhci_get_descriptor()` helper for USB `GET_DESCRIPTOR` requests, including descriptor type/index, language ID, destination buffer and actual-length reporting.
 - Added two-stage `xhci_enumerate_device()` orchestration: fetch and validate the 18-byte device descriptor, fetch the configuration header to discover `wTotalLength`, fetch the complete configuration, then pass it through the bounds-checked parser.
-- Added initial non-control endpoint support: interrupt endpoint context construction, Configure Endpoint command submission, endpoint transfer-ring lifecycle, doorbell routing and interrupt transfer-event polling with residual-length accounting.
+- Added non-control endpoint support: interrupt and bulk endpoint context construction, Configure Endpoint command submission, per-DCI endpoint transfer-ring lifecycle, doorbell routing and transfer-event polling with residual-length accounting.
 - Generalized the non-control endpoint path to support both interrupt and bulk endpoint types with shared ring submission/completion logic and separate public transfer wrappers.
+- Generalized each slot to retain independent endpoint runtime state for all non-control DCIs, allowing composite devices to configure and use multiple interrupt/bulk endpoints concurrently; transfer wrappers now take the endpoint address explicitly.
+- Connected the existing boot keyboard/mouse report parsers to interrupt-IN transfers through `hid_xhci_keyboard_poll()` and `hid_xhci_mouse_poll()` adapters.
+- Added a bounds-checked HID short/long-item report descriptor parser that identifies keyboard/mouse usages, report IDs and aggregate input size, with malformed/truncated host tests.
+- Added `xhci_poll_port_status_change()` for cycle-aware, non-destructive event-ring peeking that consumes only Port Status Change Events and reports the current connection state.
 
-This remains `IMPLEMENTED / NOT YET VALIDATED`. The control-transfer and endpoint paths are source/build validated but not hardware-exercised: QEMU reported zero xHCI controllers. The current runtime intentionally supports one configured non-control endpoint ring per slot; multi-endpoint context lifecycle, HID transfer delivery, hotplug event processing, hardware evidence and the historical completion-code-11 regression remain open.
+This remains `IMPLEMENTED / NOT YET VALIDATED`. The control-transfer, multi-endpoint, HID adapter and port-event paths are source/build validated but not hardware-exercised: QEMU reported zero xHCI controllers. Device-manager policy for automatic attach/enumeration after a port event, hardware evidence and the historical completion-code-11 regression remain open.
 
 ## Next phase
 
-Phase 15 continuation: generalize endpoint contexts to multiple configured endpoints per slot, then connect HID report delivery, exercise enumeration/interrupt/bulk transfers on a controller-backed target, handle disconnect/hotplug, and add hardware-backed negative-path tests.
+Phase 15 continuation: add device-manager policy around port-event attach/detach, exercise enumeration/interrupt/bulk/HID transfers on a controller-backed target, and add hardware-backed negative-path tests. Phase 16 HID report protocol work follows hardware qualification.

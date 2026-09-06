@@ -1,6 +1,7 @@
 #include "hid.h"
 #include "../tty/tty.h"
 #include <stddef.h>
+#include <stdint.h>
 
 #define HID_MOD_LCTRL 0x01u
 #define HID_MOD_LSHIFT 0x02u
@@ -98,3 +99,92 @@ int hid_mouse_report(const uint8_t *report, uint8_t length, rix_hid_mouse_report
 }
 
 uint8_t hid_keyboard_modifiers(void) { return modifiers; }
+
+static uint32_t hid_item_value(const uint8_t *data, uint8_t size) {
+    uint32_t value = 0;
+    for (uint8_t i = 0; i < size; ++i) value |= (uint32_t)data[i] << (i * 8u);
+    return value;
+}
+
+int hid_parse_report_descriptor(const uint8_t *data, size_t length,
+                                rix_hid_report_info_t *out) {
+    if (!data || !out) return -1;
+    out->has_keyboard = 0;
+    out->has_mouse = 0;
+    out->has_report_id = 0;
+    out->report_id = 0;
+    out->input_bits = 0;
+    out->input_bytes = 0;
+    uint32_t usage_page = 0;
+    uint32_t usage = 0;
+    uint32_t report_size = 0;
+    uint32_t report_count = 0;
+    size_t offset = 0;
+    while (offset < length) {
+        uint8_t prefix = data[offset++];
+        if (prefix == 0xfeu) {
+            if (length - offset < 2u) return -2;
+            uint8_t long_size = data[offset++];
+            offset++;
+            if ((size_t)long_size > length - offset) return -3;
+            offset += long_size;
+            continue;
+        }
+        uint8_t size_code = prefix & 0x03u;
+        uint8_t item_size = size_code == 3u ? 4u : size_code;
+        uint8_t tag = (prefix >> 4) & 0x0fu;
+        uint8_t type = (prefix >> 2) & 0x03u;
+        if ((size_t)item_size > length - offset) return -4;
+        uint32_t value = hid_item_value(&data[offset], item_size);
+        offset += item_size;
+        if (type == 1u) {
+            if (tag == 0u) usage_page = value;
+            else if (tag == 7u) report_size = value;
+            else if (tag == 8u) {
+                if (value == 0u || value > 0xffu) return -5;
+                out->has_report_id = 1;
+                out->report_id = (uint8_t)value;
+            } else if (tag == 9u) report_count = value;
+        } else if (type == 2u && tag == 0u) {
+            usage = value;
+        } else if (type == 0u && tag == 8u) {
+            if (report_size > 0xffffu || report_count > 0xffffu ||
+                (report_size != 0u && report_count > 0xffffu / report_size)) return -6;
+            uint32_t bits = report_size * report_count;
+            if (bits > 0xffffu - out->input_bits) return -7;
+            out->input_bits = (uint16_t)(out->input_bits + bits);
+            out->input_bytes = (uint16_t)((out->input_bits + 7u) / 8u);
+            if (usage_page == 0x07u && usage == 0x06u) out->has_keyboard = 1;
+            if (usage_page == 0x01u && usage == 0x02u) out->has_mouse = 1;
+            usage = 0;
+        }
+    }
+    return out->input_bits != 0u ? 0 : -8;
+}
+
+#ifndef HID_PARSER_HOST_TEST
+int hid_xhci_keyboard_poll(size_t controller, uint8_t slot, uint8_t endpoint_address,
+                           unsigned tty_id, uint8_t *report, uint16_t report_capacity,
+                           uint16_t *actual_length) {
+    if (!report || report_capacity < RIX_HID_BOOT_KEYBOARD_REPORT) return -1;
+    uint16_t received = 0;
+    int rc = xhci_interrupt_transfer(controller, slot, endpoint_address, report,
+                                      report_capacity, &received);
+    if (actual_length) *actual_length = received;
+    if (rc != 0) return rc;
+    if (received < RIX_HID_BOOT_KEYBOARD_REPORT) return -2;
+    return hid_keyboard_report(tty_id, report, (uint8_t)received);
+}
+
+int hid_xhci_mouse_poll(size_t controller, uint8_t slot, uint8_t endpoint_address,
+                        uint8_t *report, uint16_t report_capacity,
+                        rix_hid_mouse_report_t *out, uint16_t *actual_length) {
+    if (!report || !out || report_capacity < RIX_HID_BOOT_MOUSE_REPORT) return -1;
+    uint16_t received = 0;
+    int rc = xhci_interrupt_transfer(controller, slot, endpoint_address, report,
+                                      report_capacity, &received);
+    if (actual_length) *actual_length = received;
+    if (rc != 0) return rc;
+    return hid_mouse_report(report, (uint8_t)received, out);
+}
+#endif

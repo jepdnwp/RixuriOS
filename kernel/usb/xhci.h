@@ -30,6 +30,10 @@ size_t xhci_controller_count(void);
 const rix_xhci_controller_t *xhci_controller(size_t index);
 int xhci_port_status(size_t controller, uint8_t port, rix_xhci_port_status_t *out);
 int xhci_reset_port(size_t controller, uint8_t port);
+/* Returns 1 when a port-status-change event was consumed, 0 when none is ready. */
+int xhci_poll_port_status_change(size_t controller, uint8_t *port, uint8_t *connected);
+/* Services one port event: attach/reset/address on connect, disable on disconnect. */
+int xhci_service_hotplug(size_t controller, rix_xhci_device_t *device, uint8_t *connected);
 int xhci_enable_slot(size_t controller, uint8_t *out_slot);
 int xhci_disable_slot(size_t controller, uint8_t slot);
 int xhci_address_device(size_t controller, uint8_t slot, uint8_t port, uint8_t speed);
@@ -50,7 +54,7 @@ int xhci_enumerate_device(size_t controller, uint8_t slot,
                           size_t *interface_count, size_t *endpoint_count);
 int xhci_configure_endpoint(size_t controller, uint8_t slot,
                             const rix_xhci_endpoint_config_t *config);
-int xhci_interrupt_transfer(size_t controller, uint8_t slot, void *buffer,
-                            uint16_t length, uint16_t *actual_length);
-int xhci_bulk_transfer(size_t controller, uint8_t slot, void *buffer,
-                       uint16_t length, uint16_t *actual_length);
+int xhci_interrupt_transfer(size_t controller, uint8_t slot, uint8_t endpoint_address,
+                            void *buffer, uint16_t length, uint16_t *actual_length);
+int xhci_bulk_transfer(size_t controller, uint8_t slot, uint8_t endpoint_address,
+                       void *buffer, uint16_t length, uint16_t *actual_length);
