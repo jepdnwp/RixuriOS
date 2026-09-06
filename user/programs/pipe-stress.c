@@ -26,7 +26,7 @@ int program_main(int argc, char **argv, char **envp) {
     (void)argc;
     (void)argv;
     (void)envp;
-    int passed = 1;
+    volatile int passed = 1;
 
     mark("pipe-stress:begin\n");
     for (unsigned round = 0; round < STRESS_ROUNDS; ++round) {

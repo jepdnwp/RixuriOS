@@ -492,3 +492,14 @@ qemu Phase 20 credential/permission test: PASS
 ```
 
 The strict cross-build and USB/HID/TTY/shell/pipe host regressions pass. No page fault, CPU exception, kernel panic, timeout, or prompt loss was observed. Phase 20 remains **IN PROGRESS** because broader owner/group/other access matrices, group-owned file QEMU coverage, and final security regression breadth remain open. The colored shell prompt remains deferred until those gates are closed.
+
+
+## Phase 20 permission-matrix continuation — 2026-09-07
+
+The Phase 20 regression was extended from credential transitions to a real owner/group/other access matrix. VFS path traversal now checks execute/search permission on every traversed directory, and the centralized permission helper returns a stable internal permission-denied result. Syscall mappings preserve this as `-EACCES` instead of collapsing it into the generic invalid-argument result; missing paths remain distinguishable as `-EINVAL` in the current bounded ABI. The same mapping is used by open, create, mkdir, unlink, link, rmdir, stat, chmod, chdir and exec path authorization.
+
+The expanded `/usr/bin/credtest` creates root-owned fixtures with distinct group and other ownership, verifies persisted UID/GID/mode metadata through `stat`, creates an owner-owned file after dropping to UID/GID 1000, verifies group-read access through supplementary GID 2000, verifies other-read access against non-matching GID 3000, rejects unauthorized writes with `-EACCES`, rejects a missing path with `-EINVAL`, verifies supplementary-group copy order, rejects non-root transitions/chmod/mkdir, and runs the setuid/setgid target with an explicitly empty environment. `/usr/bin/id` now fails if a privileged exec receives a non-empty environment, making sanitization part of the set-id evidence.
+
+The Phase 20 harness uses disposable copies of both the RixFS image and UEFI ESP so repeated runs cannot leave fixture mutations or FAT-backed firmware changes for later tests. Two consecutive harness runs passed with `before uid=0 gid=0`, `after uid=1000 gid=1000`, `matrix=PASS`, `uid=0 gid=0`, and `setid=PASS`. The Phase 19 extended, utility, process-utility, and cp/mv edge QEMU harnesses also passed when each was started from a freshly generated image. No page fault, CPU exception, panic, timeout, or prompt loss was observed.
+
+The strict userspace fork ABI declaration now carries `returns_twice`, and fork callers whose state is intentionally inspected after fork use volatile status storage where required by `-Werror=clobbered`. Phase 20 remains **IN PROGRESS**: ACL policy, login/session lifecycle, capability/least-privilege interfaces, audit identity, broader metadata-preserving copy/move semantics, and physical-hardware security evidence remain open.

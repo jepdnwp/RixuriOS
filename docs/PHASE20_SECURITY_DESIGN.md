@@ -25,3 +25,12 @@ Phase 20 cannot be marked complete until strict build, host regressions, and rea
 ## Deferred shell UX
 
 After Phase 20 is complete, the shell prompt may change from `rixuri$` to a colored form such as `username@computer-name ~(directory) :`, using the actual credential username, machine name, and cwd. Prompt rendering must remain a presentation layer and must not become the source of truth for identity or permissions.
+
+
+## Current implementation boundary — 2026-09-07
+
+The credential, supplementary-group, saved-ID, chmod and set-id exec slices are implemented and QEMU-validated for the documented bounded model. Permission checks now cover directory search, file read/write, directory mutation and path-based exec authorization through the centralized VFS helper. Owner, group and other selection uses effective credentials plus inherited supplementary groups; root bypass is explicit for effective UID zero.
+
+The current syscall surface preserves permission denial as `-EACCES` (`13`) for the covered VFS operations, while missing-path and unsupported-operation failures remain represented by the existing bounded `-EINVAL` mapping. The regression image creates fixtures with distinct owner/group/other classes and checks persisted UID/GID/mode metadata rather than relying on shell output. Setuid/setgid execution changes effective and saved credentials only after successful image replacement, and privileged execution receives an empty environment; the set-id target rejects a non-empty environment.
+
+This does not imply completion of the whole phase. ACLs, login/session lifecycle, capability interfaces, audit identity, complete metadata preservation for copy/move, broader filesystem permission matrices, and physical-hardware security evidence remain open. The shell prompt remains a presentation concern and is intentionally deferred.

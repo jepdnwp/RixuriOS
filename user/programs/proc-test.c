@@ -8,7 +8,7 @@ static void mark(const char *s){(void)write(2,s,length(s));}
 
 int program_main(int argc,char **argv,char **envp){
     (void)argc; (void)argv; (void)envp;
-    int passed=1;
+    volatile int passed=1;
     mark("proc:pipe\n");
     int fds[2]={-1,-1};
     if (pipe(fds)!=0) passed=0;

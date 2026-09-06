@@ -197,7 +197,7 @@ static int run_pipeline_command(const rix_shell_command_t *command, size_t comma
                                 int input_fd, int output_fd, void *context) {
     rix_shell_execution_t *execution = context;
     int next_pipe[2] = {-1, -1};
-    int child_input;
+    volatile int child_input;
     if (!execution || !command || !command->argc || command_index >= RIX_INIT_PIDS_CAP) return -1;
     if (command_index == 0u) {
         int background = execution->background;

@@ -21,7 +21,7 @@ int dup(int old_fd);
 int dup2(int old_fd, int new_fd);
 int close_pipes_except(int keep_fd0, int keep_fd1);
 rix_pid_t spawn(const char *name, const void *image, size_t image_size);
-rix_pid_t fork(void);
+rix_pid_t fork(void) __attribute__((returns_twice));
 rix_pid_t wait(rix_pid_t child, uint64_t *status);
 rix_pid_t waitpid(rix_pid_t child, uint64_t *status, uint32_t options);
 int nanosleep(const rix_timespec_t *request, rix_timespec_t *remaining);
