@@ -1173,3 +1173,8 @@ The next increment added `/usr/bin/find`, `/usr/bin/xargs`, `/usr/bin/sed` and `
 
 
 The provisional syscall/data-model design for this work is maintained in [`docs/PHASE19_KERNEL_API.md`](PHASE19_KERNEL_API.md). It is intentionally separate from implementation status so that API review can happen before any utility reports data.
+
+
+### xargs runtime regression follow-up
+
+Before closing the xargs gate, add a focused disposable-image QEMU regression for `fork → execve → wait` with one inherited pipe descriptor and no xargs parsing. Capture PMM allocation/free ownership for every address-space page-table level, verify bootstrap VMM tables cannot be returned by the allocator, and verify the child’s exec replacement leaves inherited descriptors and the parent’s CR3 valid. Then rerun the full xargs pipeline harness.

@@ -332,3 +332,8 @@ The tested external-command, argv/envp, redirection, pipeline, conditional, and 
 
 
 The detailed provisional ABI design for the deferred system utilities is recorded in [`docs/PHASE19_KERNEL_API.md`](PHASE19_KERNEL_API.md). It remains a design artifact only; no syscall is claimed until implementation and QEMU evidence exist.
+
+
+## xargs runtime debug boundary — 2026-09-06
+
+Temporary QEMU diagnostics established that xargs consumes the input pipe to EOF and reaches its child-launch boundary. The subsequent page fault occurs in nested fork/exec address-space setup, not in the xargs tokenizer or the initial pipe read. Experimental CR3 switching and early VMM page-table PMM reservation were tested and reverted after failing to remove the fault. No unverified kernel patch was retained or pushed.
