@@ -22,6 +22,7 @@ A subsystem is not marked COMPLETE merely because source exists. Completion requ
 - Power: hardware reboot path and ACPI S5 shutdown path when validated FADT/DSDT power data is available; otherwise shutdown returns unsupported rather than faking success.
 - USB/xHCI: controller/capability, multi-endpoint transfer rings, HID report delivery adapters and port-event polling are implemented; hardware qualification remains open.
 - GUI: deliberately untouched; GUI remains last in the roadmap.
+- Shell: Phase 18 bounded lexer/parser frontend is implemented and host-tested for quoting, escaping, comments, pipelines, logical/sequential/background operators and input/output/append redirections; execution, expansion and interactive history remain open.
 - TTY: canonical/raw input, line readiness, echo/output queues, foreground process-group state, PTY master/slave byte/line flow, terminal dimensions, bounded ANSI/VT screen state, control-signal delivery and controlling-terminal session state are implemented and host-tested; shell/pipeline policy remains open.
 - Linker hardening: kernel program headers are explicitly split into `R-X`, `R--`, `RW-`, with a non-executable `GNU_STACK`; the prior generated-blob executable-stack warning no longer produces an executable stack.
 
@@ -62,6 +63,7 @@ The current source tree has now passed a clean strict build and a real UEFI-to-k
 - Added a bounded row/column screen buffer: printable output advances the cursor and writes cells, `J/K` erase display/line ranges, and `tty_read_screen()` exposes only the configured dimensions with capacity validation.
 - Added process-group/session fields to process objects and connected TTY/PTY `Ctrl-C`, `Ctrl-Z` and `Ctrl-\\` input to foreground-group pending signal delivery (`SIGINT`, `SIGTSTP`, `SIGQUIT`).
 - Added TTY controlling-terminal session ownership getters/setters with detach validation; a controlling terminal requires a nonzero session and detaching clears foreground ownership.
+- Added `user/shell` lexer and pipeline AST parser with fixed resource limits, quote/escape handling, comment termination, operator tokens (`|`, `&&`, `||`, `;`, `&`), parentheses rejection and redirection metadata.
 - Added `xhci_poll_port_status_change()` for cycle-aware, non-destructive event-ring peeking that consumes only Port Status Change Events and reports the current connection state.
 
 This remains `IMPLEMENTED / NOT YET VALIDATED`. The control-transfer, multi-endpoint, HID adapter and port-event paths are source/build validated but not hardware-exercised: QEMU reported zero xHCI controllers. Device-manager policy for automatic attach/enumeration after a port event, hardware evidence and the historical completion-code-11 regression remain open.

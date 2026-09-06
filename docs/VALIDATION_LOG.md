@@ -69,6 +69,8 @@ Terminal control signals now have host evidence through the TTY signal hook: `Ct
 
 Controlling-terminal state now has host evidence: a TTY can attach to a nonzero session, report ownership, and detach while clearing foreground-group ownership; invalid zero-session controlling attachments are rejected. The existing IPC channel remains the bounded pipe primitive for later shell redirection integration.
 
+Phase 18 frontend evidence now includes `shell parser tests: PASS`: quoted and escaped words, comments, pipelines, `&&`/`||`/`;`/background operators, input/output/append redirections and unterminated-quote rejection are covered. The parser produces a bounded AST; no execution-completion claim is made until real process, pipe and VFS APIs are wired.
+
 The linker was hardened during the Phase 0–17 audit. Explicit PHDRS now produce separate `R-X`, `R--` and `RW-` load segments plus a read-only `GNU_STACK`; `readelf -l build/kernel.elf` confirms no `RWE` segment. USB, HID and TTY host tests and the UEFI/QEMU boot smoke test continue to pass after this change.
 
 Review of the composite-device path found and corrected a context-construction defect: each Configure Endpoint operation now updates the input Slot Context's Context Entries field to the highest configured DCI and sets Add Slot Context alongside the endpoint bit. This is required by xHCI when adding endpoints beyond the initial EP0 context; the fix is strict-build validated but still awaits controller-backed execution.
