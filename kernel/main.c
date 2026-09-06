@@ -38,6 +38,8 @@ void kernel_main(const rixuri_boot_info_t *boot){
  if(lapic_init()!=0)panic("local APIC initialization failed");
  if(pci_init()!=0)panic("PCI initialization failed");
  serial_write("PCI: devices=");serial_write_dec(pci_device_count());serial_write("\r\n");
+ if(block_init()!=0)panic("block subsystem initialization failed");
+ if(vfs_init()!=0)panic("VFS initialization failed");
  if(nvme_init()!=0)panic("NVMe initialization failed");
  serial_write("NVMe: controllers=");serial_write_dec(nvme_controller_count());serial_write("\r\n");
  if(xhci_init()!=0)panic("xHCI initialization failed");
@@ -45,8 +47,6 @@ void kernel_main(const rixuri_boot_info_t *boot){
  if(pit_init(100)!=0)panic("PIT initialization failed");
  if(scheduler_init()!=0)panic("scheduler initialization failed");
  if(process_init()!=0)panic("process initialization failed");
- if(block_init()!=0)panic("block subsystem initialization failed");
- if(vfs_init()!=0)panic("VFS initialization failed");
  syscall_init();
 
  uint64_t user_entry=0,user_stack=0;pid_t user_pid=0;rix_task_id_t user_task=0;
