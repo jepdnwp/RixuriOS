@@ -20,6 +20,8 @@
 #include "storage/block.h"
 #include "storage/nvme.h"
 #include "usb/xhci.h"
+#include "time/rtc.h"
+#include "time/time.h"
 static void halt_forever(void){for(;;)__asm__ volatile("hlt");}
 static void try_mount_root(void){const char *names[]={"nvme0n1","nvme0n1p1","nvme1n1","nvme1n1p1"};for(size_t i=0;i<sizeof(names)/sizeof(names[0]);i++){rix_block_device_t*d=block_find(names[i]);if(!d)continue;int rc=vfs_mount_root(d);serial_write("VFS: mount ");serial_write(names[i]);serial_write(" rc=");serial_write_dec((uint64_t)(rc<0?-rc:rc));serial_write("\r\n");if(rc==0)return;}}
 void kernel_main(const rixuri_boot_info_t *boot){
@@ -46,6 +48,9 @@ void kernel_main(const rixuri_boot_info_t *boot){
  if(xhci_init()!=0)panic("xHCI initialization failed");
  serial_write("xHCI: controllers=");serial_write_dec(xhci_controller_count());serial_write("\r\n");
  if(pit_init(100)!=0)panic("PIT initialization failed");
+ if(rtc_init()!=0)serial_write("RTC: unavailable or non-24-hour mode\r\n");
+ if(time_init(100)!=0)serial_write("TIME: realtime clock unavailable; monotonic clock active\r\n");
+ else {rix_timespec_t now;if(time_realtime(&now)==0){serial_write("TIME: realtime=");serial_write_dec(now.sec);serial_write("\r\n");}}
  if(scheduler_init()!=0)panic("scheduler initialization failed");
  if(process_init()!=0)panic("process initialization failed");
  syscall_init();
@@ -56,5 +61,5 @@ void kernel_main(const rixuri_boot_info_t *boot){
  serial_write("USER: embedded init prepared, pid=");serial_write_dec(user_pid);serial_write(" task=");serial_write_dec(user_task);serial_write("\r\n");
  int io_ready=0;if(acpi_ioapic_count()&&ioapic_init()==0){if(ioapic_route_irq(0,32,(uint8_t)lapic_id())!=0)panic("failed to route PIT IRQ");ioapic_unmask_irq(0);pic_disable();io_ready=1;}
  if(io_ready){idt_enable();serial_write("IRQ: PIT routed to vector 32; interrupts enabled\r\n");}else serial_write("IRQ: no usable IOAPIC; interrupts remain disabled\r\n");
- serial_write("Core services: timer/scheduler/process/syscall/PCI/NVMe/xHCI/block/VFS initialized\r\n");serial_write("LAPIC: initialized, id=");serial_write_dec(lapic_id());serial_write("\r\n");serial_write("RIXURI:KERNEL_READY\r\n");scheduler_yield();serial_write("USER: init returned to kernel\r\n");halt_forever();
+ serial_write("Core services: timer/scheduler/process/syscall/PCI/NVMe/xHCI/block/VFS/time initialized\r\n");serial_write("LAPIC: initialized, id=");serial_write_dec(lapic_id());serial_write("\r\n");serial_write("RIXURI:KERNEL_READY\r\n");scheduler_yield();serial_write("USER: init returned to kernel\r\n");halt_forever();
 }
