@@ -150,17 +150,30 @@ static void child_error(const char *message, int status) {
     _exit(status);
 }
 
+static void snapshot_command(rix_shell_command_t *destination,
+                             const rix_shell_command_t *source) {
+    volatile uint8_t *dst = (volatile uint8_t *)destination;
+    const volatile uint8_t *src = (const volatile uint8_t *)source;
+    for (size_t i = 0; i < sizeof(*destination); ++i) dst[i] = src[i];
+}
+
 static int run_external_child(const rix_shell_command_t *command) {
-    static char *const shell_environment[] = {
-        (char *)"PATH=/bin:/usr/bin:/sbin:/usr/sbin",
-        (char *)"PWD=/",
-        (char *)0
-    };
+    char cwd[256];
+    char pwd_env[260];
+    static char *shell_environment[3];
     char path[RIX_INIT_PATH_CAP];
     char *child_argv[RIX_SHELL_MAX_ARGS];
     int handled = 0;
     int status = 2;
     int output_fd = 1;
+    if (getcwd(cwd, sizeof(cwd)) < 0) child_error("rixuri: cwd unavailable\n", 125);
+    shell_environment[0] = (char *)"PATH=/bin:/usr/bin:/sbin:/usr/sbin";
+    shell_environment[1] = pwd_env;
+    shell_environment[2] = NULL;
+    pwd_env[0]='P'; pwd_env[1]='W'; pwd_env[2]='D'; pwd_env[3]='=';
+    size_t cwd_length = text_length(cwd);
+    if (cwd_length + 5u > sizeof(pwd_env)) child_error("rixuri: cwd too long\n", 125);
+    for (size_t i=0; i<=cwd_length; ++i) pwd_env[4u+i]=cwd[i];
     for (size_t i = 0; i < command->argc; ++i) child_argv[i] = command->argv[i];
     child_argv[command->argc] = NULL;
     if (rix_shell_run_builtin(command, fd_writer, &output_fd, &handled, &status) != 0)
@@ -206,7 +219,8 @@ static int run_pipeline_command(const rix_shell_command_t *command, size_t comma
         /* Redirection syscalls must not leave the child using mutable parser
          * storage through the parent's command pointer.  Keep the command
          * descriptor stable across fd setup and exec preparation. */
-        rix_shell_command_t child_command = *command;
+        rix_shell_command_t child_command;
+        snapshot_command(&child_command, command);
         if (child_input >= 0 && child_input != 0) {
             if (dup2(child_input, 0) < 0) child_error("rixuri: stdin setup failed\n", 125);
         }
@@ -252,6 +266,21 @@ static int run_command(const rix_shell_pipeline_t *pipeline, int *status) {
                                               &execution, status);
 }
 
+static int shell_cd_builtin(const rix_shell_pipeline_t *pipeline, int *handled) {
+    const rix_shell_command_t *command;
+    const char *target;
+    if (handled) *handled = 0;
+    if (!pipeline || pipeline->command_count != 1u || pipeline->background) return 0;
+    command = &pipeline->command[0];
+    if (!command->argc || !command->argv[0]) return 0;
+    if (!(command->argv[0][0]=='c'&&command->argv[0][1]=='d'&&command->argv[0][2]==0)) return 0;
+    if (handled) *handled = 1;
+    if (command->argc > 2u) { (void)write_text(2, "cd: expected one path\n"); return 2; }
+    target = command->argc == 2u ? command->argv[1] : "/";
+    if (chdir(target) != 0) { (void)write_text(2, "cd: no such directory\n"); return 1; }
+    return 0;
+}
+
 static int shell_read_line(char *line, size_t capacity) {
     size_t used = 0;
     if (!line || capacity < 2u) return -1;
@@ -278,6 +307,7 @@ static int shell_execute_line(const char *line, rix_shell_history_t *history) {
         return 2;
     }
     if (history) (void)rix_shell_history_add(history, line);
+    { int handled = 0; int cd_status = shell_cd_builtin(&pipeline, &handled); if (handled) return cd_status; }
     if (run_command(&pipeline, &status) != 0) {
         (void)write_text(2, "rixuri: command execution failed\n");
         return 125;

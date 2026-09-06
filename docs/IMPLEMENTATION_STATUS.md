@@ -406,3 +406,31 @@ An additional real-QEMU background-job regression passed `sleep 1 &`, prompt con
 During the audit, `qemu_cp_mv_edge_test.py` exposed a previously untested shell-redirection failure at `/bin/true > /usr/empty-source`. The exact fault occurred in `rix_shell_run_builtin` after child fd setup: the child still used the parsed command pointer while redirection syscalls were active, and `command->argv[0]` became invalid. The minimal fix is in `user/init.c`: the child snapshots `rix_shell_command_t` before fd setup, applies redirections to that snapshot, and passes the stable snapshot to external-command preparation. The isolated reproducer and the complete QEMU suite pass after this fix; no pipe or address-space redesign was made.
 
 Phase 19 is now **IMPLEMENTED / QEMU-VALIDATED** for the complete available utility and shell-integration scope. It is not a claim of full POSIX coreutils compatibility: bounded utility behavior, unsupported options, hardware validation, and the deliberately deferred `df`, `free`, `dmesg`, `mount`, and `umount` kernel APIs remain documented limitations.
+
+
+## Phase 19 completion extension — cwd and practical utility subset — 2026-09-07
+
+The Phase 19 audit identified seven required utilities that were not previously present in the image: `tee`, `basename`, `dirname`, `seq`, `id`, `whoami`, and `date`. These were added as bounded RixuriOS-native implementations and registered in the strict userspace build and RixFS image. `date` uses a new realtime-clock syscall backed by the kernel RTC/time subsystem; it does not read host time. The root-only credential model is reported honestly by `id` and `whoami`.
+
+Shell working-directory semantics were completed. Processes now carry an inherited canonical cwd, relative VFS paths are normalized against that cwd, `chdir` and `getcwd` syscalls are exposed through libc, and `cd` is handled in the parent shell so a successful directory change persists across subsequent commands. `pwd` reports the actual cwd and child `PWD` environment values follow it. A failed `cd` leaves the previous cwd unchanged. The child command snapshot and child environment pointer storage are kept out of unsafe unaligned syscall-entry stack aggregate stores; this preserves the recent redirection fix without reintroducing a general-protection fault.
+
+The new repository regression harness is `scripts/qemu_phase19_extended_test.py`. It validates boot, `cd /p19ext`, `pwd`, relative redirection and `stat`, failed `cd` recovery, `seq | tee`, `basename`, `dirname`, realtime `date`, `id`, `whoami`, non-empty-directory `rmdir` rejection, cleanup and final removal. It requires the expected positive and negative output and rejects page faults, CPU exceptions and panics.
+
+The final expanded validation passed:
+
+```text
+make clean
+make -j2 all CROSS=x86_64-linux-gnu-
+make HOST_CC=x86_64-linux-gnu-gcc usb-test hid-test tty-test shell-test pipe-test
+make image CROSS=x86_64-linux-gnu-
+```
+
+All prior Phase 19 QEMU harnesses passed, as did:
+
+```text
+python3 scripts/qemu_phase19_extended_test.py
+```
+
+The complete run also preserved the explicit xargs continuation regression. Real QEMU showed NVMe boot and RixFS mount, `/cwd19` cwd changes, relative file creation, failed `cd` without cwd mutation, `seq`/`tee` pipeline output, `basename`, `dirname`, realtime `date`, root identity output, non-empty `rmdir` failure, cleanup, and prompt recovery. No `PAGE FAULT`, `CPU exception`, `PANIC`, timeout or prompt loss was observed.
+
+Phase 19 remains **IMPLEMENTED / QEMU-VALIDATED** for the expanded practical utility and shell-integration scope. Remaining intentional limitations are documented bounded semantics, root-only credentials, unsupported advanced options, no physical-hardware evidence in this task, and the deferred `df`, `free`, `dmesg`, `mount`, and `umount` APIs.

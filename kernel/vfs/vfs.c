@@ -31,7 +31,9 @@ static int append_component(char *out,size_t cap,size_t *len,const char *start,s
 }
 int vfs_normalize_path(const char *input,char *output,size_t cap){
     if(!input||!output||cap<2)return -1;
-    size_t len=0;output[len++]='/';const char *p=input;
+    char joined[RIX_VFS_PATH_MAX];const char *p=input;size_t joined_len=0;
+    if(input[0]!='/'){if(process_getcwd(process_current(),joined,sizeof(joined))!=0)return -1;while(joined[joined_len])++joined_len;if(joined_len&&joined[joined_len-1]!='/')joined[joined_len++]='/';size_t i=0;while(input[i]){if(joined_len+1>=sizeof(joined))return -1;joined[joined_len++]=input[i++];}joined[joined_len]=0;p=joined;}
+    size_t len=0;output[len++]='/';
     while(*p){while(*p=='/')p++;if(!*p)break;const char*s=p;while(*p&&*p!='/')p++;size_t n=(size_t)(p-s);
         if(n==1&&s[0]=='.')continue;
         if(n==2&&s[0]=='.'&&s[1]=='.'){if(len>1){if(output[len-1]=='/')len--;while(len>1&&output[len-1]!='/')len--;}continue;}

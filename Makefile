@@ -13,7 +13,7 @@ OBJ := kernel/boot.o kernel/main.o kernel/serial.o kernel/user_init_blob.o \
  kernel/mm/pmm.o kernel/mm/vmm.o kernel/mm/ptmap.o kernel/mm/uaccess.o kernel/mm/heap.o kernel/sync/lock.o kernel/sync/waitqueue.o kernel/ipc/channel.o kernel/ipc/pipe.o kernel/ipc/shared_memory.o kernel/tty/tty.o \
  kernel/storage/block.o kernel/storage/block_cache.o kernel/storage/nvme.o kernel/usb/xhci.o kernel/usb/usb.o kernel/usb/hid.o kernel/time/rtc.o kernel/time/time.o kernel/power/power.o
 
-PROGRAM_NAMES := echo cat args grep true false sleep ls mkdir rm rmdir touch stat ln head tail wc cut tr sort uniq env printf pwd which kill ps uname du cp mv find xargs sed test abi-negative proc-test pipe-stress
+PROGRAM_NAMES := echo cat args grep true false sleep ls mkdir rm rmdir touch stat ln head tail wc cut tr sort uniq env printf pwd which kill ps uname du cp mv find xargs sed test tee basename dirname seq id whoami date abi-negative proc-test pipe-stress
 PROGRAM_ELFS := $(addprefix build/programs/,$(addsuffix .elf,$(PROGRAM_NAMES)))
 PROGRAM_START_OBJ := build/programs/start.o
 
@@ -86,7 +86,14 @@ build/rixfs.img: programs scripts/build-rixfs-image.py | build
 			--file /usr/bin/find=build/programs/find.elf \
 			--file /usr/bin/xargs=build/programs/xargs.elf \
 			--file /usr/bin/sed=build/programs/sed.elf \
-			--file /bin/test=build/programs/test.elf \
+				--file /bin/test=build/programs/test.elf \
+				--file /usr/bin/tee=build/programs/tee.elf \
+				--file /usr/bin/basename=build/programs/basename.elf \
+				--file /usr/bin/dirname=build/programs/dirname.elf \
+				--file /usr/bin/seq=build/programs/seq.elf \
+				--file /usr/bin/id=build/programs/id.elf \
+				--file /usr/bin/whoami=build/programs/whoami.elf \
+				--file /bin/date=build/programs/date.elf \
 		--file /usr/bin/abi-negative=build/programs/abi-negative.elf \
 			--file /usr/bin/proc-test=build/programs/proc-test.elf \
 			--file /usr/bin/pipe-stress=build/programs/pipe-stress.elf \
