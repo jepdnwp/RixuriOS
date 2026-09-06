@@ -209,3 +209,15 @@ Added the real `/usr/bin/abi-negative` userspace test. Through the NVMe/RixFS sh
 Added real `/bin/ls`, `/bin/mkdir`, and `/bin/rm` implementations over VFS directory APIs. QEMU confirmed `/bin/mkdir /usr/testdir` and `/bin/ls /usr` exposed `testdir`; the attempted `/bin/rm /usr/testdir` correctly failed because the current unlink ABI does not remove directories and no `rmdir` utility exists yet. A subsequent background `sleep 0 &` run launched the command and returned to the prompt, but did not emit `[job] done`; background completion notification remains an open failure/diagnostic target.
 
 An explicit QEMU run with `-device qemu-xhci,id=explicit-xhci` changed PCI enumeration from 7 to 8 devices, but the kernel still reported `xHCI: controllers=0` and then panicked while creating embedded init. USB/HID keyboard qualification therefore remains blocked by the current xHCI driver/topology interaction; no keyboard PASS is claimed.
+
+## 2026-09-06 — background completion notification fix
+
+The shell was clearing `execution.background` when the first pipeline callback reset execution bookkeeping, so background jobs were launched but never registered for reaping. Preserving that flag fixed the path. Real QEMU now produces:
+
+```text
+/bin/echo after-bg
+after-bg
+[job] done
+```
+
+The result is evidence that `/bin/sleep 0 &` completed and was collected through the shell’s `waitpid(..., WNOHANG)` polling path.

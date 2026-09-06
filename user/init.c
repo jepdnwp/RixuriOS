@@ -186,7 +186,11 @@ static int run_pipeline_command(const rix_shell_command_t *command, size_t comma
     int next_pipe[2] = {-1, -1};
     int child_input;
     if (!execution || !command || !command->argc || command_index >= RIX_INIT_PIDS_CAP) return -1;
-    if (command_index == 0u) reset_execution(execution);
+    if (command_index == 0u) {
+        int background = execution->background;
+        reset_execution(execution);
+        execution->background = background;
+    }
     child_input = input_fd == (int)RIX_SHELL_PIPE_INPUT_MARKER ? execution->input_fd : -1;
     if (input_fd == (int)RIX_SHELL_PIPE_INPUT_MARKER && child_input < 0) return -1;
     if (output_fd != 1 && pipe(next_pipe) != 0) return -1;
