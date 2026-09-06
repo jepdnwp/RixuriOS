@@ -17,7 +17,7 @@ static uint64_t walk_pte(const rix_address_space_t *as,uint64_t va){
 static void free_pt(uint64_t phys){uint64_t*t=ptr(phys);for(unsigned i=0;i<TABLE_COUNT;i++){uint64_t e=t[i];if((e&RIXURI_PTE_PRESENT)&&(e&RIXURI_PTE_OWNED))pmm_free_page(e&PAGE_MASK);}pmm_free_page(phys);}
 static void free_pd(uint64_t phys){uint64_t*t=ptr(phys);for(unsigned i=0;i<TABLE_COUNT;i++){uint64_t e=t[i];if(!(e&RIXURI_PTE_PRESENT))continue;if(e&PTE_PS)continue;free_pt(e&PAGE_MASK);}pmm_free_page(phys);}
 static void free_pdpt(uint64_t phys){uint64_t*t=ptr(phys);for(unsigned i=0;i<TABLE_COUNT;i++)if(t[i]&RIXURI_PTE_PRESENT)free_pd(t[i]&PAGE_MASK);pmm_free_page(phys);}
-static void destroy_user_tables(rix_address_space_t *as){if(!as||!as->pml4_phys)return;uint64_t*t=ptr(as->pml4_phys);for(unsigned i=1;i<256;i++)if(t[i]&RIXURI_PTE_PRESENT)free_pdpt(t[i]&PAGE_MASK);pmm_free_page(as->pml4_phys);as->pml4_phys=0;}
+static void destroy_user_tables(rix_address_space_t *as){if(!as||!as->pml4_phys)return;uint64_t*t=ptr(as->pml4_phys);for(unsigned i=0;i<256;i++)if(t[i]&RIXURI_PTE_PRESENT)free_pdpt(t[i]&PAGE_MASK);pmm_free_page(as->pml4_phys);as->pml4_phys=0;}
 
 int address_space_create(rix_address_space_t *as){
  if(!as)return -1;

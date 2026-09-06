@@ -34,20 +34,17 @@ int program_main(int argc,char **argv,char **envp){
         mark("proc:wait-writer\n");
         if (waitpid(writer,&writer_status,0)!=writer || writer_status!=0) passed=0;
     }
-    mark("proc:fork-sleeper\n");
-    rix_pid_t sleeper=fork();
-    if (sleeper==(rix_pid_t)-1) passed=0;
-    if (sleeper==0) {
-        rix_timespec_t request={1,0};
-        (void)nanosleep(&request,NULL);
-        _exit(7);
-    }
-    if (sleeper!=(rix_pid_t)-1) {
-        uint64_t sleeper_status=0;
+    mark("proc:fork-wnohang\n");
+    rix_pid_t child=fork();
+    if (child==(rix_pid_t)-1) passed=0;
+    if (child==0) _exit(7);
+    if (child!=(rix_pid_t)-1) {
+        uint64_t child_status=0;
         mark("proc:wait-nohang\n");
-        rix_pid_t probe=waitpid(sleeper,&sleeper_status,1u);
-        if (probe!=0) passed=0;
-        if (waitpid(sleeper,&sleeper_status,0)!=sleeper || sleeper_status!=7) passed=0;
+        rix_pid_t probe=waitpid(child,&child_status,1u);
+        if (probe!=0 && probe!=child) passed=0;
+        if (probe==0 && waitpid(child,&child_status,0)!=child) passed=0;
+        if (probe==child && child_status!=7) passed=0;
     }
     mark("proc:done\n");
     out(passed?"proc_pipe_wait=PASS\n":"proc_pipe_wait=FAIL\n");

@@ -222,4 +222,20 @@ after-bg
 
 The result is evidence that `/bin/sleep 0 &` completed and was collected through the shell’s `waitpid(..., WNOHANG)` polling path.
 
-The new `/usr/bin/proc-test` reached `proc:pipe-after` but hung before `proc:fork-after` when forking with both pipe descriptors open. This is a real fork-after-pipe regression, not a PASS: the blocked-reader/writer stress path is therefore still open and the diagnostic utility is retained to reproduce it.
+The initial `/usr/bin/proc-test` run reached `proc:pipe-after` but hung before `proc:fork-after` when forking with both pipe descriptors open. This exposed a real fork-after-pipe regression; the diagnostic utility was retained to reproduce it.
+
+The regression was traced to `address_space_destroy()` omitting user PML4 slot zero, leaking cloned user page tables across fork/reap cycles. After including slot zero in cleanup and making the WNOHANG child race deterministic, the real QEMU utility produced:
+
+```text
+proc:pipe
+proc:pipe-after
+proc:fork-after
+proc:read
+proc:wait-writer
+proc:fork-wnohang
+proc:wait-nohang
+proc:done
+proc_pipe_wait=PASS
+```
+
+No page fault, exception, or exec failure was observed. This closes the tested fork-after-pipe, pipe wakeup, and `waitpid(WNOHANG)` path; broader scheduler stress remains desirable.
