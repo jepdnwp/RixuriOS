@@ -752,26 +752,197 @@ A real dynamically linked application starts, resolves libraries, performs TLS i
 
 ---
 
-# PHASE 25 — Package Manager, Repository Model and Software Lifecycle
+# PHASE 25 — Source-Driven Native Package Manager and Software Lifecycle
 
-Add a real software lifecycle before GUI:
+Phase 25 defines how RixuriOS turns **user-supplied source code** into a native, verified and transactionally installed `.rix` package. It is not a package-name store and it must not depend on a central catalog for the basic install workflow.
 
-- package format;
-- metadata/dependencies;
-- repositories/mirrors;
-- signatures/trust roots;
-- install/remove/upgrade;
-- file ownership database;
-- transaction/rollback;
-- package scripts with restricted execution;
-- offline package cache;
-- reproducible package builds.
+### Accepted Inputs
 
-Commands target:
+The package manager command is `rix` and accepts either a Git repository URL or an existing local source tree.
 
-`pkg search/install/remove/update/upgrade/info/list/files/verify`.
+Examples:
 
-No package manager may silently overwrite protected system files without a defined transaction model.
+`rix install https://github.com/user/project.git`
+
+`rix install https://gitlab.com/user/project.git`
+
+`rix install ./my-project`
+
+`rix install /home/vey/my-project`
+
+The source itself is authoritative for the build. A package name such as `firefox` is not required to locate software.
+
+### Source Acquisition
+
+For Git sources, `rix` must:
+
+- validate and fetch supported Git URLs;
+- resolve the requested revision/version deterministically;
+- record repository URL, revision and source provenance;
+- verify source integrity where checksums/signatures are available;
+- keep a source cache without bypassing verification.
+
+For local sources, `rix` must:
+
+- operate on the supplied directory without requiring a repository;
+- inspect the source tree safely;
+- avoid modifying the source tree unless the build system explicitly requires an allowed generated-file step;
+- support a disposable/copy-based build mode for isolation.
+
+### Build-System Detection
+
+`rix` must inspect the source tree and select an explicitly supported build backend, including as applicable:
+
+- `Makefile` → Make;
+- `CMakeLists.txt` → CMake;
+- `meson.build` → Meson;
+- `configure`/Autotools files → Autotools;
+- `Cargo.toml` → Cargo;
+- `go.mod` → Go;
+- Python build metadata → supported Python build backend.
+
+Detection must not mean blindly executing arbitrary files. Each backend has a defined command model, environment, dependency discovery rules and safety policy.
+
+### Recursive Dependency Resolution
+
+Dependency resolution is mandatory and must operate on the complete transitive graph.
+
+The resolver must:
+
+- parse direct build/runtime dependencies exposed by the source/build metadata;
+- recursively resolve dependencies of dependencies to arbitrary depth;
+- support dependency sources as Git/local source inputs and later repository-provided metadata where implemented;
+- deduplicate shared dependencies;
+- detect dependency cycles;
+- detect incompatible version constraints;
+- resolve compatible constraints deterministically;
+- construct the complete dependency graph before changing the live system;
+- calculate a valid topological build/install order.
+
+Example:
+
+`Firefox → A → B → C → D`
+
+must account for **A, B, C and D**, not only A.
+
+If the graph cannot be satisfied, `rix` must abort before modifying the installed system.
+
+### Native RixuriOS Build Environment
+
+Every package must be built against the RixuriOS userspace ABI and native sysroot.
+
+The build environment must:
+
+- use the RixuriOS compiler/toolchain;
+- use the RixuriOS libc/sysroot;
+- prevent accidental host Linux headers, libraries and pkg-config data from leaking into the build;
+- provide deterministic environment variables and paths;
+- isolate build outputs and temporary files;
+- distinguish native RixuriOS APIs from Linux/glibc/systemd APIs;
+- reject unsupported kernel/userspace requirements;
+- record the exact build inputs and toolchain identity.
+
+A Linux binary must never be treated as a native RixuriOS package merely because it has a compatible filename or architecture.
+
+### Package Format
+
+Every successful build produces a native `.rix` package containing at minimum:
+
+- package name and source identity;
+- version/revision;
+- architecture;
+- RixuriOS ABI compatibility information;
+- runtime dependencies;
+- build dependencies;
+- installed file manifest;
+- checksums;
+- source URL/provenance and revision where applicable;
+- build metadata;
+- package format version.
+
+### Build and Package Cache
+
+Cache:
+
+- fetched source;
+- dependency metadata;
+- completed native dependency builds;
+- generated `.rix` packages.
+
+Cached artifacts must be integrity-verified and must never bypass compatibility or dependency checks.
+
+### Transactional Installation
+
+Installation must be transactional. Before changing the live system, `rix` must:
+
+1. resolve the complete dependency graph;
+2. verify dependency constraints and package metadata;
+3. build all missing native dependencies;
+4. generate and verify all required `.rix` packages;
+5. calculate the complete filesystem operation set;
+6. detect conflicts with files already owned by installed packages or protected system paths;
+7. prepare the transaction;
+8. commit atomically where possible.
+
+A failed operation must not leave a partially installed dependency tree.
+
+### Rollback and Recovery
+
+The package manager must provide:
+
+- transaction logs;
+- pre-install state capture;
+- rollback of failed transactions;
+- recovery after interrupted installation;
+- resulting filesystem verification;
+- integration with the RixuriOS checkpoint/recovery system.
+
+If any transaction step fails, the live system must return to its pre-transaction state to the extent guaranteed by the transaction model.
+
+### Repository and Trust Model
+
+Repositories are optional sources for distributing already-built metadata/packages and for future convenience, not a prerequisite for source-driven installation.
+
+When repositories are used, support:
+
+- repositories and mirrors;
+- package indexes;
+- version/revision selection;
+- metadata signatures;
+- trusted keys/root configuration;
+- checksum verification;
+- package/source provenance.
+
+Untrusted or corrupted metadata must fail closed.
+
+### Safety and Compatibility Gate
+
+A source is installable only when its complete dependency, build and runtime requirements are compatible with RixuriOS.
+
+Unsupported requirements such as:
+
+- Linux kernel-only APIs;
+- glibc-only interfaces;
+- systemd-only integration;
+- unsupported syscalls;
+- unsupported filesystem assumptions;
+- unsupported compiler/runtime requirements
+
+must produce a deterministic failure with no live-system modification.
+
+### Acceptance Workflow
+
+The canonical Phase 25 workflow is:
+
+`Git URL or local source → source analysis → build-system detection → complete dependency graph → recursive dependency resolution → version/cycle validation → build order → native RixuriOS build → .rix → verification → transactional install → checkpoint`.
+
+A large real-world source tree such as Firefox is an end-to-end acceptance target. It is not a claim that Firefox will build before the underlying libc, dynamic loader, graphics, networking, toolchain and other required platform phases are complete.
+
+### Checkpoints
+
+`P25-01` input/source model → `P25-02` source acquisition → `P25-03` build-system detection → `P25-04` recursive dependency graph → `P25-05` version solving/cycle detection → `P25-06` native Rix build environment → `P25-07` `.rix` generation → `P25-08` transactional install → `P25-09` rollback/recovery → `P25-10` repository/trust model → `P25-11` end-to-end source installation.
+
+No package-manager checkpoint is complete merely because a package can be copied into `/bin`; every gate requires real build/install/failure evidence appropriate to the checkpoint.
 
 ---
 
