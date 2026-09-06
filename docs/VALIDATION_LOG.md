@@ -239,3 +239,40 @@ proc_pipe_wait=PASS
 ```
 
 No page fault, exception, or exec failure was observed. This closes the tested fork-after-pipe, pipe wakeup, and `waitpid(WNOHANG)` path; broader scheduler stress remains desirable.
+
+## 2026-09-06 — Phase A directory removal and file utility qualification
+
+Implemented the missing directory-removal path from userspace to RixFS. The kernel now exposes `RIX_SYS_RMDIR`, VFS delegates `rmdir` to RixFS, and `/bin/rmdir` rejects non-empty directories while reclaiming an empty directory inode/data extent. Directory append now reuses deleted directory-entry sectors and correctly consumes the preallocated sector of a newly created empty directory; this was required for repeated create/remove operations and overwrite redirections.
+
+The strict suite completed successfully with:
+
+```text
+make CROSS=x86_64-linux-gnu- test
+git diff --check
+make CROSS=x86_64-linux-gnu- image
+```
+
+The host results included `hid report tests: PASS`, `tty tests: PASS`, `shell parser tests: PASS`, `pipe tests: PASS`, and `Static kernel build checks completed.` The image builder produced the 64 MiB disposable RixFS image and included `/bin/rmdir`, `/bin/cp`, and `/bin/mv`.
+
+The real QEMU serial harnesses observed `NVMe: controllers=1`, `VFS: mount nvme0n1 rc=0`, `RIXURI:KERNEL_READY`, and the shell prompt. The combined file-utility scenario produced the following evidence:
+
+```text
+/bin/cp /bin/echo /usr/echo-copy
+/bin/ls /usr
+echo-copy
+/bin/mv /usr/echo-copy /usr/echo-moved
+/bin/ls /usr
+echo-moved
+/bin/rm /usr/echo-moved
+/bin/mkdir /usr/emptydir
+/bin/rmdir /usr/emptydir
+/bin/mkdir /usr/nonempty
+/bin/mkdir /usr/nonempty/child
+/bin/rmdir /usr/nonempty
+rmdir: failed
+/bin/rmdir /usr/nonempty/child
+/bin/rmdir /usr/nonempty
+qemu file utilities test: PASS
+```
+
+The edge-case QEMU harness also passed empty-file copy/move, overwrite, and multi-sector executable copy/readback scenarios. Its observed markers were `overwrite-pass`, `mv-overwrite-pass`, `multi-sector-pass`, and `qemu cp/mv edge tests: PASS`. No `cp`/`mv` read or write failure was observed. The harness logs are `build/qemu-file-utils.log` and `build/qemu-cp-mv-edge.log`; no CPU exception or kernel panic was emitted. This closes the observed Phase A `rmdir` path and the requested cp/mv edge cases, but does not claim broader filesystem durability, crash recovery, or hardware qualification beyond the QEMU NVMe-backed disposable image.

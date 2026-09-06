@@ -16,8 +16,8 @@ A subsystem is not marked COMPLETE merely because source exists. Completion requ
 - Syscalls: user-pointer validation and filesystem-backed read/write/openat/close/stat integration.
 - PCI/DMA/MSI-X: ECAM discovery, BAR sizing, DMA page allocation, MSI-X table programming. IOMMU remains explicitly unavailable until real DMAR/IVRS translation domains are implemented.
 - Storage: block layer/cache and NVMe controller/namespace discovery with real read/write/flush path; timeout/recovery and concurrency remain qualification work.
-- RixFS: persistent inode/extents, directory lookup/readdir, create/mkdir/unlink, explicit formatter, redo journal replay, read-only fsck.
-- VFS: persistent root mount, hierarchical path traversal, per-process file descriptors, open/read/write/readdir/stat/mkdir/unlink.
+- RixFS: persistent inode/extents, directory lookup/readdir, create/mkdir/unlink/rmdir, deleted-entry reuse, explicit formatter, redo journal replay, read-only fsck.
+- VFS: persistent root mount, hierarchical path traversal, per-process file descriptors, open/read/write/readdir/stat/mkdir/unlink/rmdir.
 - Time: CMOS RTC read in binary/BCD and 12/24-hour modes, Unix epoch conversion, PIT-backed monotonic clock, RTC-backed realtime clock.
 - Power: hardware reboot path and ACPI S5 shutdown path when validated FADT/DSDT power data is available; otherwise shutdown returns unsupported rather than faking success.
 - USB/xHCI: controller/capability, multi-endpoint transfer rings, HID report delivery adapters and port-event polling are implemented; hardware qualification remains open.
@@ -226,3 +226,11 @@ Phase 18 qualification: provide a controller-backed or otherwise documented real
 ### Evidence boundary
 
 The tested external-command, argv/envp, redirection, pipeline and conditional paths are now `IMPLEMENTED / QEMU-VALIDATED` for the observed scenarios. Phase 18 is not marked COMPLETE: append redirection, multi-stage pipeline depth, background jobs and reaping, `waitpid(WNOHANG)`, foreground process-group signal delivery, Ctrl-C/Ctrl-Z/Ctrl-\\ behavior, malformed-user-pointer runtime tests, and the requested `sleep` utility still require dedicated evidence. xHCI/HID keyboard qualification remains blocked because this QEMU topology reports zero xHCI controllers; the tested input path is the documented serial-to-TTY worker path.
+
+## Latest continuation — Phase A core file utilities — 2026-09-06
+
+- Added the RixFS/VFS/syscall/libc path for directory removal and the real `/bin/rmdir` utility.
+- `rmdir` now checks that the target is a directory, rejects a non-empty directory, removes the parent directory entry, releases the target directory data extent, and clears the inode.
+- Corrected directory append behavior so newly created empty directories use their preallocated sector, and removed directory-entry sectors are reused instead of allocating indefinitely. This also makes repeated create/remove and overwrite-redirection operations work on the disposable image.
+- Added strict/QEMU harnesses for the basic cp/mv/rm/rmdir flow and cp/mv edge cases. Real QEMU passed empty-file copy/move, overwrite, multi-sector executable copy/readback, empty-directory removal, and non-empty-directory rejection.
+- The observed Phase A scenarios are `QEMU-VALIDATED`; this does not claim recursive removal, atomic rename semantics, crash-consistency qualification, or physical-device behavior.
