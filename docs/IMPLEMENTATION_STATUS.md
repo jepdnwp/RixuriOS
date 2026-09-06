@@ -119,3 +119,10 @@ Phase 15 continuation: add device-manager policy around port-event attach/detach
 
 - Extended host HID tests for report-ID mismatch rejection, oversized report rejection, rollover rejection and no-report-ID mouse parsing.
 - The complete host test suite and QEMU boot remain clean; Phase 16 is intentionally still open because the real xHCI-to-HID-to-TTY keyboard path and historical `0x74` (`t`) hardware evidence cannot be claimed without a controller-backed target.
+
+## Latest continuation — Phase 17 stdio terminal integration
+
+- Connected user fd 0 reads to TTY 0 and user fd 1/2 writes to TTY 0 while preserving the serial console mirror for diagnostics and QEMU evidence.
+- Reads from stdout/stderr and writes to stdin now return an explicit error instead of silently succeeding.
+- Existing VFS-backed descriptors remain unchanged; canonical/raw TTY behavior, echo, screen state and foreground signal policy are reused by the syscall boundary.
+- Phase 17 shell pipeline/redirection execution and physical interactive console evidence remain open.
