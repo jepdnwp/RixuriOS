@@ -1,0 +1,5 @@
+#include "unistd.h"
+#include <stddef.h>
+static int eq(const char*a,const char*b){size_t i=0;while(a[i]&&b[i]&&a[i]==b[i])++i;return a[i]==b[i];}
+static int number(const char*s,int*ok){int sign=1,v=0;size_t i=0;if(s[0]=='-'){sign=-1;i=1;}if(!s[i]){*ok=0;return 0;}for(;s[i];++i){if(s[i]<'0'||s[i]>'9'){*ok=0;return 0;}v=v*10+(s[i]-'0');}*ok=1;return sign*v;}
+int program_main(int argc,char**argv,char**envp){(void)envp;if(argc==1)return 1;if(argc==2)return argv[1][0]!=0?0:1;if(argc==3){if(eq(argv[1],"!"))return argc==3&&argv[2][0]==0?0:1;if(eq(argv[1],"-n"))return argv[2][0]==0?1:0;return 2;}if(argc==4){int ok1=0,ok2=0,a=number(argv[1],&ok1),b=number(argv[3],&ok2);if(eq(argv[2],"=" )||eq(argv[2],"=="))return eq(argv[1],argv[3])?0:1;if(eq(argv[2],"!="))return eq(argv[1],argv[3])?1:0;if(ok1&&ok2){if(eq(argv[2],"-eq"))return a==b?0:1;if(eq(argv[2],"-ne"))return a!=b?0:1;if(eq(argv[2],"-gt"))return a>b?0:1;if(eq(argv[2],"-lt"))return a<b?0:1;if(eq(argv[2],"-ge"))return a>=b?0:1;if(eq(argv[2],"-le"))return a<=b?0:1;}}return 2;}
