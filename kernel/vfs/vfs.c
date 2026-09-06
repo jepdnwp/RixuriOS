@@ -21,6 +21,16 @@ static vfs_mount_t mounts[VFS_MAX_MOUNTS];
 static rix_vnode_t path_node;
 static vfs_fd_t fds[RIX_PROCESS_MAX][RIX_VFS_FD_MAX];
 static vfs_pipe_slot_t pipe_slots[VFS_PIPE_MAX];
+#define VFS_ACCESS_READ 4u
+#define VFS_ACCESS_WRITE 2u
+#define VFS_ACCESS_EXEC 1u
+static int permission_allowed(const rix_vnode_t *node,unsigned access){
+    if(!node)return -1;
+    uint32_t uid=process_uid(process_current()),gid=process_gid(process_current());
+    if(uid==0)return 0;
+    unsigned bits=(uid==node->uid)?((node->mode>>6)&7u):(gid==node->gid?((node->mode>>3)&7u):(node->mode&7u));
+    return (bits&access)==access?0:-1;
+}
 
 static int append_component(char *out,size_t cap,size_t *len,const char *start,size_t n){
     if(!n)return 0;
@@ -66,8 +76,8 @@ int vfs_lookup(const char*path,rix_vfs_path_t*out){if(!path||!out)return -1;if(v
 int vfs_lookup_from(const rix_vfs_path_t*base,const char*path,rix_vfs_path_t*out){if(!base||!path||!out)return -1;if(path[0]=='/')return vfs_lookup(path,out);char joined[RIX_VFS_PATH_MAX];size_t bl=0;while(base->path[bl]){if(bl+1>=sizeof(joined))return -1;joined[bl]=base->path[bl];bl++;}if(bl==0||joined[bl-1]!='/'){if(bl+1>=sizeof(joined))return -1;joined[bl++]='/';}size_t i=0;while(path[i]){if(bl+1>=sizeof(joined))return -1;joined[bl++]=path[i++];}joined[bl]=0;return vfs_lookup(joined,out);}
 int vfs_open(uint64_t pid,const char*path,uint32_t flags,uint32_t mode,int*out_fd){
     size_t ps;if(pid_slot(pid,&ps)||!path||!out_fd)return -1;rix_vfs_path_t p;int r=vfs_lookup(path,&p);if(r&&!(flags&RIX_VFS_O_CREAT))return -2;
-    if(r){char parent[RIX_VFS_PATH_MAX],name[RIX_VFS_NAME_MAX+1];if(split_parent(path,parent,sizeof(parent),name,sizeof(name)))return -3;rix_vfs_path_t pp;if(vfs_lookup(parent,&pp)||!pp.node||pp.node->type!=RIX_VFS_DIR)return -4;rixfs_t*fs=vfs_root_fs();if(!fs)return -5;uint64_t ino;if(rixfs_create(fs,pp.node->inode,name,mode,0,0,&ino))return -6;if(vfs_lookup(path,&p))return -7;}
-    rix_vnode_t node=*p.node;if(node.type!=RIX_VFS_FILE&&node.type!=RIX_VFS_DIR)return -8;if((flags&(RIX_VFS_O_WRONLY|RIX_VFS_O_RDWR))&&node.type==RIX_VFS_DIR)return -9;
+    if(r){char parent[RIX_VFS_PATH_MAX],name[RIX_VFS_NAME_MAX+1];if(split_parent(path,parent,sizeof(parent),name,sizeof(name)))return -3;rix_vfs_path_t pp;if(vfs_lookup(parent,&pp)||!pp.node||pp.node->type!=RIX_VFS_DIR||permission_allowed(pp.node,VFS_ACCESS_WRITE|VFS_ACCESS_EXEC)!=0)return -4;rixfs_t*fs=vfs_root_fs();if(!fs)return -5;uint64_t ino;if(rixfs_create(fs,pp.node->inode,name,mode,process_uid(process_current()),process_gid(process_current()),&ino))return -6;if(vfs_lookup(path,&p))return -7;}
+    rix_vnode_t node=*p.node;if(node.type!=RIX_VFS_FILE&&node.type!=RIX_VFS_DIR)return -8;if((flags&(RIX_VFS_O_WRONLY|RIX_VFS_O_RDWR))&&node.type==RIX_VFS_DIR)return -9;unsigned access=node.type==RIX_VFS_DIR?(VFS_ACCESS_READ|VFS_ACCESS_EXEC):((flags&(RIX_VFS_O_WRONLY|RIX_VFS_O_RDWR))?VFS_ACCESS_WRITE:VFS_ACCESS_READ);if(permission_allowed(&node,access)!=0)return -12;
     int fd=-1;for(size_t i=0;i<RIX_VFS_FD_MAX;i++)if(!fds[ps][i].used){fd=(int)i;break;}if(fd<0)return -10;fds[ps][fd].used=1;fds[ps][fd].type=(uint8_t)node.type;fds[ps][fd].writable=(uint8_t)((flags&(RIX_VFS_O_WRONLY|RIX_VFS_O_RDWR))!=0);fds[ps][fd].append=(uint8_t)((flags&RIX_VFS_O_APPEND)!=0);fds[ps][fd].inode=node.inode;fds[ps][fd].offset=0;
     if(flags&RIX_VFS_O_TRUNC){if(!fds[ps][fd].writable||node.type!=RIX_VFS_FILE||rixfs_truncate(vfs_root_fs(),node.inode,0)){fds[ps][fd].used=0;return -11;}}*out_fd=fd;return 0;
 }
@@ -139,7 +149,7 @@ if(!fs)return -3;
 }
 int vfs_readdir(uint64_t pid,int fd,uint64_t*offset,rix_vfs_dirent_t*out,char*name,size_t cap){size_t ps;if(pid_slot(pid,&ps)||fd<0||fd>=RIX_VFS_FD_MAX||!fds[ps][fd].used||!offset||!out||!name)return -1;if(fds[ps][fd].type!=RIX_VFS_DIR)return -2;rixfs_dirent_disk_t e;int r=rixfs_readdir(vfs_root_fs(),fds[ps][fd].inode,offset,&e,name,cap);if(r)return r;out->inode=e.inode;out->type=e.type;return 0;}
 int vfs_stat(const char*path,rix_vnode_t*out){if(!out)return -1;rix_vfs_path_t p;if(vfs_lookup(path,&p))return -2;*out=*p.node;return 0;}
-int vfs_mkdir(const char*path,uint32_t mode,uint32_t uid,uint32_t gid){char parent[RIX_VFS_PATH_MAX],name[RIX_VFS_NAME_MAX+1];if(split_parent(path,parent,sizeof(parent),name,sizeof(name)))return -1;rix_vfs_path_t p;if(vfs_lookup(parent,&p)||p.node->type!=RIX_VFS_DIR)return -2;uint64_t ino;return rixfs_mkdir(vfs_root_fs(),p.node->inode,name,mode,uid,gid,&ino);}
-int vfs_unlink(const char*path){char parent[RIX_VFS_PATH_MAX],name[RIX_VFS_NAME_MAX+1];if(split_parent(path,parent,sizeof(parent),name,sizeof(name)))return -1;rix_vfs_path_t p;if(vfs_lookup(parent,&p)||p.node->type!=RIX_VFS_DIR)return -2;return rixfs_unlink(vfs_root_fs(),p.node->inode,name);}
-int vfs_link(const char*old_path,const char*new_path){char parent[RIX_VFS_PATH_MAX],name[RIX_VFS_NAME_MAX+1];if(!old_path||!new_path||split_parent(new_path,parent,sizeof(parent),name,sizeof(name)))return-1;rix_vfs_path_t source,destination;if(vfs_lookup(old_path,&source)||!source.node)return-2;rix_vnode_t source_node=*source.node;if(source_node.type!=RIX_VFS_FILE)return-3;if(vfs_lookup(parent,&destination)||destination.node->type!=RIX_VFS_DIR)return-4;return rixfs_link(vfs_root_fs(),source_node.inode,destination.node->inode,name,RIXFS_DIR_TYPE_FILE);}
-int vfs_rmdir(const char*path){char parent[RIX_VFS_PATH_MAX],name[RIX_VFS_NAME_MAX+1];if(split_parent(path,parent,sizeof(parent),name,sizeof(name)))return -1;rix_vfs_path_t p;if(vfs_lookup(parent,&p)||p.node->type!=RIX_VFS_DIR)return -2;return rixfs_rmdir(vfs_root_fs(),p.node->inode,name);}
+int vfs_mkdir(const char*path,uint32_t mode,uint32_t uid,uint32_t gid){char parent[RIX_VFS_PATH_MAX],name[RIX_VFS_NAME_MAX+1];if(split_parent(path,parent,sizeof(parent),name,sizeof(name)))return -1;rix_vfs_path_t p;if(vfs_lookup(parent,&p)||p.node->type!=RIX_VFS_DIR||permission_allowed(p.node,VFS_ACCESS_WRITE|VFS_ACCESS_EXEC)!=0)return -2;uint64_t ino;return rixfs_mkdir(vfs_root_fs(),p.node->inode,name,mode,uid,gid,&ino);}
+int vfs_unlink(const char*path){char parent[RIX_VFS_PATH_MAX],name[RIX_VFS_NAME_MAX+1];if(split_parent(path,parent,sizeof(parent),name,sizeof(name)))return -1;rix_vfs_path_t p;if(vfs_lookup(parent,&p)||p.node->type!=RIX_VFS_DIR||permission_allowed(p.node,VFS_ACCESS_WRITE|VFS_ACCESS_EXEC)!=0)return -2;return rixfs_unlink(vfs_root_fs(),p.node->inode,name);}
+int vfs_link(const char*old_path,const char*new_path){char parent[RIX_VFS_PATH_MAX],name[RIX_VFS_NAME_MAX+1];if(!old_path||!new_path||split_parent(new_path,parent,sizeof(parent),name,sizeof(name)))return-1;rix_vfs_path_t source,destination;if(vfs_lookup(old_path,&source)||!source.node)return-2;rix_vnode_t source_node=*source.node;if(source_node.type!=RIX_VFS_FILE)return-3;if(vfs_lookup(parent,&destination)||destination.node->type!=RIX_VFS_DIR||permission_allowed(destination.node,VFS_ACCESS_WRITE|VFS_ACCESS_EXEC)!=0)return-4;return rixfs_link(vfs_root_fs(),source_node.inode,destination.node->inode,name,RIXFS_DIR_TYPE_FILE);}
+int vfs_rmdir(const char*path){char parent[RIX_VFS_PATH_MAX],name[RIX_VFS_NAME_MAX+1];if(split_parent(path,parent,sizeof(parent),name,sizeof(name)))return -1;rix_vfs_path_t p;if(vfs_lookup(parent,&p)||p.node->type!=RIX_VFS_DIR||permission_allowed(p.node,VFS_ACCESS_WRITE|VFS_ACCESS_EXEC)!=0)return -2;return rixfs_rmdir(vfs_root_fs(),p.node->inode,name);}

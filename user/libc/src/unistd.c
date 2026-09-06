@@ -23,6 +23,10 @@ int nanosleep(const rix_timespec_t *request, rix_timespec_t *remaining){return(i
 int clock_gettime(rix_timespec_t *out){return(int)rix_sys(13,(long)out,0,0);}
 int chdir(const char *path){return(int)rix_sys(80,(long)path,0,0);}
 int getcwd(char *buffer,size_t capacity){return(int)rix_sys(79,(long)buffer,(long)capacity,0);}
+uint32_t getuid(void){return(uint32_t)rix_sys(102,0,0,0);}
+uint32_t getgid(void){return(uint32_t)rix_sys(104,0,0,0);}
+int setuid(uint32_t uid){return(int)rix_sys(105,(long)uid,0,0);}
+int setgid(uint32_t gid){return(int)rix_sys(106,(long)gid,0,0);}
 int execve(const char *path,char *const argv[],char *const envp[]){return(int)rix_sys(59,(long)path,(long)argv,(long)envp);}
 rix_pid_t getpid(void){return(rix_pid_t)rix_sys(39,0,0,0);}
 int kill(rix_pid_t pid,uint32_t signal){return(int)rix_sys(62,(long)pid,(long)signal,0);}

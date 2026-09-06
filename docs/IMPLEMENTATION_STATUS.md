@@ -439,3 +439,20 @@ Phase 19 remains **IMPLEMENTED / QEMU-VALIDATED** for the expanded practical uti
 ## Phase 20 transition — 2026-09-07
 
 Phase 20, **Users, Groups, Credentials and Security Model**, is now **IN PROGRESS / DESIGN BASELINE RECORDED**. The current kernel has UID/GID fields and RixFS owner/mode metadata, but permission enforcement, credential transitions, supplementary groups, and environment sanitization are not yet complete. The implementation contract and evidence gates are recorded in [`docs/PHASE20_SECURITY_DESIGN.md`](PHASE20_SECURITY_DESIGN.md). The requested colored `username@computer-name ~(directory) :` prompt is intentionally deferred until Phase 20 is complete so prompt presentation cannot be mistaken for the security identity source of truth.
+
+
+## Phase 20 credential slice — 2026-09-07
+
+The first Phase 20 implementation slice is complete and remains part of the in-progress phase. Process credentials now expose effective UID/GID query and controlled transition operations through `getuid`, `getgid`, `setuid`, and `setgid`. UID/GID transitions are root-controlled and one-way in the current bounded model: after dropping from UID/GID zero, the process cannot regain root. Fork and process creation continue to inherit credential fields through the process object.
+
+VFS permission evaluation is centralized in `permission_allowed`. For non-root processes it selects owner, group, or other mode bits and checks read, write, and execute access. File opens, directory opens, file creation, mkdir, unlink, link, and rmdir now enforce the relevant permission checks. Newly created files and directories receive the effective process UID/GID rather than fabricated root ownership. Root bypass is explicit and currently limited to UID zero.
+
+The real-QEMU harness `scripts/qemu_phase20_cred_test.py` validates boot, root UID/GID visibility, dropping to UID/GID 1000, successful post-transition identity reporting, failed mutation of the root-owned `/` directory, prompt recovery, and absence of page faults, CPU exceptions, or panics. The observed output was:
+
+```text
+before uid=0 gid=0
+after uid=1000 gid=1000
+qemu Phase 20 credential/permission test: PASS
+```
+
+The strict cross build and host USB/HID/TTY/shell/pipe regressions also pass after this slice. Phase 20 remains **IN PROGRESS** because supplementary groups, saved IDs, complete permission coverage, credential-aware exec/set-id policy, environment sanitization, and broader security regression gates are still outstanding. The colored `username@computer-name ~(directory) :` prompt remains deferred until those gates are complete.
