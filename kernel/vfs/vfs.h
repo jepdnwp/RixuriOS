@@ -40,6 +40,7 @@ int vfs_write(uint64_t pid,int fd,const void *buffer,size_t size,size_t *out_wri
 int vfs_readdir(uint64_t pid,int fd,uint64_t *offset,rix_vfs_dirent_t *out,char *name,size_t name_capacity);
 int vfs_stat(const char *path,rix_vnode_t *out);
 int vfs_chmod(const char *path,uint32_t mode);
+int vfs_chown(const char *path,uint32_t uid,uint32_t gid);
 int vfs_mkdir(const char *path,uint32_t mode,uint32_t uid,uint32_t gid);
 int vfs_unlink(const char *path);
 int vfs_link(const char *old_path,const char *new_path);

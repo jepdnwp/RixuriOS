@@ -502,7 +502,7 @@ The expanded `/usr/bin/credtest` creates root-owned fixtures with distinct group
 
 The Phase 20 harness uses disposable copies of both the RixFS image and UEFI ESP so repeated runs cannot leave fixture mutations or FAT-backed firmware changes for later tests. Two consecutive harness runs passed with `before uid=0 gid=0`, `after uid=1000 gid=1000`, `matrix=PASS`, `uid=0 gid=0`, and `setid=PASS`. The Phase 19 extended, utility, process-utility, and cp/mv edge QEMU harnesses also passed when each was started from a freshly generated image. No page fault, CPU exception, panic, timeout, or prompt loss was observed.
 
-The strict userspace fork ABI declaration now carries `returns_twice`, and fork callers whose state is intentionally inspected after fork use volatile status storage where required by `-Werror=clobbered`. Phase 20 remains **IN PROGRESS**: ACL policy, login/session lifecycle, capability/least-privilege interfaces, audit identity, broader metadata-preserving copy/move semantics, and physical-hardware security evidence remain open.
+The strict userspace fork ABI declaration now carries `returns_twice`, and fork callers whose state is intentionally inspected after fork use volatile status storage where required by `-Werror=clobbered`. Phase 20 remains **IN PROGRESS**: login/session lifecycle, capability/least-privilege interfaces, audit identity, atomic metadata-preserving copy/move/rename semantics, and physical-hardware security evidence remain open.
 
 ## Latest continuation — Phase 20 ACL, session and capability v1
 
@@ -514,6 +514,8 @@ The strict userspace fork ABI declaration now carries `returns_twice`, and fork 
 - Extended the real Phase 20 QEMU credential test with capability drop evidence. The observed markers were `cap=PASS`, `acl=PASS`, `matrix=PASS`, `after uid=1000 gid=1000` and `setid=PASS`.
 - Added `/usr/bin/killtest`, which creates distinct-UID child processes, verifies that `CAP_KILL` permits cross-UID signal delivery, drops only that capability, verifies the same operation fails closed with `-EACCES`, and confirms the child remains releasable and reapable.
 - Added the reproducible `make phase20-test` target, fixed the Phase 20 QEMU harness environment imports, and made the target run credential, CAP_KILL and session evidence over disposable RixFS/UEFI copies.
-- Clean strict build, host tests, Phase 20 credential/CAP_KILL QEMU, and session QEMU suites all passed in this environment.
+- Added the versioned `RIX_SYS_CHOWN`/`chown()` path. Root ownership changes require `CAP_DAC_OVERRIDE`; non-root callers can only retain their own UID and an allowed group, and non-privileged ownership changes clear set-id bits.
+- Updated `/bin/cp` and `/bin/mv` to preserve source UID, GID, mode/set-id bits and bounded ACL v1 metadata after content transfer. Added `/usr/bin/metatest` and extended the cp/mv edge harness with QEMU checks for metadata persistence, source removal after `mv`, and failed non-root/capability-dropped `chown` attempts.
+- Clean strict build, host tests, Phase 20 credential/CAP_KILL QEMU, session QEMU and metadata cp/mv QEMU suites all passed in this environment.
 
-Phase 20 remains `IMPLEMENTED / NOT YET VALIDATED` for hardware-specific security claims and for a full login database/PAM-equivalent authentication service, persistent multi-session manager, capability delegation across ordinary exec, and broader metadata-preserving copy/move semantics. These are intentionally separate from the validated bounded kernel ABI and enforcement slice above.
+Phase 20 remains `IMPLEMENTED / NOT YET VALIDATED` for hardware-specific security claims and for a full login database/PAM-equivalent authentication service, persistent multi-session manager, capability delegation across ordinary exec, audit identity, and atomic metadata-preserving copy/move/rename semantics. These are intentionally separate from the validated bounded kernel ABI and enforcement slice above.

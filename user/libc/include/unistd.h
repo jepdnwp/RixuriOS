@@ -45,6 +45,7 @@ uint32_t getgid(void);
 int setuid(uint32_t uid);
 int setgid(uint32_t gid);
 int chmod(const char *path, uint32_t mode);
+int chown(const char *path, uint32_t uid, uint32_t gid);
 int getacl(const char *path, rix_acl_t *out);
 int setacl(const char *path, const rix_acl_t *acl);
 int clearacl(const char *path);

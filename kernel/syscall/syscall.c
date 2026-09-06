@@ -76,6 +76,7 @@ void syscall_dispatch(rix_syscall_frame_t*frame){
  case RIX_SYS_SETACL:{char path[RIX_VFS_PATH_MAX];rixfs_acl_t acl;if(user_string(frame->rdi,path,sizeof(path))!=0||copy_from_user(&acl,frame->rsi,sizeof(acl))!=0){result=-RIX_EFAULT;break;}result=vfs_result(vfs_set_acl(path,&acl));break;}
  case RIX_SYS_CLEARACL:{char path[RIX_VFS_PATH_MAX];if(user_string(frame->rdi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}result=vfs_result(vfs_clear_acl(path));break;}
  case RIX_SYS_CHMOD:{char path[RIX_VFS_PATH_MAX];if(user_string(frame->rdi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}result=vfs_result(vfs_chmod(path,(uint32_t)frame->rsi));break;}
+ case RIX_SYS_CHOWN:{char path[RIX_VFS_PATH_MAX];if(user_string(frame->rdi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}result=vfs_result(vfs_chown(path,(uint32_t)frame->rsi,(uint32_t)frame->rdx));break;}
  case RIX_SYS_EXIT:if(process_exit(self,frame->rdi)!=0)result=-RIX_EINVAL;else scheduler_exit_current();break;
  case RIX_SYS_WAIT:{
   pid_t wanted=(pid_t)frame->rdi;uint64_t status=0;pid_t child=0;int rc;

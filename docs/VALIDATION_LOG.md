@@ -509,3 +509,34 @@ make phase20-test CROSS=
 ```
 
 No page fault, CPU exception, kernel panic, timeout or prompt-loss marker was observed. This closes the bounded QEMU evidence gap for cross-UID `CAP_KILL`; it does not claim physical-hardware security qualification, persistent account/password authentication, capability delegation across ordinary exec, or metadata-preserving `cp`/`mv` semantics.
+
+## 2026-09-07 — Phase 20 ownership and copy/move metadata continuation
+
+The bounded ownership-preservation slice adds `RIX_SYS_CHOWN`/`chown()` and a centralized VFS policy. A caller with effective UID zero must retain `CAP_DAC_OVERRIDE` to change arbitrary ownership. A non-root caller must own the target and may retain only its own UID plus its effective or supplementary group; non-privileged ownership changes clear set-id bits. Permission failures remain observable as `-EACCES`.
+
+`/bin/cp` and `/bin/mv` now collect source `stat` and ACL v1 metadata after the content transfer, apply source UID/GID and mode/set-id bits through `chown`/`chmod`, and replay or clear the bounded ACL. `/usr/bin/metatest` creates a root-owned, group-owned fixture with set-id mode bits and named-user/named-group ACL entries. The QEMU edge harness verifies metadata after `cp`, verifies metadata and source removal after `mv`, and verifies that both a UID-1000 child and a root process after dropping `CAP_DAC_OVERRIDE` are denied ownership changes.
+
+Observed markers were:
+
+```text
+metadata-source=PASS
+chown-policy=PASS
+cp-metadata-pass
+mv-metadata-pass
+overwrite-pass
+mv-overwrite-pass
+multi-sector-pass
+qemu cp/mv edge tests: PASS
+```
+
+The following validation commands completed successfully:
+
+```text
+git diff --check
+make test CROSS=
+make image CROSS=
+make phase20-test CROSS=
+python3 scripts/qemu_cp_mv_edge_test.py
+```
+
+This closes the bounded QEMU evidence for ownership/mode/set-id/ACL preservation across the current copy-based `cp`/`mv` implementation. It does not claim atomic rename semantics, rollback of an already-overwritten destination after a later metadata failure, recursive directory metadata copying, or physical-hardware security evidence.

@@ -33,7 +33,7 @@ The credential, supplementary-group, saved-ID, chmod and set-id exec slices are 
 
 The current syscall surface preserves permission denial as `-EACCES` (`13`) for the covered VFS operations, while missing-path and unsupported-operation failures remain represented by the existing bounded `-EINVAL` mapping. The regression image creates fixtures with distinct owner/group/other classes and checks persisted UID/GID/mode metadata rather than relying on shell output. Setuid/setgid execution changes effective and saved credentials only after successful image replacement, and privileged execution receives an empty environment; the set-id target rejects a non-empty environment.
 
-This does not imply completion of the whole phase. ACLs, login/session lifecycle, capability interfaces, audit identity, complete metadata preservation for copy/move, broader filesystem permission matrices, and physical-hardware security evidence remain open. The shell prompt remains a presentation concern and is intentionally deferred.
+This does not imply completion of the whole phase. Login/session lifecycle, capability interfaces, audit identity, atomic metadata-preserving copy/move/rename semantics, broader filesystem permission matrices, and physical-hardware security evidence remain open. The bounded `chown` path and metadata-preserving `cp`/`mv` slice are now QEMU-validated; the shell prompt remains a presentation concern and is intentionally deferred.
 
 
 ## Remaining work design — bounded v1 slices

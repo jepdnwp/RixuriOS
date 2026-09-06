@@ -1,4 +1,5 @@
 #include "unistd.h"
+#include "copy_metadata.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -68,6 +69,7 @@ int program_main(int argc, char **argv, char **envp) {
     int status = copy_fd(input, output);
     if (close(output) != 0) status = 1;
     if (close(input) != 0) status = 1;
+    if (status == 0 && copy_metadata("cp", argv[1], argv[2]) != 0) status = 1;
     return status;
 }
 

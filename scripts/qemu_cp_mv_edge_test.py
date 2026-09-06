@@ -59,6 +59,14 @@ try:
         raise RuntimeError("embedded init completion not observed")
     time.sleep(1.0)
     commands = [
+        b"/usr/bin/metatest init",
+        b"/usr/bin/metatest policy",
+        b"/bin/cp /usr/meta-source /usr/meta-copy",
+        b"/usr/bin/metatest check /usr/meta-copy cp-metadata-pass",
+        b"/bin/mv /usr/meta-source /usr/meta-moved",
+        b"/usr/bin/metatest check-mv /usr/meta-moved mv-metadata-pass",
+        b"/bin/rm /usr/meta-copy",
+        b"/bin/rm /usr/meta-moved",
         b"/bin/true > /usr/empty-source",
         b"/bin/cp /usr/empty-source /usr/empty-copy",
         b"/bin/ls /usr",
@@ -98,7 +106,8 @@ if b"cp: " in output or b"mv: " in output:
     raise SystemExit("cp/mv runtime failure observed")
 if b"command execution failed" in output or b"open failed" in output:
     raise SystemExit("shell command execution failure observed")
-for marker in (b"overwrite-pass", b"mv-overwrite-pass", b"multi-sector-pass"):
+for marker in (b"metadata-source=PASS", b"chown-policy=PASS", b"cp-metadata-pass", b"mv-metadata-pass",
+               b"overwrite-pass", b"mv-overwrite-pass", b"multi-sector-pass"):
     if marker not in output:
         raise SystemExit(f"missing runtime marker: {marker!r}")
 if b"empty-copy" not in output or b"empty-moved" not in output:
