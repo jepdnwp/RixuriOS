@@ -352,6 +352,22 @@ int tty_read_screen(unsigned id, void *buf, size_t capacity, size_t *out) {
     return 0;
 }
 
+int tty_recover(unsigned id) {
+    rix_tty_t *t = tty_valid(id);
+    if (!t) return -1;
+    t->head = t->tail = t->count = 0;
+    t->output_head = t->output_tail = t->output_count = 0;
+    t->line_chars = t->canonical_ready = 0;
+    t->vt_state = VT_NORMAL;
+    t->vt_value_index = 0;
+    t->vt_value[0] = t->vt_value[1] = 0;
+    t->cursor_row = t->cursor_column = 0;
+    vt_clear_screen(t);
+    static const uint8_t banner[] = "RixuriOS recovery console\r\n";
+    size_t written = 0;
+    return tty_output(id, banner, sizeof(banner) - 1u, &written) == 0 ? 0 : -2;
+}
+
 static rix_pty_t *pty_valid(unsigned id) {
     return id < RIX_PTY_COUNT && ptys[id].opened ? &ptys[id] : NULL;
 }

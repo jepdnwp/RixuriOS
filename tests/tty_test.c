@@ -31,7 +31,7 @@ int main(void) {
     if (expect(tty_input(0, '\n') == 0 && tty_read(0, buffer, sizeof(buffer), &count) == 0 &&
                 count == 3 && memcmp(buffer, "ab\n", 3) == 0,
                 "canonical line read")) return 1;
-    uint8_t output[16] = {0};
+    uint8_t output[64] = {0};
     if (expect(tty_read_output(0, output, sizeof(output), &count) == 0 && count == 3 &&
                 memcmp(output, "ab\n", 3) == 0, "echo output queue")) return 1;
     if (expect(tty_set_canonical(0, 0) == 0 && tty_input(0, 'x') == 0 &&
@@ -79,6 +79,10 @@ int main(void) {
                 count == 3 && memcmp(output, "ok\n", 3) == 0,
                 "pty slave writes output")) return 1;
     if (expect(tty_pty_close(pty) == 0, "close pty")) return 1;
+    if (expect(tty_recover(0) == 0 && tty_get_cursor(0, &row, &column) == 0 &&
+                row == 1 && column == 0 && tty_read_output(0, output, sizeof(output), &count) == 0 &&
+                count == 27 && memcmp(output, "RixuriOS recovery console\r\n", 27) == 0,
+                "recovery console reset and banner")) return 1;
     puts("tty tests: PASS");
     return 0;
 }

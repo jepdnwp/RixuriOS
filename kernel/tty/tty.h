@@ -53,6 +53,7 @@ int tty_set_dimensions(unsigned id, uint16_t rows, uint16_t columns);
 int tty_get_dimensions(unsigned id, uint16_t *rows, uint16_t *columns);
 int tty_get_cursor(unsigned id, uint16_t *row, uint16_t *column);
 int tty_read_screen(unsigned id, void *buf, size_t capacity, size_t *out);
+int tty_recover(unsigned id);
 
 int tty_pty_open(unsigned *pty_id);
 int tty_pty_close(unsigned pty_id);
