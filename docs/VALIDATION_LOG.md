@@ -1,0 +1,32 @@
+# RixuriOS Validation Log
+
+## 2026-09-06 — strict build and UEFI/QEMU smoke test
+
+The repository was validated from a clean object state with the host toolchain using the canonical freestanding build flags. The command `make clean CROSS= && make all CROSS= && make check CROSS= && make image CROSS=` completed successfully. Compilation used `-Wall -Wextra -Werror`; ELF header and program-header checks also completed. The linker emits only the non-fatal `.note.GNU-stack` warning for the generated `kernel/user_init_blob.o` binary-object wrapper; the hand-written assembly objects carry explicit non-executable-stack notes.
+
+The generated UEFI image was then exercised through `bash ./scripts/run-qemu.sh` with a bounded timeout. The observed serial path was:
+
+```text
+RixuriOS kernel: x86_64 / AMD64 64-bit
+Boot handoff: version=1 size=104
+GDT/IDT: initialized
+PMM: total=129480 free=126811
+VMM: initialized
+KHEAP: initialized
+TTY/HID: initialized
+ACPI CPUs: 1 IOAPICs: 1
+PCI: devices=6
+NVMe: controllers=0
+xHCI: controllers=0
+TIME: realtime=...
+USER: embedded init prepared, pid=1 task=1
+IRQ: PIT routed to vector 32; interrupts enabled
+Core services: timer/scheduler/process/syscall/PCI/NVMe/xHCI/HID/block/VFS/time initialized
+LAPIC: initialized, id=0
+RIXURI:KERNEL_READY
+USER: init returned to kernel
+```
+
+This closes the current generic **CP1 BUILD** and **CP3 BOOT** evidence for the kernel/UEFI and embedded ring-3 smoke path. It does not close hardware checkpoints. In particular, QEMU exposed zero NVMe and xHCI controllers in this run, so no NVMe I/O, xHCI completion, HID transfer, hotplug, or physical-device behavior is claimed. The bounded timeout is expected because the kernel remains alive after returning from the one-shot embedded init process.
+
+The generated artifacts are `build/kernel.elf`, `build/uefi/esp.img`, and `build/qemu-serial.log`. They are build outputs and are intentionally not source-controlled unless a release process later defines artifact retention.

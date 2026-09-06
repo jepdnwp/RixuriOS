@@ -59,7 +59,8 @@ void pmm_init(const void*memory_map,uint64_t memory_map_size,uint64_t descriptor
     mark_range((uint64_t)(uintptr_t)memory_map,(memory_map_size+RIXURI_PAGE_SIZE-1ULL)/RIXURI_PAGE_SIZE,0);
 }
 uint64_t pmm_alloc_page_below(uint64_t max_exclusive){
-    if(max_exclusive>PMM_MAX_PHYS)max_exclusive=PMM_MAX_PHYS;if(max_exclusive<RIXURI_PAGE_SIZE)return 0;
+    if(max_exclusive>PMM_MAX_PHYS)max_exclusive=PMM_MAX_PHYS;
+    if(max_exclusive<RIXURI_PAGE_SIZE)return 0;
     uint64_t limit=(max_exclusive-1ULL)/RIXURI_PAGE_SIZE;
     for(uint64_t w=0;w<RIXURI_BITMAP_WORDS;w++){
         uint64_t first=w*64ULL;if(first>limit)break;

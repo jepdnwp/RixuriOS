@@ -14,6 +14,8 @@ typedef struct {
 typedef struct { uint8_t connected, enabled, speed, reset_complete; } rix_xhci_port_status_t;
 typedef struct { uint8_t slot_id, port, speed, state; } rix_xhci_device_t;
 
+#define RIX_XHCI_DEVICE_ADDRESSED 2u
+
 int xhci_init(void);
 size_t xhci_controller_count(void);
 const rix_xhci_controller_t *xhci_controller(size_t index);

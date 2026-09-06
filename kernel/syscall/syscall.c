@@ -16,7 +16,8 @@
 #define RIX_IO_CHUNK 256
 static int user_string(uint64_t src,char *dst,size_t cap){if(!dst||cap<2)return -1;for(size_t i=0;i+1<cap;i++){uint8_t c;if(copy_from_user(&c,src+i,1)!=0)return -1;dst[i]=(char)c;if(!c)return 0;}dst[cap-1]=0;return -1;}
 void syscall_dispatch(rix_syscall_frame_t*frame){
- if(!frame)return;int64_t result=-(int64_t)RIX_ENOSYS;pid_t self=process_current();
+ if(!frame)return;
+ int64_t result=-(int64_t)RIX_ENOSYS;pid_t self=process_current();
  switch(frame->rax){
  case RIX_SYS_READ:{uint64_t fd=frame->rdi,dst=frame->rsi,len=frame->rdx;if(len>RIX_MAX_IO){result=-RIX_EINVAL;break;}if(fd<=2){result=0;break;}uint8_t b[RIX_IO_CHUNK];size_t done=0;while(done<len){size_t n=(size_t)(len-done);if(n>RIX_IO_CHUNK)n=RIX_IO_CHUNK;size_t got=0;if(vfs_read(self,(int)fd,b,n,&got)!=0){result=done?((int64_t)done):-(int64_t)RIX_EINVAL;break;}if(got&&copy_to_user(dst+done,b,got)!=0){result=done?((int64_t)done):-(int64_t)RIX_EFAULT;break;}done+=got;if(got<n)break;}if(done==len||len==0)result=(int64_t)done;break;}
  case RIX_SYS_WRITE:{uint64_t fd=frame->rdi,src=frame->rsi,len=frame->rdx;if(len>RIX_MAX_IO){result=-RIX_EINVAL;break;}if(fd<=2){uint8_t b[RIX_IO_CHUNK];uint64_t done=0;while(done<len){size_t n=(size_t)(len-done);if(n>RIX_IO_CHUNK)n=RIX_IO_CHUNK;if(copy_from_user(b,src+done,n)!=0){result=done?((int64_t)done):-(int64_t)RIX_EFAULT;break;}serial_write_n((const char*)b,n);done+=n;}if(done==len)result=(int64_t)done;break;}uint8_t b[RIX_IO_CHUNK];size_t done=0;while(done<len){size_t n=(size_t)(len-done);if(n>RIX_IO_CHUNK)n=RIX_IO_CHUNK;if(copy_from_user(b,src+done,n)!=0){result=done?((int64_t)done):-(int64_t)RIX_EFAULT;break;}size_t wrote=0;if(vfs_write(self,(int)fd,b,n,&wrote)!=0){result=done?((int64_t)done):-(int64_t)RIX_EINVAL;break;}done+=wrote;if(wrote<n)break;}if(done==len||len==0)result=(int64_t)done;break;}

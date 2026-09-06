@@ -35,7 +35,9 @@ int rtc_read(rix_rtc_time_t*out){
   else hour=hour1;
   if(!(status&RTC_24H)){uint8_t pm=(uint8_t)(hour&0x80u);hour&=0x7Fu;if(pm&&hour<12)hour=(uint8_t)(hour+12u);if(!pm&&hour==12)hour=0;}
   rix_rtc_time_t t={.year=(uint16_t)(2000u+year1),.month=mon1,.day=day1,.hour=hour,.minute=min1,.second=sec1};
-  if(valid(&t)!=0)continue;*out=t;return 0;
+  if(valid(&t)!=0)continue;
+  *out=t;
+  return 0;
  }
  return -2;
 }

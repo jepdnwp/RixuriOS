@@ -19,3 +19,5 @@ rix_context_switch:
     popq %rbp
     retq
 .size rix_context_switch,.-rix_context_switch
+
+.section .note.GNU-stack,"",@progbits

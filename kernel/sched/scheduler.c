@@ -57,16 +57,20 @@ static void task_init_stack(rix_task_t *t){
 }
 
 int scheduler_create_kernel_thread(rix_kernel_thread_fn entry,void *arg,rix_task_id_t *out_id){
-    if(!entry)return -1;rix_task_t *t;if(task_alloc(&t)!=0)return -1;
+    if(!entry)return -1;
+    rix_task_t *t;if(task_alloc(&t)!=0)return -1;
     t->id=next_id++;if(!t->id)t->id=next_id++;t->entry=entry;t->arg=arg;t->process_pid=0;t->user_entry=0;t->user_stack=0;t->state=TASK_RUNNABLE;task_init_stack(t);
-    if(out_id)*out_id=t->id;return 0;
+    if(out_id)*out_id=t->id;
+    return 0;
 }
 
 int scheduler_create_user_process(uint64_t pid,uint64_t entry,uint64_t user_stack,rix_task_id_t *out_id){
-    if(!pid||!entry||!user_stack)return -1;rix_process_t *p=process_lookup(pid);if(!p||!p->address_space.pml4_phys||!p->kernel_stack)return -1;
+    if(!pid||!entry||!user_stack)return -1;
+    rix_process_t *p=process_lookup(pid);if(!p||!p->address_space.pml4_phys||!p->kernel_stack)return -1;
     rix_task_t *t;if(task_alloc(&t)!=0)return -1;
     t->id=next_id++;if(!t->id)t->id=next_id++;t->entry=NULL;t->arg=NULL;t->process_pid=pid;t->user_entry=entry;t->user_stack=user_stack;t->state=TASK_RUNNABLE;task_init_stack(t);
-    if(out_id)*out_id=t->id;return 0;
+    if(out_id)*out_id=t->id;
+    return 0;
 }
 
 __attribute__((noreturn)) void scheduler_exit_current(void){

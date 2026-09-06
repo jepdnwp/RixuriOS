@@ -122,3 +122,5 @@ IRQ 44
 IRQ 45
 IRQ 46
 IRQ 47
+
+.section .note.GNU-stack,"",@progbits

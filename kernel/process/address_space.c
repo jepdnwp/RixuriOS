@@ -10,7 +10,8 @@ static uint64_t *ptr(uint64_t p){return(uint64_t *)(uintptr_t)p;}
 static int user_va(uint64_t va){return va>=0x1000ULL&&va<(1ULL<<47)&&!(va&0xfffULL);}
 
 static uint64_t walk_pte(const rix_address_space_t *as,uint64_t va){
- if(!as||!as->pml4_phys||va>=(1ULL<<47))return 0;uint64_t*table=ptr(as->pml4_phys);
+ if(!as||!as->pml4_phys||va>=(1ULL<<47))return 0;
+ uint64_t*table=ptr(as->pml4_phys);
  for(unsigned level=4;level>1;--level){uint64_t e=table[(va>>((level-1)*9+12))&0x1ffULL];if(!(e&RIXURI_PTE_PRESENT))return 0;if(level<=3&&(e&PTE_PS))return e;table=ptr(e&PAGE_MASK);}return table[(va>>12)&0x1ffULL];
 }
 static void free_pt(uint64_t phys){uint64_t*t=ptr(phys);for(unsigned i=0;i<TABLE_COUNT;i++){uint64_t e=t[i];if((e&RIXURI_PTE_PRESENT)&&(e&RIXURI_PTE_OWNED))pmm_free_page(e&PAGE_MASK);}pmm_free_page(phys);}
@@ -19,7 +20,8 @@ static void free_pdpt(uint64_t phys){uint64_t*t=ptr(phys);for(unsigned i=0;i<TAB
 static void destroy_user_tables(rix_address_space_t *as){if(!as||!as->pml4_phys)return;uint64_t*t=ptr(as->pml4_phys);for(unsigned i=1;i<256;i++)if(t[i]&RIXURI_PTE_PRESENT)free_pdpt(t[i]&PAGE_MASK);pmm_free_page(as->pml4_phys);as->pml4_phys=0;}
 
 int address_space_create(rix_address_space_t *as){
- if(!as)return -1;as->pml4_phys=0;uint64_t pml4=pmm_alloc_page();if(!pml4)return -1;uint64_t*t=ptr(pml4);for(unsigned i=0;i<TABLE_COUNT;i++)t[i]=0;as->pml4_phys=pml4;
+ if(!as)return -1;
+ as->pml4_phys=0;uint64_t pml4=pmm_alloc_page();if(!pml4)return -1;uint64_t*t=ptr(pml4);for(unsigned i=0;i<TABLE_COUNT;i++)t[i]=0;as->pml4_phys=pml4;
  uint64_t kp=vmm_kernel_pml4();uint64_t*kt=ptr(kp);for(unsigned i=256;i<512;i++)t[i]=kt[i];
  if(!(kt[0]&RIXURI_PTE_PRESENT)){destroy_user_tables(as);return -1;}
  uint64_t src_pdpt=kt[0]&PAGE_MASK;uint64_t new_pdpt=pmm_alloc_page();if(!new_pdpt){destroy_user_tables(as);return -1;}

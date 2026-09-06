@@ -1,0 +1,3 @@
+# Generated kernel and UEFI build outputs
+build/
+*.o

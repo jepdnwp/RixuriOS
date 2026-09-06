@@ -3,12 +3,163 @@
 #include <stddef.h>
 #include <stdint.h>
 
-static int name_valid(const char *name,size_t *len_out){if(!name||!len_out||!name[0]||name[0]=='/')return -1;size_t n=0;while(name[n]){if(name[n]=='/'||++n>RIXFS_NAME_MAX)return -1;}*len_out=n;return 0;}
-static int read_bytes(rixfs_t *fs,uint64_t ino,uint64_t off,void *buf,size_t size){return rixfs_read(fs,ino,off,buf,size);}
-static uint64_t rd64(const uint8_t *p){uint64_t v=0;for(unsigned i=0;i<8;i++)v|=(uint64_t)p[i]<<(8*i);return v;}
-static uint16_t rd16(const uint8_t *p){return (uint16_t)p[0]|((uint16_t)p[1]<<8);}
-static uint32_t rd32(const uint8_t *p){return (uint32_t)p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24);}
-static int read_ent(rixfs_t *fs,uint64_t ino,uint64_t off,rixfs_dirent_disk_t *e){uint8_t h[RIXFS_DIRENT_MIN_SIZE];if(read_bytes(fs,ino,off,h,sizeof(h)))return -1;e->inode=rd64(h);e->record_size=rd16(h+8);e->type=h[10];e->name_length=h[11];e->flags=rd32(h+12);return 0;}
-int rixfs_lookup_name(rixfs_t *fs,uint64_t dir_inode,const char *name,uint64_t *out_inode,uint8_t *out_type){if(!fs||!fs->mounted||!out_inode||!out_type)return -1;size_t wanted;if(name_valid(name,&wanted))return -2;rixfs_inode_disk_t dir;if(rixfs_read_inode(fs,dir_inode,&dir)||dir.inode!=dir_inode||(dir.mode&RIXFS_IFMT)!=RIXFS_IFDIR)return -3;uint64_t off=0;while(off<dir.size){if(dir.size-off<RIXFS_DIRENT_MIN_SIZE)return -4;rixfs_dirent_disk_t e;if(read_ent(fs,dir_inode,off,&e))return -5;if(e.record_size<RIXFS_DIRENT_MIN_SIZE||e.record_size>dir.size-off||e.name_length>RIXFS_NAME_MAX||e.name_length>e.record_size-RIXFS_DIRENT_MIN_SIZE)return -6;if(e.inode&&e.name_length==wanted){char n[RIXFS_NAME_MAX+1];if(read_bytes(fs,dir_inode,off+RIXFS_DIRENT_MIN_SIZE,n,wanted))return -7;size_t i=0;for(;i<wanted&&n[i]==name[i];i++);if(i==wanted){*out_inode=e.inode;*out_type=e.type;return 0;}}off+=e.record_size;}return -8;}
-int rixfs_readdir(rixfs_t *fs,uint64_t dir_inode,uint64_t *offset,rixfs_dirent_disk_t *out,char *name,size_t cap){if(!fs||!fs->mounted||!offset||!out||!name||cap<2)return -1;rixfs_inode_disk_t dir;if(rixfs_read_inode(fs,dir_inode,&dir)||dir.inode!=dir_inode||(dir.mode&RIXFS_IFMT)!=RIXFS_IFDIR)return -2;uint64_t off=*offset;while(off<dir.size){rixfs_dirent_disk_t e;if(dir.size-off<RIXFS_DIRENT_MIN_SIZE||read_ent(fs,dir_inode,off,&e))return -3;if(e.record_size<RIXFS_DIRENT_MIN_SIZE||e.record_size>dir.size-off||e.name_length>RIXFS_NAME_MAX||e.name_length>e.record_size-RIXFS_DIRENT_MIN_SIZE)return -4;*offset=off+e.record_size;if(!e.inode){off=*offset;continue;}if((size_t)e.name_length+1>cap)return -5;if(read_bytes(fs,dir_inode,off+RIXFS_DIRENT_MIN_SIZE,name,e.name_length))return -6;name[e.name_length]=0;*out=e;return 0;}return 1;}
-int rixfs_remove_name(rixfs_t *fs,uint64_t dir_inode,const char *name){if(!fs||!fs->mounted)return -1;size_t wanted;if(name_valid(name,&wanted))return -2;rixfs_inode_disk_t dir;if(rixfs_read_inode(fs,dir_inode,&dir)||dir.inode!=dir_inode||(dir.mode&RIXFS_IFMT)!=RIXFS_IFDIR)return -3;uint64_t off=0;while(off<dir.size){rixfs_dirent_disk_t e;if(read_ent(fs,dir_inode,off,&e))return -4;if(e.record_size<RIXFS_DIRENT_MIN_SIZE||e.record_size>dir.size-off||e.name_length>RIXFS_NAME_MAX||e.name_length>e.record_size-RIXFS_DIRENT_MIN_SIZE)return -5;if(e.inode&&e.name_length==wanted){char n[RIXFS_NAME_MAX+1];if(read_bytes(fs,dir_inode,off+RIXFS_DIRENT_MIN_SIZE,n,wanted))return -6;size_t i=0;for(;i<wanted&&n[i]==name[i];i++);if(i==wanted){uint64_t ss=fs->device->sector_size,logical=off/ss,pos=0,phys=0;int found=0;for(unsigned k=0;k<RIXFS_DIRECT_EXTENTS;k++){uint64_t len=dir.extent_length[k];if(logical<len){phys=dir.extent_start[k]+logical;found=1;break;}logical-=len;}if(!found||off%ss!=0)return -7;uint64_t q=pmm_alloc_page();if(!q)return -8;uint8_t *b=(uint8_t*)(uintptr_t)q;int r=0;rix_bio_t bio={0};bio.op=RIX_BIO_READ;bio.sector=phys;bio.count=1;bio.buffer=b;bio.buffer_size=ss;r=block_submit(fs->device,&bio);if(!r){for(unsigned j=0;j<8;j++)b[j]=0;bio.op=RIX_BIO_WRITE;r=block_submit(fs->device,&bio);}pmm_free_page(q);return r;}}off+=e.record_size;}return -9;}
+static int name_valid(const char *name, size_t *len_out) {
+    if (!name || !len_out || !name[0] || name[0] == '/') return -1;
+    size_t n = 0;
+    while (name[n]) {
+        if (name[n] == '/' || ++n > RIXFS_NAME_MAX) return -1;
+    }
+    *len_out = n;
+    return 0;
+}
+
+static int read_bytes(rixfs_t *fs, uint64_t ino, uint64_t off, void *buf, size_t size) {
+    return rixfs_read(fs, ino, off, buf, size);
+}
+
+static uint64_t rd64(const uint8_t *p) {
+    uint64_t v = 0;
+    for (unsigned i = 0; i < 8; ++i) v |= (uint64_t)p[i] << (8u * i);
+    return v;
+}
+
+static uint16_t rd16(const uint8_t *p) {
+    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+}
+
+static uint32_t rd32(const uint8_t *p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static int read_ent(rixfs_t *fs, uint64_t ino, uint64_t off, rixfs_dirent_disk_t *e) {
+    uint8_t h[RIXFS_DIRENT_MIN_SIZE];
+    if (read_bytes(fs, ino, off, h, sizeof(h))) return -1;
+    e->inode = rd64(h);
+    e->record_size = rd16(h + 8);
+    e->type = h[10];
+    e->name_length = h[11];
+    e->flags = rd32(h + 12);
+    return 0;
+}
+
+int rixfs_lookup_name(rixfs_t *fs, uint64_t dir_inode, const char *name,
+                      uint64_t *out_inode, uint8_t *out_type) {
+    if (!fs || !fs->mounted || !out_inode || !out_type) return -1;
+    size_t wanted;
+    if (name_valid(name, &wanted)) return -2;
+    rixfs_inode_disk_t dir;
+    if (rixfs_read_inode(fs, dir_inode, &dir) || dir.inode != dir_inode ||
+        (dir.mode & RIXFS_IFMT) != RIXFS_IFDIR) return -3;
+
+    uint64_t off = 0;
+    while (off < dir.size) {
+        if (dir.size - off < RIXFS_DIRENT_MIN_SIZE) return -4;
+        rixfs_dirent_disk_t e;
+        if (read_ent(fs, dir_inode, off, &e)) return -5;
+        if (e.record_size < RIXFS_DIRENT_MIN_SIZE || e.record_size > dir.size - off ||
+            e.name_length > e.record_size - RIXFS_DIRENT_MIN_SIZE) return -6;
+        if (e.inode && e.name_length == wanted) {
+            char candidate[RIXFS_NAME_MAX + 1];
+            if (read_bytes(fs, dir_inode, off + RIXFS_DIRENT_MIN_SIZE,
+                           candidate, wanted)) return -7;
+            size_t i = 0;
+            for (; i < wanted && candidate[i] == name[i]; ++i) {}
+            if (i == wanted) {
+                *out_inode = e.inode;
+                *out_type = e.type;
+                return 0;
+            }
+        }
+        off += e.record_size;
+    }
+    return -8;
+}
+
+int rixfs_readdir(rixfs_t *fs, uint64_t dir_inode, uint64_t *offset,
+                  rixfs_dirent_disk_t *out, char *name, size_t cap) {
+    if (!fs || !fs->mounted || !offset || !out || !name || cap < 2) return -1;
+    rixfs_inode_disk_t dir;
+    if (rixfs_read_inode(fs, dir_inode, &dir) || dir.inode != dir_inode ||
+        (dir.mode & RIXFS_IFMT) != RIXFS_IFDIR) return -2;
+
+    uint64_t off = *offset;
+    while (off < dir.size) {
+        rixfs_dirent_disk_t e;
+        if (dir.size - off < RIXFS_DIRENT_MIN_SIZE ||
+            read_ent(fs, dir_inode, off, &e)) return -3;
+        if (e.record_size < RIXFS_DIRENT_MIN_SIZE || e.record_size > dir.size - off ||
+            e.name_length > e.record_size - RIXFS_DIRENT_MIN_SIZE) return -4;
+        *offset = off + e.record_size;
+        if (!e.inode) {
+            off = *offset;
+            continue;
+        }
+        if ((size_t)e.name_length + 1 > cap) return -5;
+        if (read_bytes(fs, dir_inode, off + RIXFS_DIRENT_MIN_SIZE,
+                       name, e.name_length)) return -6;
+        name[e.name_length] = 0;
+        *out = e;
+        return 0;
+    }
+    return 1;
+}
+
+int rixfs_remove_name(rixfs_t *fs, uint64_t dir_inode, const char *name) {
+    if (!fs || !fs->mounted) return -1;
+    size_t wanted;
+    if (name_valid(name, &wanted)) return -2;
+    rixfs_inode_disk_t dir;
+    if (rixfs_read_inode(fs, dir_inode, &dir) || dir.inode != dir_inode ||
+        (dir.mode & RIXFS_IFMT) != RIXFS_IFDIR) return -3;
+
+    uint64_t off = 0;
+    while (off < dir.size) {
+        rixfs_dirent_disk_t e;
+        if (read_ent(fs, dir_inode, off, &e)) return -4;
+        if (e.record_size < RIXFS_DIRENT_MIN_SIZE || e.record_size > dir.size - off ||
+            e.name_length > e.record_size - RIXFS_DIRENT_MIN_SIZE) return -5;
+        if (e.inode && e.name_length == wanted) {
+            char candidate[RIXFS_NAME_MAX + 1];
+            if (read_bytes(fs, dir_inode, off + RIXFS_DIRENT_MIN_SIZE,
+                           candidate, wanted)) return -6;
+            size_t i = 0;
+            for (; i < wanted && candidate[i] == name[i]; ++i) {}
+            if (i == wanted) {
+                uint64_t sector_size = fs->device->sector_size;
+                uint64_t logical = off / sector_size;
+                uint64_t physical = 0;
+                int found = 0;
+                for (unsigned k = 0; k < RIXFS_DIRECT_EXTENTS; ++k) {
+                    uint64_t length = dir.extent_length[k];
+                    if (logical < length) {
+                        physical = dir.extent_start[k] + logical;
+                        found = 1;
+                        break;
+                    }
+                    logical -= length;
+                }
+                if (!found || off % sector_size != 0) return -7;
+                uint64_t page = pmm_alloc_page();
+                if (!page) return -8;
+                uint8_t *buffer = (uint8_t *)(uintptr_t)page;
+                rix_bio_t bio = {0};
+                bio.op = RIX_BIO_READ;
+                bio.sector = physical;
+                bio.count = 1;
+                bio.buffer = buffer;
+                bio.buffer_size = sector_size;
+                int rc = block_submit(fs->device, &bio);
+                if (!rc) {
+                    for (unsigned j = 0; j < 8; ++j) buffer[j] = 0;
+                    bio.op = RIX_BIO_WRITE;
+                    rc = block_submit(fs->device, &bio);
+                }
+                pmm_free_page(page);
+                return rc;
+            }
+        }
+        off += e.record_size;
+    }
+    return -9;
+}

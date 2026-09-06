@@ -2,7 +2,7 @@ ENTRY(_start)
 
 SECTIONS
 {
-    . = 0x100000;
+    . = 0x4000000;
 
     .text : ALIGN(4096) {
         KEEP(*(.text.boot))

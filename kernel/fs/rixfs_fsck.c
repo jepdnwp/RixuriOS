@@ -28,7 +28,8 @@ static int check_inode(rixfs_t *fs,uint64_t ino,uint64_t *referenced){
         uint64_t start=in.extent_start[e], len=in.extent_length[e];
         if(!len)continue;
         if(start<fs->super.data_start_sector||start>=fs->super.total_sectors||len>fs->super.total_sectors-start)return -3;
-        if(UINT64_MAX-total<len)return -4; total+=len;
+        if(UINT64_MAX-total<len)return -4;
+        total+=len;
         for(uint64_t j=0;j<len;j++){
             int used=0; if(bitmap_test(fs,start+j,&used)||!used)return -5;
             if(referenced) (*referenced)++;
@@ -41,7 +42,8 @@ static int check_inode(rixfs_t *fs,uint64_t ino,uint64_t *referenced){
 }
 
 int rixfs_fsck(rix_block_device_t *device,uint64_t *checked_inodes,uint64_t *referenced_sectors){
-    if(checked_inodes)*checked_inodes=0; if(referenced_sectors)*referenced_sectors=0;
+    if(checked_inodes)*checked_inodes=0;
+    if(referenced_sectors)*referenced_sectors=0;
     if(!device)return -1;
     rixfs_t fs={0}; int r=rixfs_mount(device,&fs); if(r)return -2;
     if(fs.super.root_inode==0||fs.super.root_inode>fs.super.inode_count){rixfs_unmount(&fs);return -3;}
