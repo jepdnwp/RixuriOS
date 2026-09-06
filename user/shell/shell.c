@@ -17,6 +17,66 @@ static size_t text_length(const char *text) {
     return length;
 }
 
+static int variable_start(char ch) {
+    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_';
+}
+
+static int variable_char(char ch) {
+    return variable_start(ch) || (ch >= '0' && ch <= '9');
+}
+
+int rix_shell_expand_word(const char *input, char *output, size_t capacity,
+                          rix_shell_variable_lookup_t lookup, void *context) {
+    if (!input || !output || capacity == 0u) return -1;
+    size_t in = 0, out = 0;
+    char quote = 0;
+    while (input[in]) {
+        char ch = input[in++];
+        if (ch == '\'' && quote != '"') { quote = quote == '\'' ? 0 : '\''; continue; }
+        if (ch == '"' && quote != '\'') { quote = quote == '"' ? 0 : '"'; continue; }
+        if (ch == '\\' && quote != '\'') {
+            if (!input[in]) return -2;
+            ch = input[in++];
+            if (out + 1u >= capacity) return -3;
+            output[out++] = ch;
+            continue;
+        }
+        if (ch != '$' || quote == '\'') {
+            if (out + 1u >= capacity) return -3;
+            output[out++] = ch;
+            continue;
+        }
+        size_t start = in;
+        int braced = input[in] == '{';
+        if (braced) ++start, ++in;
+        if (!variable_start(input[start])) {
+            if (out + 1u >= capacity) return -3;
+            output[out++] = '$';
+            continue;
+        }
+        in = start + 1u;
+        while (variable_char(input[in])) ++in;
+        size_t length = in - start;
+        if (length >= RIX_SHELL_TOKEN_TEXT) return -4;
+        if (braced) {
+            if (input[in] != '}') return -5;
+            ++in;
+        }
+        char name[RIX_SHELL_TOKEN_TEXT];
+        for (size_t j = 0; j < length; ++j) name[j] = input[start + j];
+        name[length] = 0;
+        const char *value = lookup ? lookup(name, context) : NULL;
+        if (!value) value = "";
+        while (*value) {
+            if (out + 1u >= capacity) return -3;
+            output[out++] = *value++;
+        }
+    }
+    if (quote) return -6;
+    output[out] = 0;
+    return 0;
+}
+
 int rix_shell_lex(const char *input, rix_shell_tokens_t *out) {
     if (!input || !out) return -1;
     out->count = 0;

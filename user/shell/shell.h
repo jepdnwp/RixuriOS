@@ -48,3 +48,6 @@ typedef struct {
 
 int rix_shell_lex(const char *input, rix_shell_tokens_t *out);
 int rix_shell_parse_pipeline(rix_shell_tokens_t *tokens, rix_shell_pipeline_t *out);
+typedef const char *(*rix_shell_variable_lookup_t)(const char *name, void *context);
+int rix_shell_expand_word(const char *input, char *output, size_t capacity,
+                          rix_shell_variable_lookup_t lookup, void *context);

@@ -7,6 +7,13 @@ static int expect(int condition, const char *name) {
     return 0;
 }
 
+static const char *lookup(const char *name, void *context) {
+    (void)context;
+    if (strcmp(name, "USER") == 0) return "rix";
+    if (strcmp(name, "N") == 0) return "42";
+    return NULL;
+}
+
 int main(void) {
     rix_shell_tokens_t tokens;
     if (expect(rix_shell_lex("echo 'hello world' a\\ b # comment", &tokens) == 0 &&
@@ -25,6 +32,11 @@ int main(void) {
                 "pipeline AST")) return 1;
     if (expect(rix_shell_lex("echo \"unterminated", &tokens) != 0,
                 "unterminated quote rejected")) return 1;
+    char expanded[64];
+    if (expect(rix_shell_expand_word("hi-$USER-${N}-'$USER'-\\$N", expanded,
+                                     sizeof(expanded), lookup, NULL) == 0 &&
+                strcmp(expanded, "hi-rix-42-$USER-$N") == 0,
+                "variable expansion and quoting")) return 1;
     puts("shell parser tests: PASS");
     return 0;
 }
