@@ -77,6 +77,10 @@ typedef int (*rix_shell_command_runner_t)(const char *command, char *output,
                                           size_t capacity, void *context);
 typedef int (*rix_shell_pipeline_runner_t)(const rix_shell_command_t *command,
                                            int input_fd, int output_fd, void *context);
+typedef int (*rix_shell_output_writer_t)(const void *data, size_t length, void *context);
+int rix_shell_run_builtin(const rix_shell_command_t *command,
+                          rix_shell_output_writer_t writer, void *context,
+                          int *handled, int *status);
 int rix_shell_execute_pipeline(const rix_shell_pipeline_t *pipeline,
                                rix_shell_pipeline_runner_t runner, void *context,
                                int *status);

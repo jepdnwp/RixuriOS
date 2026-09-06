@@ -155,3 +155,12 @@ Phase 15 continuation: add device-manager policy around port-event attach/detach
 - Extended `tests/tty_test.c` with termios, UTF-8 cell-width, PTY raw-mode and echo-suppression regression cases.
 - `make all CROSS=`, `make check CROSS=`, `make usb-test hid-test tty-test shell-test CROSS=`, `make image CROSS=` and the QEMU boot path completed successfully in the validation environment. QEMU reached `RIXURI:KERNEL_READY` and `USER: init returned to kernel`.
 - Phase 17 remains `IMPLEMENTED / NOT YET VALIDATED` for physical interactive keyboard-to-TTY evidence and real shell process/pipeline/redirection execution. No hardware or synthetic output was counted as a substitute for those gates.
+
+## Latest continuation — Phase 18 shell execution foundation
+
+- Extended the bounded shell pipeline executor with real `|`, `&&`, `||` and `;` control-flow semantics. Pipe stages receive bounded synthetic channel identifiers; conditional stages are skipped or executed according to the previous status.
+- Added callback-driven builtin dispatch for `:`, `true`, `false` and `echo`, including bounded output writing and explicit unknown-command handoff to an external runner.
+- Added userspace `openat`, `close` and `wait` wrappers over the existing syscall ABI. The four-argument `openat` wrapper now places the mode argument in `r10` as required by the kernel frame ABI.
+- Extended shell host regressions for conditional execution, builtin output, unknown-command handoff and the existing pipeline wiring.
+- `make test CROSS=`, userspace libc compilation, `make image CROSS=` and QEMU boot completed successfully. QEMU reached `RIXURI:KERNEL_READY` and `USER: init returned to kernel`.
+- Phase 18 remains `IMPLEMENTED / NOT YET VALIDATED`: PATH search, argv/envp stack construction in `execve`, FD-targeted redirection (`dup2`-style semantics), real external command execution and job control still require the next integration layer.

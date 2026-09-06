@@ -33,6 +33,23 @@ static int run_pipeline(const rix_shell_command_t *command, int input_fd, int ou
     return 0;
 }
 
+static int run_status_pipeline(const rix_shell_command_t *command, int input_fd, int output_fd, void *context) {
+    (void)input_fd;
+    (void)output_fd;
+    (void)context;
+    if (!command || command->argc != 1) return -1;
+    return strcmp(command->argv[0], "false") == 0 ? 1 : 0;
+}
+
+static int write_buffer(const void *data, size_t length, void *context) {
+    char *buffer = context;
+    size_t used = strlen(buffer);
+    if (used + length >= 64u) return -1;
+    memcpy(buffer + used, data, length);
+    buffer[used + length] = 0;
+    return 0;
+}
+
 int main(void) {
     rix_shell_tokens_t tokens;
     if (expect(rix_shell_lex("echo 'hello world' a\\ b # comment", &tokens) == 0 &&
@@ -56,6 +73,30 @@ int main(void) {
                 pipeline_calls == 2 && pipeline_inputs[0] == 0 && pipeline_outputs[0] == 1 &&
                 pipeline_inputs[1] == 1 && pipeline_outputs[1] == 1 && exec_status == 0,
                 "pipeline executor wiring")) return 1;
+    char builtin_output[64] = {0};
+    int handled = 0;
+    if (expect(rix_shell_lex("echo hello world", &tokens) == 0 &&
+                rix_shell_parse_pipeline(&tokens, &pipeline) == 0 &&
+                rix_shell_run_builtin(&pipeline.command[0], write_buffer, builtin_output,
+                                      &handled, &exec_status) == 0 && handled && exec_status == 0 &&
+                strcmp(builtin_output, "hello world\n") == 0,
+                "echo builtin output")) return 1;
+    if (expect(rix_shell_lex("unknown", &tokens) == 0 &&
+                rix_shell_parse_pipeline(&tokens, &pipeline) == 0 &&
+                rix_shell_run_builtin(&pipeline.command[0], NULL, NULL, &handled, &exec_status) == 0 &&
+                !handled, "unknown command left for external runner")) return 1;
+    if (expect(rix_shell_lex("false && skipped", &tokens) == 0 &&
+                rix_shell_parse_pipeline(&tokens, &pipeline) == 0 &&
+                rix_shell_execute_pipeline(&pipeline, run_status_pipeline, NULL, &exec_status) == 0 &&
+                exec_status == 1, "AND preserves failing status and skips rhs")) return 1;
+    if (expect(rix_shell_lex("false || recovered", &tokens) == 0 &&
+                rix_shell_parse_pipeline(&tokens, &pipeline) == 0 &&
+                rix_shell_execute_pipeline(&pipeline, run_status_pipeline, NULL, &exec_status) == 0 &&
+                exec_status == 0, "OR executes rhs after failure")) return 1;
+    if (expect(rix_shell_lex("false ; recovered", &tokens) == 0 &&
+                rix_shell_parse_pipeline(&tokens, &pipeline) == 0 &&
+                rix_shell_execute_pipeline(&pipeline, run_status_pipeline, NULL, &exec_status) == 0 &&
+                exec_status == 0, "SEMI executes rhs unconditionally")) return 1;
     if (expect(rix_shell_lex("echo \"unterminated", &tokens) != 0,
                 "unterminated quote rejected")) return 1;
     char expanded[64];
