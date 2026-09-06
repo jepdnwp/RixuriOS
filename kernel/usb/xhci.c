@@ -8,6 +8,10 @@
 #define PCI_CLASS_SERIAL 0x0C
 #define PCI_SUBCLASS_USB 0x03
 #define PCI_PROGIF_XHCI 0x30
+#define PCI_COMMAND 0x04
+#define PCI_COMMAND_IO (1u << 0)
+#define PCI_COMMAND_MEMORY (1u << 1)
+#define PCI_COMMAND_BUS_MASTER (1u << 2)
 #define XHCI_CAPLENGTH 0x00
 #define XHCI_HCIVERSION 0x02
 #define XHCI_HCSPARAMS1 0x04
@@ -25,9 +29,8 @@
 #define XHCI_STS_HSE (1u << 2)
 #define XHCI_TRB_LINK 6u
 #define XHCI_TRB_TC (1u << 1)
-#define XHCI_TRB_C (1u << 0)
-#define XHCI_TRB_IOC (1u << 5)
 #define XHCI_POLL_LIMIT 1000000u
+#define XHCI_EVENT_RING_TRBS 64u
 
 typedef struct {
     uint32_t parameter_lo;
@@ -45,10 +48,15 @@ typedef struct {
 static rix_xhci_controller_t controllers[XHCI_MAX];
 static size_t count;
 
-static volatile uint8_t *map_regs(uint64_t bar) {
-    uint64_t page = bar & ~0xFFFULL;
-    if (vmm_map_page(page, page, RIXURI_PTE_PRESENT | RIXURI_PTE_WRITE | RIXURI_PTE_NX) != 0) return NULL;
-    return (volatile uint8_t *)(uintptr_t)page;
+static int map_range(uint64_t base, uint64_t length) {
+    uint64_t first = base & ~0xFFFULL;
+    uint64_t last = (base + length - 1u) & ~0xFFFULL;
+    for (uint64_t page = first;; page += 0x1000ULL) {
+        if (vmm_map_page(page, page, RIXURI_PTE_PRESENT | RIXURI_PTE_WRITE | RIXURI_PTE_NX) != 0) return -1;
+        if (page == last) break;
+        if (page > UINT64_MAX - 0x1000ULL) return -1;
+    }
+    return 0;
 }
 
 static void zero_page(uint64_t phys) {
@@ -59,8 +67,9 @@ static void zero_page(uint64_t phys) {
 static int wait_halted(volatile uint8_t *op, int halted) {
     volatile uint32_t *sts = (volatile uint32_t *)(op + XHCI_USBSTS);
     for (uint32_t i = 0; i < XHCI_POLL_LIMIT; ++i) {
-        int is_halted = ((*sts & XHCI_STS_HCH) != 0u);
-        if (is_halted == halted) return (*sts & XHCI_STS_HSE) ? -2 : 0;
+        uint32_t s = *sts;
+        int is_halted = (s & XHCI_STS_HCH) != 0u;
+        if (is_halted == halted) return (s & XHCI_STS_HSE) ? -2 : 0;
     }
     return -1;
 }
@@ -92,9 +101,11 @@ static int setup_runtime(rix_xhci_controller_t *c, volatile uint8_t *base) {
         if (erst) pmm_free_page(erst);
         return -1;
     }
-    zero_page(dcbaa); zero_page(cmd_ring); zero_page(event_ring); zero_page(erst);
+    zero_page(dcbaa);
+    zero_page(cmd_ring);
+    zero_page(event_ring);
+    zero_page(erst);
 
-    /* One 4-KiB segment gives 64 TRBs. The final command TRB links back to 0. */
     volatile xhci_trb_t *ring = (volatile xhci_trb_t *)(uintptr_t)cmd_ring;
     ring[63].parameter_lo = (uint32_t)cmd_ring;
     ring[63].parameter_hi = (uint32_t)(cmd_ring >> 32);
@@ -102,7 +113,7 @@ static int setup_runtime(rix_xhci_controller_t *c, volatile uint8_t *base) {
 
     volatile xhci_erst_entry_t *entry = (volatile xhci_erst_entry_t *)(uintptr_t)erst;
     entry[0].ring_segment_base = event_ring;
-    entry[0].ring_segment_size = 256;
+    entry[0].ring_segment_size = XHCI_EVENT_RING_TRBS;
 
     volatile uint64_t *dcbaa_ptr = (volatile uint64_t *)(uintptr_t)dcbaa;
     dcbaa_ptr[0] = 0;
@@ -110,24 +121,22 @@ static int setup_runtime(rix_xhci_controller_t *c, volatile uint8_t *base) {
     volatile uint64_t *dcbaap = (volatile uint64_t *)(base + XHCI_DCBAAP);
     volatile uint64_t *crcr = (volatile uint64_t *)(base + XHCI_CRCR);
     *dcbaap = dcbaa;
-    *crcr = cmd_ring | 1u; /* command ring cycle state = 1 */
+    *crcr = cmd_ring | 1u;
 
     uint32_t db_off = *(volatile uint32_t *)(base + XHCI_DBOFF) & ~0x3u;
     uint32_t rt_off = *(volatile uint32_t *)(base + XHCI_RTSOFF) & ~0x1Fu;
+    if (rt_off < c->cap_length) return -2;
     volatile uint8_t *runtime = base + rt_off;
-    volatile uint32_t *ir0 = (volatile uint32_t *)runtime;
-    (void)ir0;
     volatile uint32_t *iman = (volatile uint32_t *)(runtime + 0x20);
     volatile uint32_t *erstsz = (volatile uint32_t *)(runtime + 0x28);
     volatile uint64_t *erstba = (volatile uint64_t *)(runtime + 0x30);
     volatile uint64_t *erdp = (volatile uint64_t *)(runtime + 0x38);
     *iman &= ~1u;
-    *erstsz = 1;
+    *erstsz = 1u;
     *erstba = erst;
     *erdp = event_ring;
-
-    /* Interrupts are enabled only after a valid event ring exists. */
     *iman |= 1u;
+
     volatile uint32_t *config = (volatile uint32_t *)(base + XHCI_CONFIG);
     *config = c->max_slots;
     volatile uint32_t *db0 = (volatile uint32_t *)(base + db_off);
@@ -150,11 +159,21 @@ int xhci_init(void) {
         if (lo & 1u) continue;
         uint64_t bar = (uint64_t)(lo & 0xfffffff0u);
         if (((lo >> 1) & 3u) == 2u) bar |= (uint64_t)d->bars[1] << 32;
-        volatile uint8_t *base = map_regs(bar);
-        if (!base) continue;
+        if (!bar || map_range(bar, 0x10000u) != 0) continue;
 
-        rix_xhci_controller_t *c = &controllers[count++];
-        c->bus = d->bus; c->device = d->device; c->function = d->function; c->bar0 = bar;
+        uint32_t command = pci_config_read32(d->bus, d->device, d->function, PCI_COMMAND);
+        command |= PCI_COMMAND_MEMORY | PCI_COMMAND_BUS_MASTER;
+        if (pci_config_write32(d->bus, d->device, d->function, PCI_COMMAND, command) != 0) continue;
+        command = pci_config_read32(d->bus, d->device, d->function, PCI_COMMAND);
+        if ((command & (PCI_COMMAND_MEMORY | PCI_COMMAND_BUS_MASTER)) !=
+            (PCI_COMMAND_MEMORY | PCI_COMMAND_BUS_MASTER)) continue;
+
+        volatile uint8_t *base = (volatile uint8_t *)(uintptr_t)bar;
+        rix_xhci_controller_t *c = &controllers[count];
+        c->bus = d->bus;
+        c->device = d->device;
+        c->function = d->function;
+        c->bar0 = bar;
         c->cap_length = base[XHCI_CAPLENGTH];
         c->hci_version = *(volatile uint16_t *)(base + XHCI_HCIVERSION);
         uint32_t hcs = *(volatile uint32_t *)(base + XHCI_HCSPARAMS1);
@@ -162,6 +181,7 @@ int xhci_init(void) {
         c->max_intrs = (uint8_t)((hcs >> 8) & 0x7ffu);
         c->max_ports = (uint8_t)((hcs >> 24) & 0xffu);
         c->hcc_params1 = *(volatile uint32_t *)(base + XHCI_HCCPARAMS1);
+        if (c->cap_length < 0x20u || c->max_slots == 0u || c->max_ports == 0u) continue;
 
         volatile uint8_t *op = base + c->cap_length;
         c->usbcmd = *(volatile uint32_t *)(op + XHCI_USBCMD);
@@ -174,6 +194,7 @@ int xhci_init(void) {
         c->usbcmd = *(volatile uint32_t *)(op + XHCI_USBCMD);
         c->usbsts = *(volatile uint32_t *)(op + XHCI_USBSTS);
         c->running = 1;
+        ++count;
     }
     return 0;
 }
