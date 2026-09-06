@@ -329,3 +329,6 @@ The tested external-command, argv/envp, redirection, pipeline, conditional, and 
 - Add a read-only kernel log ring with cursor, sequence, severity and loss indication; expose it through a privilege-checked `dmesg` syscall or device.
 - Add memory accounting snapshot fields for physical/free/reserved/cache pages and a versioned `sysinfo`-style syscall for `free`.
 - Add versioned mount/umount syscalls with source, target, filesystem type, flags, ownership, namespace and rollback semantics; unknown/corrupt media must fail without formatting.
+
+
+The detailed provisional ABI design for the deferred system utilities is recorded in [`docs/PHASE19_KERNEL_API.md`](PHASE19_KERNEL_API.md). It remains a design artifact only; no syscall is claimed until implementation and QEMU evidence exist.
