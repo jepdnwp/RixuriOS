@@ -10,7 +10,7 @@ typedef enum { RIX_PROC_UNUSED=0, RIX_PROC_RUNNING=1, RIX_PROC_SLEEPING=2, RIX_P
 #define RIX_PROCESS_FD_MAX 64
 #define RIX_SIGNAL_MAX 64
 
-typedef struct { pid_t pid; pid_t parent; rix_process_state_t state; uint32_t uid; uint32_t gid; rix_address_space_t address_space; uint64_t kernel_stack; uint64_t kernel_stack_size; uint64_t exit_status; uint64_t fd_bitmap; uint64_t signal_pending; uint64_t signal_mask; char name[RIX_PROCESS_NAME_MAX]; } rix_process_t;
+typedef struct { pid_t pid; pid_t parent; pid_t process_group; pid_t session; rix_process_state_t state; uint32_t uid; uint32_t gid; rix_address_space_t address_space; uint64_t kernel_stack; uint64_t kernel_stack_size; uint64_t exit_status; uint64_t fd_bitmap; uint64_t signal_pending; uint64_t signal_mask; char name[RIX_PROCESS_NAME_MAX]; } rix_process_t;
 int process_init(void);
 pid_t process_current(void);
 rix_process_t *process_lookup(pid_t pid);
@@ -20,4 +20,7 @@ int process_activate(pid_t pid);
 int process_set_state(pid_t pid,rix_process_state_t state);
 int process_exit(pid_t pid,uint64_t status);
 int process_wait(pid_t parent,pid_t wanted,uint64_t *status,pid_t *child_pid);
+int process_set_group(pid_t pid, pid_t process_group);
+int process_set_session(pid_t pid, pid_t session);
+int process_signal_group(pid_t process_group, unsigned signal);
 size_t process_count(void);

@@ -16,6 +16,13 @@ typedef struct {
 } rix_pty_t;
 
 static rix_pty_t ptys[RIX_PTY_COUNT];
+static tty_signal_hook_t signal_hook;
+
+static int tty_control_signal(rix_tty_t *t, uint8_t ch) {
+    unsigned signal = ch == 0x03u ? 2u : (ch == 0x1au ? 20u : 3u);
+    if (!signal_hook || !t->foreground_pgrp) return 0;
+    return signal_hook(t->foreground_pgrp, signal);
+}
 
 static uint16_t vt_clamp(uint16_t value, uint16_t limit) {
     return value >= limit ? (uint16_t)(limit - 1u) : value;
@@ -164,6 +171,10 @@ rix_tty_t *tty_get(unsigned id) {
     return tty_valid(id);
 }
 
+void tty_set_signal_hook(tty_signal_hook_t hook) {
+    signal_hook = hook;
+}
+
 int tty_output(unsigned id, const void *buf, size_t n, size_t *written) {
     if (written) *written = 0;
     rix_tty_t *t = tty_valid(id);
@@ -204,6 +215,9 @@ static int echo_bytes(rix_tty_t *t, const uint8_t *data, size_t n) {
 int tty_input(unsigned id, uint8_t ch) {
     rix_tty_t *t = tty_valid(id);
     if (!t) return -1;
+    if (t->canonical && (ch == 0x03u || ch == 0x1au || ch == 0x1cu)) {
+        return tty_control_signal(t, ch);
+    }
     if (t->canonical && (ch == 8u || ch == 127u)) {
         if (t->line_chars != 0u && t->count != 0u) {
             t->tail = (t->tail + RIX_TTY_INPUT - 1u) % RIX_TTY_INPUT;
@@ -389,6 +403,12 @@ int tty_pty_master_write(unsigned pty_id, const void *buf, size_t n, size_t *wri
     size_t done = 0;
     while (done < n) {
         uint8_t ch = src[done];
+        if (pty->slave.canonical && (ch == 0x03u || ch == 0x1au || ch == 0x1cu)) {
+            int signal_rc = tty_control_signal(&pty->slave, ch);
+            if (signal_rc != 0) return signal_rc;
+            done++;
+            continue;
+        }
         if (pty->slave.canonical && (ch == 8u || ch == 127u)) {
             if (pty->slave.line_chars) {
                 pty->slave.tail = (pty->slave.tail + RIX_TTY_INPUT - 1u) % RIX_TTY_INPUT;

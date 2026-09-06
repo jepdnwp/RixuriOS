@@ -43,6 +43,8 @@ int tty_set_canonical(unsigned id, int enabled);
 int tty_set_echo(unsigned id, int enabled);
 int tty_set_foreground_pgrp(unsigned id, uint32_t pgrp);
 int tty_get_foreground_pgrp(unsigned id, uint32_t *pgrp);
+typedef int (*tty_signal_hook_t)(uint32_t process_group, unsigned signal);
+void tty_set_signal_hook(tty_signal_hook_t hook);
 int tty_set_dimensions(unsigned id, uint16_t rows, uint16_t columns);
 int tty_get_dimensions(unsigned id, uint16_t *rows, uint16_t *columns);
 int tty_get_cursor(unsigned id, uint16_t *row, uint16_t *column);

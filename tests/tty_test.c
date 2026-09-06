@@ -2,6 +2,15 @@
 #include <stdio.h>
 #include <string.h>
 
+static uint32_t seen_group;
+static unsigned seen_signal;
+
+static int signal_hook(uint32_t group, unsigned signal) {
+    seen_group = group;
+    seen_signal = signal;
+    return 0;
+}
+
 static int expect(int condition, const char *name) {
     if (!condition) {
         fprintf(stderr, "FAIL: %s\n", name);
@@ -32,6 +41,10 @@ int main(void) {
     uint32_t pgrp = 0;
     if (expect(tty_get_foreground_pgrp(0, &pgrp) == 0 && pgrp == 42,
                 "get foreground pgrp")) return 1;
+    tty_set_signal_hook(signal_hook);
+    if (expect(tty_set_canonical(0, 1) == 0 && tty_input(0, 3) == 0 &&
+                seen_group == 42 && seen_signal == 2,
+                "CTRL-C sends SIGINT to foreground group")) return 1;
     if (expect(tty_set_dimensions(0, 24, 80) == 0 &&
                 tty_output(0, "\x1b[5;10H", 7, &written) == 0 && written == 7,
                 "ANSI cursor sequence")) return 1;

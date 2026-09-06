@@ -25,6 +25,7 @@
 #include "time/rtc.h"
 #include "time/time.h"
 static void halt_forever(void){for(;;)__asm__ volatile("hlt");}
+static int terminal_signal_group(uint32_t process_group,unsigned signal){return process_signal_group((pid_t)process_group,signal);}
 static void try_mount_root(void){const char *names[]={"nvme0n1","nvme0n1p1","nvme1n1","nvme1n1p1"};for(size_t i=0;i<sizeof(names)/sizeof(names[0]);i++){rix_block_device_t*d=block_find(names[i]);if(!d)continue;int rc=vfs_mount_root(d);serial_write("VFS: mount ");serial_write(names[i]);serial_write(" rc=");serial_write_dec((uint64_t)(rc<0?-rc:rc));serial_write("\r\n");if(rc==0)return;}}
 void kernel_main(const rixuri_boot_info_t *boot){
  serial_init();serial_write("RixuriOS kernel: x86_64 / AMD64 64-bit\r\n");
@@ -56,6 +57,7 @@ void kernel_main(const rixuri_boot_info_t *boot){
  else {rix_timespec_t now;if(time_realtime(&now)==0){serial_write("TIME: realtime=");serial_write_dec(now.sec);serial_write("\r\n");}}
  if(scheduler_init()!=0)panic("scheduler initialization failed");
  if(process_init()!=0)panic("process initialization failed");
+ tty_set_signal_hook(terminal_signal_group);
  syscall_init();
  uint64_t user_entry=0,user_stack=0;pid_t user_pid=0;rix_task_id_t user_task=0;
  if(process_create_user("init",0,rixuri_user_init_image(),rixuri_user_init_image_size(),&user_pid,&user_entry,&user_stack)!=0)panic("failed to create embedded user init");
