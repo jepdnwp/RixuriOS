@@ -16,7 +16,9 @@
 #define RIX_ESRCH 3
 #define RIX_MAX_IO 4096
 #define RIX_IO_CHUNK 256
-#define RIX_MAX_EXEC_IMAGE 4096u
+#define RIX_MAX_EXEC_IMAGE 131072u
+#define RIX_SYS_WAITPID 247
+#define RIX_WAITPID_NOHANG 1u
 static int user_string(uint64_t src,char *dst,size_t cap){if(!dst||cap<2)return -1;for(size_t i=0;i+1<cap;i++){uint8_t c;if(copy_from_user(&c,src+i,1)!=0)return -1;dst[i]=(char)c;if(!c)return 0;}dst[cap-1]=0;return -1;}
 static int copy_string_vector(uint64_t vector,char storage[][RIX_PROCESS_ARG_TEXT_MAX],const char *pointers[],size_t *count){if(!count)return -1;*count=0;if(!vector)return 0;for(size_t i=0;i<RIX_PROCESS_ARG_MAX;i++){uint64_t user_ptr=0;if(copy_from_user(&user_ptr,vector+i*sizeof(user_ptr),sizeof(user_ptr))!=0)return -1;if(!user_ptr){*count=i;return 0;}if(user_string(user_ptr,storage[i],RIX_PROCESS_ARG_TEXT_MAX)!=0)return -1;pointers[i]=storage[i];}return -1;}
 void syscall_dispatch(rix_syscall_frame_t*frame){
@@ -53,7 +55,7 @@ void syscall_dispatch(rix_syscall_frame_t*frame){
  case RIX_SYS_DUP2:if(vfs_dup_to(self,(int)frame->rdi,(int)frame->rsi)!=0)result=-RIX_EINVAL;else result=frame->rsi;break;
  case RIX_SYS_FORK:{pid_t child;if(process_fork(self,frame->rip,frame->rsp,&child)!=0){result=-RIX_EINVAL;break;}rix_process_t *cp=process_lookup(child);rix_task_id_t task;if(!cp||scheduler_create_fork_child(child,frame->rip,frame->rsp,0,&task)!=0){(void)process_exit(child,127);result=-RIX_EINVAL;break;}result=(int64_t)child;break;}
  case RIX_SYS_EXECVE:{char path[RIX_VFS_PATH_MAX];char argv_storage[RIX_PROCESS_ARG_MAX][RIX_PROCESS_ARG_TEXT_MAX];char env_storage[RIX_PROCESS_ARG_MAX][RIX_PROCESS_ARG_TEXT_MAX];const char *argv[RIX_PROCESS_ARG_MAX];const char *envp[RIX_PROCESS_ARG_MAX];size_t argc=0,envc=0;if(user_string(frame->rdi,path,sizeof(path))!=0||copy_string_vector(frame->rsi,argv_storage,argv,&argc)!=0||copy_string_vector(frame->rdx,env_storage,envp,&envc)!=0){result=-RIX_EFAULT;break;}int fd;if(vfs_open(self,path,0,0,&fd)!=0){result=-RIX_EINVAL;break;}void *image=kmalloc(RIX_MAX_EXEC_IMAGE,16u);size_t image_size=0;if(!image||vfs_read(self,fd,image,RIX_MAX_EXEC_IMAGE,&image_size)!=0){if(image)kfree(image);(void)vfs_close(self,fd);result=-RIX_EFAULT;break;}(void)vfs_close(self,fd);uint64_t entry,stack;if(process_exec_user_with_args(self,image,image_size,argv,argc,envp,envc,&entry,&stack)!=0){kfree(image);result=-RIX_EINVAL;break;}kfree(image);if(process_activate(self)!=0){result=-RIX_EINVAL;break;}frame->rip=entry;frame->rsp=stack;result=0;break;}
- case RIX_SYS_SPAWN:{char name[RIX_PROCESS_NAME_MAX];uint64_t image_ptr=frame->rsi,image_size=frame->rdx;if(user_string(frame->rdi,name,sizeof(name))!=0||image_size==0||image_size>RIX_MAX_EXEC_IMAGE){result=-RIX_EINVAL;break;}void *image=kmalloc((size_t)image_size,16u);if(!image||copy_from_user(image,image_ptr,(size_t)image_size)!=0){result=-RIX_EFAULT;break;}pid_t child;uint64_t entry,stack;if(process_create_user(name,self,image,image_size,&child,&entry,&stack)!=0){result=-RIX_EINVAL;break;}rix_task_id_t task;if(scheduler_create_user_process(child,entry,stack,&task)!=0){(void)process_exit(child,127);result=-RIX_EINVAL;break;}result=(int64_t)child;break;}
+ case RIX_SYS_SPAWN:{char name[RIX_PROCESS_NAME_MAX];uint64_t image_ptr=frame->rsi,image_size=frame->rdx;if(user_string(frame->rdi,name,sizeof(name))!=0||image_size==0||image_size>RIX_MAX_EXEC_IMAGE){result=-RIX_EINVAL;break;}void *image=kmalloc((size_t)image_size,16u);if(!image||copy_from_user(image,image_ptr,(size_t)image_size)!=0){if(image)kfree(image);result=-RIX_EFAULT;break;}pid_t child;uint64_t entry,stack;if(process_create_user(name,self,image,image_size,&child,&entry,&stack)!=0){kfree(image);result=-RIX_EINVAL;break;}kfree(image);rix_task_id_t task;if(scheduler_create_user_process(child,entry,stack,&task)!=0){(void)process_exit(child,127);result=-RIX_EINVAL;break;}result=(int64_t)child;break;}
  case RIX_SYS_PIPE:{int fds[2];if(vfs_pipe(self,&fds[0],&fds[1])!=0){result=-RIX_EINVAL;break;}if(copy_to_user(frame->rdi,fds,sizeof(fds))!=0){(void)vfs_close(self,fds[0]);(void)vfs_close(self,fds[1]);result=-RIX_EFAULT;break;}result=0;break;}
  case RIX_SYS_OPENAT:{char path[RIX_VFS_PATH_MAX];if(user_string(frame->rsi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}int fd;if(vfs_open(self,path,(uint32_t)frame->rdx,(uint32_t)frame->r10,&fd)!=0)result=-RIX_EINVAL;else result=fd;break;}
  case RIX_SYS_CLOSE:if(vfs_close(self,(int)frame->rdi)!=0)result=-RIX_EINVAL;else result=0;break;
@@ -62,6 +64,13 @@ void syscall_dispatch(rix_syscall_frame_t*frame){
  case RIX_SYS_WAIT:{
   pid_t wanted=(pid_t)frame->rdi;uint64_t status=0;pid_t child=0;int rc;
   for(;;){rc=process_wait(self,wanted,&status,&child);if(rc==1){scheduler_yield();continue;}break;}
+  if(rc==2||rc<0){result=-RIX_EINVAL;break;}
+  if(copy_to_user(frame->rsi,&status,sizeof(status))!=0){result=-RIX_EFAULT;break;}
+  result=(int64_t)child;break;
+ }
+ case RIX_SYS_WAITPID:{
+  pid_t wanted=(pid_t)frame->rdi;uint64_t status=0;pid_t child=0;int rc=process_wait(self,wanted,&status,&child);
+  if(rc==1){if((uint32_t)frame->rdx&RIX_WAITPID_NOHANG){result=0;break;}for(;;){scheduler_yield();rc=process_wait(self,wanted,&status,&child);if(rc!=1)break;}}
   if(rc==2||rc<0){result=-RIX_EINVAL;break;}
   if(copy_to_user(frame->rsi,&status,sizeof(status))!=0){result=-RIX_EFAULT;break;}
   result=(int64_t)child;break;

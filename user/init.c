@@ -12,6 +12,8 @@
 #define RIX_INIT_LINE_CAP 256u
 #define RIX_INIT_PATH_CAP 128u
 #define RIX_INIT_PIDS_CAP RIX_SHELL_MAX_COMMANDS
+#define RIX_INIT_JOBS_CAP 8u
+#define RIX_WAITPID_NOHANG 1u
 
 static size_t text_length(const char *text) {
     size_t length = 0;
@@ -78,11 +80,55 @@ typedef struct {
     int input_fd;
     rix_pid_t pid[RIX_INIT_PIDS_CAP];
     size_t pid_count;
+    int background;
 } rix_shell_execution_t;
+
+typedef struct {
+    rix_pid_t pid[RIX_INIT_PIDS_CAP];
+    size_t pid_count;
+    size_t complete;
+    int active;
+} rix_shell_job_t;
+
+static rix_shell_job_t jobs[RIX_INIT_JOBS_CAP];
 
 static void reset_execution(rix_shell_execution_t *execution) {
     execution->input_fd = -1;
     execution->pid_count = 0;
+    execution->background = 0;
+}
+
+static void reap_background_jobs(void) {
+    for (size_t j = 0; j < RIX_INIT_JOBS_CAP; ++j) {
+        rix_shell_job_t *job = &jobs[j];
+        if (!job->active) continue;
+        for (size_t i = 0; i < job->pid_count; ++i) {
+            if (!job->pid[i]) continue;
+            uint64_t child_status = 0;
+            rix_pid_t result = waitpid(job->pid[i], &child_status, RIX_WAITPID_NOHANG);
+            if (result == job->pid[i]) {
+                job->pid[i] = 0;
+                ++job->complete;
+            }
+        }
+        if (job->complete == job->pid_count) {
+            (void)write_text(1, "[job] done\n");
+            job->active = 0;
+        }
+    }
+}
+
+static int save_background_job(const rix_shell_execution_t *execution) {
+    if (!execution || !execution->pid_count) return -1;
+    for (size_t j = 0; j < RIX_INIT_JOBS_CAP; ++j) {
+        if (jobs[j].active) continue;
+        jobs[j].pid_count = execution->pid_count;
+        jobs[j].complete = 0;
+        jobs[j].active = 1;
+        for (size_t i = 0; i < execution->pid_count; ++i) jobs[j].pid[i] = execution->pid[i];
+        return 0;
+    }
+    return -1;
 }
 
 static int wait_for_execution(rix_shell_execution_t *execution, int *status) {
@@ -105,7 +151,11 @@ static void child_error(const char *message, int status) {
 }
 
 static int run_external_child(const rix_shell_command_t *command) {
-    static char *const empty_environment[] = { (char *)0 };
+    static char *const shell_environment[] = {
+        (char *)"PATH=/bin:/usr/bin:/sbin:/usr/sbin",
+        (char *)"PWD=/",
+        (char *)0
+    };
     char path[RIX_INIT_PATH_CAP];
     int handled = 0;
     int status = 2;
@@ -120,7 +170,7 @@ static int run_external_child(const rix_shell_command_t *command) {
         (void)write_text(2, "\n");
         _exit(127);
     }
-    (void)execve(path, command->argv, empty_environment);
+    (void)execve(path, command->argv, shell_environment);
     (void)write_text(2, "rixuri: exec failed: ");
     (void)write_text(2, path);
     (void)write_text(2, "\n");
@@ -168,6 +218,11 @@ static int run_pipeline_command(const rix_shell_command_t *command, size_t comma
     }
     execution->pid[execution->pid_count++] = child;
     if (output_fd == 1) {
+        if (execution->background) {
+            if (save_background_job(execution) != 0) return -1;
+            reset_execution(execution);
+            return 0;
+        }
         int status = 1;
         if (wait_for_execution(execution, &status) != 0) return -1;
         return status;
@@ -178,6 +233,7 @@ static int run_pipeline_command(const rix_shell_command_t *command, size_t comma
 static int run_command(const rix_shell_pipeline_t *pipeline, int *status) {
     rix_shell_execution_t execution;
     reset_execution(&execution);
+    execution.background = pipeline->background != 0;
     return rix_shell_execute_pipeline_indexed(pipeline, run_pipeline_command,
                                               &execution, status);
 }
@@ -208,10 +264,6 @@ static int shell_execute_line(const char *line, rix_shell_history_t *history) {
         return 2;
     }
     if (history) (void)rix_shell_history_add(history, line);
-    if (pipeline.background) {
-        (void)write_text(2, "rixuri: background jobs are not available\n");
-        return 2;
-    }
     if (run_command(&pipeline, &status) != 0) {
         (void)write_text(2, "rixuri: command execution failed\n");
         return 125;
@@ -225,6 +277,7 @@ void _start(void) {
     rix_shell_history_init(&history);
     (void)write_text(1, "RixuriOS shell ready\r\n");
     for (;;) {
+        reap_background_jobs();
         (void)write_text(1, "rixuri$ ");
         if (shell_read_line(line, sizeof(line)) != 0) break;
         (void)shell_execute_line(line, &history);

@@ -138,6 +138,7 @@ void kernel_main(const rixuri_boot_info_t *boot){
  if(process_create_user("init",0,rixuri_user_init_image(),rixuri_user_init_image_size(),&user_pid,&user_entry,&user_stack)!=0)panic("failed to create embedded user init");
  rix_process_t *user_proc=process_lookup(user_pid);if(!user_proc)panic("embedded user init process lookup failed");
  if(scheduler_create_user_process(user_pid,user_entry,user_stack,&user_task)!=0)panic("failed to create user init task");
+ tty_set_foreground_pgrp(0, (uint32_t)user_proc->process_group);
  rix_task_id_t xhci_worker_task=0;
  if(scheduler_create_kernel_thread(xhci_hotplug_worker,0,&xhci_worker_task)!=0)panic("failed to create xHCI hotplug worker");
  serial_write("USER: embedded init prepared, pid=");serial_write_dec(user_pid);serial_write(" task=");serial_write_dec(user_task);serial_write("\r\n");

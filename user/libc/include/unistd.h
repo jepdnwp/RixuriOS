@@ -13,6 +13,7 @@ int dup2(int old_fd, int new_fd);
 rix_pid_t spawn(const char *name, const void *image, size_t image_size);
 rix_pid_t fork(void);
 rix_pid_t wait(rix_pid_t child, uint64_t *status);
+rix_pid_t waitpid(rix_pid_t child, uint64_t *status, uint32_t options);
 int execve(const char *path, char *const argv[], char *const envp[]);
 rix_pid_t getpid(void);
 _Noreturn void _exit(int status);

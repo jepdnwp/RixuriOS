@@ -51,7 +51,7 @@ static int stack_copy_string(const rix_address_space_t *as, uint64_t *sp,
     if (!as || !sp || !source || !user_address) return -1;
     size_t length = 0;
     while (length < RIX_PROCESS_ARG_TEXT_MAX && source[length]) ++length;
-    if (length == 0 || length >= RIX_PROCESS_ARG_TEXT_MAX || *sp < USER_STACK_BASE + length + 1u)
+    if (length >= RIX_PROCESS_ARG_TEXT_MAX || *sp < USER_STACK_BASE + length + 1u)
         return -1;
     *sp -= length + 1u;
     if (stack_write(as, *sp, source, length) != 0 ||
