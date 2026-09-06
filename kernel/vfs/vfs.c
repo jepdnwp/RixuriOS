@@ -51,7 +51,7 @@ static int lookup_rixfs_path(const char *normalized,rix_vfs_path_t *out){
     if(!normalized||!out||!mounts[0].active)return -1;
     uint64_t inode=mounts[0].fs.super.root_inode;
     if(normalized[0]=='/'&&normalized[1]==0){
-        path_node=root.node;path_node.inode=inode;path_node.type=RIX_VFS_DIR;path_node.mode=0755;path_node.uid=0;path_node.gid=0;path_node.size=0;out->node=&path_node;return 0;
+        path_node=root.node;path_node.inode=inode;path_node.type=RIX_VFS_DIR;out->node=&path_node;return 0;
     }
     const char *p=normalized+1;
     char component[RIX_VFS_NAME_MAX+1];
@@ -61,13 +61,14 @@ static int lookup_rixfs_path(const char *normalized,rix_vfs_path_t *out){
         for(size_t i=0;i<n;i++)component[i]=s[i];component[n]=0;
         uint64_t next=0;uint8_t type=0;
         if(rixfs_lookup_name(&mounts[0].fs,inode,component,&next,&type)!=0)return -1;
+        rixfs_inode_disk_t in;
+        if(rixfs_read_inode(&mounts[0].fs,next,&in)!=0)return -1;
         inode=next;
         while(*p=='/')p++;
         if(*p==0){
-            rixfs_inode_disk_t in;
-            if(rixfs_read_inode(&mounts[0].fs,inode,&in)!=0)return -1;
             path_node.inode=inode;path_node.type=dirent_type(type);path_node.mode=in.mode;path_node.uid=in.uid;path_node.gid=in.gid;path_node.size=in.size;out->node=&path_node;return 0;
         }
+        if((in.mode&0xF000u)!=0x4000u)return -1;
     }
     return -1;
 }
@@ -92,20 +93,12 @@ int vfs_root(rix_vfs_path_t *out){if(!out)return -1;out->node=&root.node;out->pa
 int vfs_lookup(const char *path,rix_vfs_path_t *out){if(!path||!out)return -1;if(vfs_normalize_path(path,out->path,sizeof(out->path))!=0)return -1;if(out->path[0]=='/'&&out->path[1]==0)return vfs_root(out);return lookup_rixfs_path(out->path,out);}
 int vfs_lookup_from(const rix_vfs_path_t *base,const char *path,rix_vfs_path_t *out){
     if(!base||!path||!out)return -1;
-    char combined[RIX_VFS_PATH_MAX];size_t len=0;
     if(path[0]=='/')return vfs_lookup(path,out);
-    if(vfs_normalize_path(base->path,combined,sizeof(combined))!=0)return -1;
-    while(*path){
-        if(len>=sizeof(combined)-1)return -1;
-        combined[len]=*path++;len++;
-    }
+    char combined[RIX_VFS_PATH_MAX];size_t len=0;
+    for(size_t i=0;base->path[i]&&i<sizeof(combined)-1;i++)combined[len++]=base->path[i];
+    if(len==0||combined[len-1]!='/')combined[len++]='/';
+    for(size_t i=0;path[i]&&len<sizeof(combined)-1;i++)combined[len++]=path[i];
+    if(len>=sizeof(combined)-1&&path[len-(base->path[0]?1:0)]!=0)return -1;
     combined[len]=0;
-    char normalized[RIX_VFS_PATH_MAX];
-    size_t base_len=0;while(combined[base_len]&&base_len<sizeof(combined)-1)base_len++;
-    char absolute[RIX_VFS_PATH_MAX];size_t pos=0;
-    for(size_t i=0;i<base_len;i++)absolute[pos++]=combined[i];
-    if(pos==0||absolute[pos-1]!='/')absolute[pos++]='/';
-    const char *rel=path;
-    (void)rel;
-    return vfs_lookup(absolute,out);
+    return vfs_lookup(combined,out);
 }
