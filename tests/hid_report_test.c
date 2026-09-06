@@ -35,6 +35,23 @@ int main(void) {
     static const uint8_t truncated[] = {0x05, 0x01, 0x09};
     if (expect(hid_parse_report_descriptor(truncated, sizeof(truncated), &info) != 0,
                 "truncated descriptor rejected")) return 1;
+    hid_init();
+    static const uint8_t keyboard_report_id[] = {7, 0, 0, 0x04, 0, 0, 0, 0, 0};
+    if (expect(hid_keyboard_report_protocol(0, keyboard_report_id,
+                                            sizeof(keyboard_report_id), 7) == 0,
+                "keyboard report ID accepted")) return 1;
+    if (expect(hid_keyboard_report_protocol(0, keyboard_report_id,
+                                            sizeof(keyboard_report_id), 8) == -2,
+                "keyboard report ID mismatch rejected")) return 1;
+    static const uint8_t rollover[] = {0, 0, 1, 0, 0, 0, 0, 0};
+    if (expect(hid_keyboard_report(0, rollover, sizeof(rollover)) == -2,
+                "keyboard rollover rejected")) return 1;
+    static const uint8_t mouse_report_id[] = {2, 1, 0xfe, 3, 4};
+    rix_hid_mouse_report_t mouse;
+    if (expect(hid_mouse_report_protocol(mouse_report_id, sizeof(mouse_report_id), 2,
+                                         &mouse) == 0 && mouse.buttons == 1 &&
+                mouse.dx == -2 && mouse.dy == 3 && mouse.wheel == 4,
+                "mouse report ID parsed")) return 1;
     puts("hid report tests: PASS");
     return 0;
 }

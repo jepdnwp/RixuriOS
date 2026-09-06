@@ -59,4 +59,6 @@ The HID control path now also exposes class requests for `SET_PROTOCOL`, `SET_ID
 
 The historical completion-code-11 regression now has dedicated runtime instrumentation on both command-completion and transfer-event paths. When code 11 is observed, the serial trace records the controller, event TRB physical address, event parameter, control/status words, slot/DCI, port/speed/route, DCBAA device context, input context, endpoint ring, cycle and enqueue state. No code-11 event was observed in QEMU because no xHCI controller was exposed.
 
+Phase 16 report-protocol work now includes report-ID framing helpers for keyboard and mouse reports. The helpers validate the expected report ID before dispatching to the existing boot parsers; keyboard rollover error usages are rejected and mouse signed motion/wheel fields are covered by host tests. This remains parser-level evidence until a real report-protocol HID device is exercised.
+
 Review of the composite-device path found and corrected a context-construction defect: each Configure Endpoint operation now updates the input Slot Context's Context Entries field to the highest configured DCI and sets Add Slot Context alongside the endpoint bit. This is required by xHCI when adding endpoints beyond the initial EP0 context; the fix is strict-build validated but still awaits controller-backed execution.

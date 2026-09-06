@@ -89,6 +89,18 @@ int hid_keyboard_report(unsigned tty_id, const uint8_t *report, uint8_t length) 
     return 0;
 }
 
+int hid_keyboard_report_protocol(unsigned tty_id, const uint8_t *report, uint16_t length,
+                                 uint8_t report_id) {
+    if (!report) return -1;
+    if (report_id != 0u) {
+        if (length < 1u || report[0] != report_id) return -2;
+        report++;
+        length--;
+    }
+    if (length > UINT8_MAX) return -3;
+    return hid_keyboard_report(tty_id, report, (uint8_t)length);
+}
+
 int hid_mouse_report(const uint8_t *report, uint8_t length, rix_hid_mouse_report_t *out) {
     if (!report || !out || length < RIX_HID_BOOT_MOUSE_REPORT) return -1;
     out->buttons = report[0];
@@ -96,6 +108,18 @@ int hid_mouse_report(const uint8_t *report, uint8_t length, rix_hid_mouse_report
     out->dy = (int8_t)report[2];
     out->wheel = length >= 4u ? (int8_t)report[3] : 0;
     return 0;
+}
+
+int hid_mouse_report_protocol(const uint8_t *report, uint16_t length, uint8_t report_id,
+                              rix_hid_mouse_report_t *out) {
+    if (!report || !out) return -1;
+    if (report_id != 0u) {
+        if (length < 1u || report[0] != report_id) return -2;
+        report++;
+        length--;
+    }
+    if (length > UINT8_MAX) return -3;
+    return hid_mouse_report(report, (uint8_t)length, out);
 }
 
 uint8_t hid_keyboard_modifiers(void) { return modifiers; }

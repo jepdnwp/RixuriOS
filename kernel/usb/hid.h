@@ -30,7 +30,11 @@ typedef struct {
 
 void hid_init(void);
 int hid_keyboard_report(unsigned tty_id, const uint8_t *report, uint8_t length);
+int hid_keyboard_report_protocol(unsigned tty_id, const uint8_t *report, uint16_t length,
+                                 uint8_t report_id);
 int hid_mouse_report(const uint8_t *report, uint8_t length, rix_hid_mouse_report_t *out);
+int hid_mouse_report_protocol(const uint8_t *report, uint16_t length, uint8_t report_id,
+                              rix_hid_mouse_report_t *out);
 uint8_t hid_keyboard_modifiers(void);
 int hid_parse_report_descriptor(const uint8_t *data, size_t length,
                                 rix_hid_report_info_t *out);
