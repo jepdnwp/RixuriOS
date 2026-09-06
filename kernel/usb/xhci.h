@@ -30,3 +30,6 @@ int xhci_device_detach(size_t controller, uint8_t slot);
 int xhci_control_transfer(size_t controller, uint8_t slot,
                           const rix_usb_setup_packet_t *setup,
                           void *data, uint16_t *actual_length);
+int xhci_get_descriptor(size_t controller, uint8_t slot, uint8_t descriptor_type,
+                        uint8_t descriptor_index, uint16_t language_id,
+                        void *buffer, uint16_t length, uint16_t *actual_length);

@@ -38,3 +38,5 @@ The next Phase 15 increment adds a freestanding USB descriptor parser for device
 ## 2026-09-06 — EP0 control-transfer path
 
 The xHCI layer now exposes `xhci_control_transfer()`. It constructs Setup/Data/Status TRBs on the addressed device’s EP0 ring, publishes the ring with the slot doorbell, polls transfer events, reports completion codes and residual-length-derived byte counts, and returns timeout/error codes without claiming success. The no-data and OUT-transfer Status Stage direction rules are handled explicitly. The implementation passes the strict kernel build and the UEFI/QEMU smoke path, but QEMU exposes zero xHCI controllers in this environment; therefore no hardware completion or descriptor enumeration result is claimed yet.
+
+The standard `xhci_get_descriptor()` wrapper now formats USB `GET_DESCRIPTOR` requests for device, configuration, string and other descriptor types while preserving the same actual-length and error semantics. It is build-validated but remains hardware-unexercised in this QEMU configuration.

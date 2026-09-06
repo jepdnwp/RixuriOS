@@ -620,6 +620,20 @@ int xhci_control_transfer(size_t controller, uint8_t slot_id,
                          setup->length, actual_length);
 }
 
+int xhci_get_descriptor(size_t controller, uint8_t slot_id, uint8_t descriptor_type,
+                        uint8_t descriptor_index, uint16_t language_id,
+                        void *buffer, uint16_t length, uint16_t *actual_length) {
+    if (descriptor_type == 0u || (length != 0u && !buffer)) return -1;
+    rix_usb_setup_packet_t setup = {
+        .request_type = 0x80u,
+        .request = 6u,
+        .value = (uint16_t)(((uint16_t)descriptor_type << 8) | descriptor_index),
+        .index = language_id,
+        .length = length
+    };
+    return xhci_control_transfer(controller, slot_id, &setup, buffer, actual_length);
+}
+
 int xhci_device_attach(size_t controller, uint8_t port, rix_xhci_device_t *out) {
     if (!out || controller >= count) return -1;
     rix_xhci_port_status_t status;

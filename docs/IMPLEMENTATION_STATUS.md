@@ -42,9 +42,10 @@ The current source tree has now passed a clean strict build and a real UEFI-to-k
 - Corrected pre-existing strict-build defects in the serial API declaration, ACPI checksum accumulator declaration and PIT IRQ callback prototype.
 - Added bounds-checked USB device and configuration descriptor parsing, including interface and endpoint extraction, with host-side malformed-input tests.
 - Added EP0 control-transfer submission with Setup/Data/Status TRB construction, doorbell routing, transfer-event polling, residual-length accounting, timeout propagation and correct Status Stage direction handling.
+- Added a standard `xhci_get_descriptor()` helper for USB `GET_DESCRIPTOR` requests, including descriptor type/index, language ID, destination buffer and actual-length reporting.
 
 This remains `IMPLEMENTED / NOT YET VALIDATED`. The control-transfer path is source/build validated but not hardware-exercised: QEMU reported zero xHCI controllers. Descriptor enumeration, bulk/interrupt transfer rings, HID transfer delivery, hotplug event processing, hardware evidence and the historical completion-code-11 regression still remain open.
 
 ## Next phase
 
-Phase 15 continuation: issue standard GET_DESCRIPTOR requests through EP0 and feed their results into the parser, then implement bulk/interrupt transfer rings, HID keyboard/mouse delivery, disconnect/hotplug handling, and hardware-backed negative-path tests.
+Phase 15 continuation: feed `xhci_get_descriptor()` results into the parser for real device/configuration enumeration, then implement bulk/interrupt transfer rings, HID keyboard/mouse delivery, disconnect/hotplug handling, and hardware-backed negative-path tests.
