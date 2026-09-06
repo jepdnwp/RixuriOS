@@ -23,7 +23,7 @@ typedef struct {
     uint64_t root_inode;
     uint64_t generation;
     uint64_t checksum;
-    uint8_t reserved[464];
+    uint8_t reserved[432];
 } __attribute__((packed)) rixfs_superblock_t;
 
 typedef struct {
