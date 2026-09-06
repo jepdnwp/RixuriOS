@@ -45,9 +45,10 @@ The current source tree has now passed a clean strict build and a real UEFI-to-k
 - Added a standard `xhci_get_descriptor()` helper for USB `GET_DESCRIPTOR` requests, including descriptor type/index, language ID, destination buffer and actual-length reporting.
 - Added two-stage `xhci_enumerate_device()` orchestration: fetch and validate the 18-byte device descriptor, fetch the configuration header to discover `wTotalLength`, fetch the complete configuration, then pass it through the bounds-checked parser.
 - Added initial non-control endpoint support: interrupt endpoint context construction, Configure Endpoint command submission, endpoint transfer-ring lifecycle, doorbell routing and interrupt transfer-event polling with residual-length accounting.
+- Generalized the non-control endpoint path to support both interrupt and bulk endpoint types with shared ring submission/completion logic and separate public transfer wrappers.
 
 This remains `IMPLEMENTED / NOT YET VALIDATED`. The control-transfer path is source/build validated but not hardware-exercised: QEMU reported zero xHCI controllers. Descriptor enumeration, bulk/interrupt transfer rings, HID transfer delivery, hotplug event processing, hardware evidence and the historical completion-code-11 regression still remain open.
 
 ## Next phase
 
-Phase 15 continuation: exercise enumeration and interrupt transfers on a controller-backed target, then add bulk transfers, HID keyboard/mouse delivery, disconnect/hotplug handling, and hardware-backed negative-path tests.
+Phase 15 continuation: exercise enumeration, interrupt and bulk transfers on a controller-backed target, then connect HID report delivery, disconnect/hotplug handling, and hardware-backed negative-path tests.

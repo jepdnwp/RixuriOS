@@ -52,3 +52,5 @@ int xhci_configure_endpoint(size_t controller, uint8_t slot,
                             const rix_xhci_endpoint_config_t *config);
 int xhci_interrupt_transfer(size_t controller, uint8_t slot, void *buffer,
                             uint16_t length, uint16_t *actual_length);
+int xhci_bulk_transfer(size_t controller, uint8_t slot, void *buffer,
+                       uint16_t length, uint16_t *actual_length);

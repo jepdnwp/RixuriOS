@@ -70,6 +70,8 @@
 #define XHCI_EP0_CERR 3u
 #define XHCI_EP_INTERRUPT_IN 7u
 #define XHCI_EP_INTERRUPT_OUT 3u
+#define XHCI_EP_BULK_IN 6u
+#define XHCI_EP_BULK_OUT 2u
 
 /* A TRB is always 16-byte aligned and is written in little-endian fields. */
 typedef struct {
@@ -97,6 +99,7 @@ typedef struct {
     uint8_t ep0_cycle;
     uint64_t endpoint_ring_phys;
     uint8_t endpoint_id;
+    uint8_t endpoint_type;
     uint8_t endpoint_cycle;
     uint16_t endpoint_enqueue;
 } xhci_slot_runtime_t;
@@ -455,6 +458,7 @@ static void release_slot_context(const rix_xhci_controller_t *c, uint8_t slot_id
     slot->ep0_ring_phys = 0;
     slot->endpoint_ring_phys = 0;
     slot->endpoint_id = 0;
+    slot->endpoint_type = 0;
     slot->endpoint_cycle = 0;
     slot->endpoint_enqueue = 0;
     slot->allocated = 0;
@@ -681,9 +685,10 @@ int xhci_enumerate_device(size_t controller, uint8_t slot_id,
 
 int xhci_configure_endpoint(size_t controller, uint8_t slot_id,
                             const rix_xhci_endpoint_config_t *config) {
+    uint8_t transfer_type = config ? (config->attributes & RIX_USB_EP_TRANSFER_MASK) : 0u;
     if (!config || controller >= count || slot_id == 0u ||
         slot_id > controllers[controller].max_slots ||
-        (config->attributes & RIX_USB_EP_TRANSFER_MASK) != RIX_USB_EP_INTERRUPT ||
+        (transfer_type != RIX_USB_EP_INTERRUPT && transfer_type != RIX_USB_EP_BULK) ||
         config->max_packet_size == 0u || config->interval == 0u) return -1;
     uint8_t endpoint_number = config->endpoint_address & 0x0fu;
     if (endpoint_number == 0u || (config->endpoint_address & 0x70u) != 0u) return -2;
@@ -707,8 +712,10 @@ int xhci_configure_endpoint(size_t controller, uint8_t slot_id,
         (uintptr_t)(slot->input_context_phys + (uint64_t)context_size * (endpoint_id + 1u));
     input[1] = 1u << (endpoint_id + 1u);
     endpoint[0] = (uint32_t)config->interval << 16;
-    endpoint[1] = (3u << 1) |
-                  ((direction ? XHCI_EP_INTERRUPT_IN : XHCI_EP_INTERRUPT_OUT) << 3) |
+    uint8_t endpoint_type = transfer_type == RIX_USB_EP_INTERRUPT
+        ? (direction ? XHCI_EP_INTERRUPT_IN : XHCI_EP_INTERRUPT_OUT)
+        : (direction ? XHCI_EP_BULK_IN : XHCI_EP_BULK_OUT);
+    endpoint[1] = (3u << 1) | (endpoint_type << 3) |
                   ((uint32_t)config->max_burst << 8) |
                   ((uint32_t)config->max_packet_size << 16);
     endpoint[2] = (uint32_t)ring_phys;
@@ -723,19 +730,22 @@ int xhci_configure_endpoint(size_t controller, uint8_t slot_id,
     }
     slot->endpoint_ring_phys = ring_phys;
     slot->endpoint_id = endpoint_id;
+    slot->endpoint_type = transfer_type;
     slot->endpoint_cycle = 1u;
     slot->endpoint_enqueue = 0;
     return 0;
 }
 
-int xhci_interrupt_transfer(size_t controller, uint8_t slot_id, void *buffer,
-                            uint16_t length, uint16_t *actual_length) {
+static int endpoint_transfer(size_t controller, uint8_t slot_id, void *buffer,
+                             uint16_t length, uint16_t *actual_length,
+                             uint8_t expected_type) {
     if (actual_length) *actual_length = 0;
     if (!buffer || length == 0u || controller >= count || slot_id == 0u ||
         slot_id > controllers[controller].max_slots) return -1;
     xhci_slot_runtime_t *slot = &runtimes[controller].slots[slot_id];
     const rix_xhci_controller_t *c = &controllers[controller];
-    if (!c->running || !slot->endpoint_ring_phys || slot->endpoint_id == 0u) return -2;
+    if (!c->running || !slot->endpoint_ring_phys || slot->endpoint_id == 0u ||
+        slot->endpoint_type != expected_type) return -2;
     if (slot->endpoint_enqueue >= XHCI_CMD_RING_TRBS - 1u) {
         volatile xhci_trb_t *link = (volatile xhci_trb_t *)(uintptr_t)slot->endpoint_ring_phys;
         link[XHCI_CMD_RING_TRBS - 1u].parameter_lo = (uint32_t)slot->endpoint_ring_phys;
@@ -760,6 +770,18 @@ int xhci_interrupt_transfer(size_t controller, uint8_t slot_id, void *buffer,
     *(volatile uint32_t *)(base + db_off + (uint32_t)slot_id * 4u) = slot->endpoint_id;
     return wait_transfer(c, &runtimes[controller], trb_phys, slot_id,
                          slot->endpoint_id, length, actual_length);
+}
+
+int xhci_interrupt_transfer(size_t controller, uint8_t slot_id, void *buffer,
+                            uint16_t length, uint16_t *actual_length) {
+    return endpoint_transfer(controller, slot_id, buffer, length, actual_length,
+                             RIX_USB_EP_INTERRUPT);
+}
+
+int xhci_bulk_transfer(size_t controller, uint8_t slot_id, void *buffer,
+                       uint16_t length, uint16_t *actual_length) {
+    return endpoint_transfer(controller, slot_id, buffer, length, actual_length,
+                             RIX_USB_EP_BULK);
 }
 
 int xhci_device_attach(size_t controller, uint8_t port, rix_xhci_device_t *out) {
