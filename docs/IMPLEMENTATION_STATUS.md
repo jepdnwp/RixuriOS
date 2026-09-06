@@ -143,4 +143,6 @@ Phase 15 continuation: add device-manager policy around port-event attach/detach
 - Phase 17 now has pipe transport, VFS FD endpoints, `pipe`, `dup`, process-creation FD inheritance and process-lifetime descriptor cleanup on failure/reap paths.
 - Added `tty_recover()`, which resets input/output queues, parser/cursor state and the bounded screen before emitting a recovery-console banner.
 - Added a bounded callback-driven shell pipeline executor that validates command count, forwards redirection metadata to the runner and wires adjacent pipeline stages through explicit input/output channels.
-- The executor is host-tested for two-stage pipeline ordering. A user-visible fork/exec syscall and a kernel-backed command runner remain open, so the full runtime pipeline gate is not yet closed.
+- The executor is host-tested for two-stage pipeline ordering.
+- Added a bounded `RIX_SYS_SPAWN` ABI and userspace `spawn()` wrapper. The kernel validates a user name, copies a maximum 4096-byte ELF image into kernel memory, creates a child address space, inherits descriptors and schedules a user task.
+- A true POSIX-style `fork()` address-space clone, `execve()` path lookup/argument environment and a filesystem-backed command runner remain open; the new spawn ABI is an explicit safe intermediate rather than a false completion claim.
