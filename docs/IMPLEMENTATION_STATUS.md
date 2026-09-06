@@ -22,7 +22,7 @@ A subsystem is not marked COMPLETE merely because source exists. Completion requ
 - Power: hardware reboot path and ACPI S5 shutdown path when validated FADT/DSDT power data is available; otherwise shutdown returns unsupported rather than faking success.
 - USB/xHCI: controller/capability, multi-endpoint transfer rings, HID report delivery adapters and port-event polling are implemented; hardware qualification remains open.
 - GUI: deliberately untouched; GUI remains last in the roadmap.
-- TTY: canonical/raw input, line readiness, echo/output queues, foreground process-group state, PTY master/slave byte/line flow, terminal dimensions and bounded ANSI/VT cursor state are implemented and host-tested; signals and full terminal screen rendering remain open.
+- TTY: canonical/raw input, line readiness, echo/output queues, foreground process-group state, PTY master/slave byte/line flow, terminal dimensions and bounded ANSI/VT screen state are implemented and host-tested; signals and session integration remain open.
 - Linker hardening: kernel program headers are explicitly split into `R-X`, `R--`, `RW-`, with a non-executable `GNU_STACK`; the prior generated-blob executable-stack warning no longer produces an executable stack.
 
 ## Validation boundary
@@ -59,6 +59,7 @@ The current source tree has now passed a clean strict build and a real UEFI-to-k
 - Began Phase 17 TTY work: canonical reads wait for a complete newline-terminated line, raw reads return available bytes, erase handling is bounded, echo is routed through an output queue, output can be drained separately, and foreground process-group getters/setters are available.
 - Added bounded PTY master/slave pairs with canonical slave input, master-visible echo/output, slave-to-master output and lifecycle open/close APIs.
 - Added terminal dimensions and cursor state with a bounded ANSI/VT parser covering ESC/CSI cursor movement, positioning, carriage return/newline/backspace and safe handling of erase/style commands.
+- Added a bounded row/column screen buffer: printable output advances the cursor and writes cells, `J/K` erase display/line ranges, and `tty_read_screen()` exposes only the configured dimensions with capacity validation.
 - Added `xhci_poll_port_status_change()` for cycle-aware, non-destructive event-ring peeking that consumes only Port Status Change Events and reports the current connection state.
 
 This remains `IMPLEMENTED / NOT YET VALIDATED`. The control-transfer, multi-endpoint, HID adapter and port-event paths are source/build validated but not hardware-exercised: QEMU reported zero xHCI controllers. Device-manager policy for automatic attach/enumeration after a port event, hardware evidence and the historical completion-code-11 regression remain open.

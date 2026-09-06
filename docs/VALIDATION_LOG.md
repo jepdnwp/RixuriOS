@@ -63,6 +63,8 @@ Phase 16 report-protocol work now includes report-ID framing helpers for keyboar
 
 Phase 17 TTY work now has host evidence (`tty tests: PASS`) for canonical reads waiting on newline, raw reads returning immediately, echo flowing through a separate output queue, foreground process-group state, PTY master/slave input/output flow, terminal dimensions and ANSI/VT cursor positioning. Signal generation, session ownership, full screen-buffer rendering and shell integration remain open; no full Phase 17 completion claim is made.
 
+The TTY terminal layer now also has a bounded screen-buffer assertion: printable output writes the expected cell, `tty_read_screen()` returns the configured row-major surface, and the implementation bounds all cell access by the fixed maximum dimensions. ANSI `J/K` erase operations operate on that same buffer. This closes the screen-state portion of the current terminal-engine work; signals, sessions and shell integration remain outside this checkpoint.
+
 The linker was hardened during the Phase 0–17 audit. Explicit PHDRS now produce separate `R-X`, `R--` and `RW-` load segments plus a read-only `GNU_STACK`; `readelf -l build/kernel.elf` confirms no `RWE` segment. USB, HID and TTY host tests and the UEFI/QEMU boot smoke test continue to pass after this change.
 
 Review of the composite-device path found and corrected a context-construction defect: each Configure Endpoint operation now updates the input Slot Context's Context Entries field to the highest configured DCI and sets Add Slot Context alongside the endpoint bit. This is required by xHCI when adding endpoints beyond the initial EP0 context; the fix is strict-build validated but still awaits controller-backed execution.
