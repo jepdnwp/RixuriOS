@@ -14,3 +14,4 @@ int vfs_init(void);
 int vfs_normalize_path(const char *input,char *output,size_t output_size);
 int vfs_root(rix_vfs_path_t *out);
 int vfs_lookup(const char *path,rix_vfs_path_t *out);
+int vfs_lookup_from(const rix_vfs_path_t *base,const char *path,rix_vfs_path_t *out);
