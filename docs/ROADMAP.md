@@ -591,6 +591,10 @@ Then add:
 
 Every command gets argument validation, errors, exit status and pipeline behavior.
 
+### Current evidence — 2026-09-06
+
+`/bin/touch` is implemented over the existing `openat(O_WRONLY|O_CREAT, 0644)` and `close` ABI. A real QEMU serial harness passed new-file creation, reopening an existing file, missing-parent rejection, cleanup with `/bin/rm`, and final directory verification. Timestamp mutation semantics remain unsupported because the current stat/inode ABI exposes no timestamp update operation.
+
 ---
 
 # PHASE 20 — Users, Groups, Credentials and Security Model

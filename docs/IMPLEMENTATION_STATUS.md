@@ -246,3 +246,9 @@ The tested external-command, argv/envp, redirection, pipeline, conditional, and 
 - Added `/usr/bin/pipe-stress` and an isolated QEMU harness. Eight standalone rounds of blocked-reader pipe activity, payload readback, fork, `waitpid(WNOHANG)`, and reap passed with no fault marker.
 - The current evidence is `QEMU-VALIDATED` for the standalone 512-byte blocked-reader/reap scenario only.
 - Full-pipe writer backpressure is not implemented: a >4096-byte two-write attempt stalled, so the tentative VFS retry change was reverted. Running `proc-test` immediately before `pipe-stress` also exposed an invalid-opcode exception at `rip=0xb0000`; broader task/page-table reuse qualification therefore remains open.
+
+## Latest continuation — Phase 19 `/bin/touch` — 2026-09-06
+
+- Added `/bin/touch` to the strict userspace build and disposable RixFS image.
+- Real QEMU evidence covers creating a new empty file, reopening an existing file, rejecting a missing parent, removing the created file, and verifying the final directory listing.
+- This is `QEMU-VALIDATED` for create-or-open behavior only. Timestamp update semantics remain unsupported because the current public stat/inode ABI has no timestamp mutation operation.

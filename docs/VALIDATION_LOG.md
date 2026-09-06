@@ -305,3 +305,15 @@ qemu pipe stress test: PASS
 ```
 
 The stress utility uses a 512-byte payload because the current pipe implementation does not yet provide a blocking full-pipe writer contract. A separate attempt to send more than the 4096-byte channel capacity stalled before the PASS marker; the proposed VFS retry/yield change was reverted and is not part of the implementation. In addition, running the existing `proc-test` first and then launching `pipe-stress` produced `CPU exception vector=6 ... rip=0x00000000000b0000` before the stress PASS marker. Therefore Phase D is **partially validated only**: standalone repeated blocked-reader and reap behavior passed, while blocked-writer backpressure and cross-test page-table/task reuse remain open blockers.
+
+## 2026-09-06 — Phase 19 `/bin/touch`
+
+Added a real `/bin/touch` utility using the existing `openat(O_WRONLY|O_CREAT, 0644)` and `close` ABI. The isolated QEMU harness exercised creation of a new file, reopening an existing file, rejection of a path whose parent does not exist, cleanup with `/bin/rm`, and a final directory listing. The observed result was:
+
+```text
+touch-created
+touch: failed: /missing/child
+qemu touch test: PASS
+```
+
+The implementation currently provides create-or-open behavior; timestamp update semantics are not implemented because the current public stat/inode ABI has no timestamp mutation operation.
