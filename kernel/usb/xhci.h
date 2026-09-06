@@ -20,6 +20,15 @@ typedef struct {
     uint8_t running;
 } rix_xhci_controller_t;
 
+typedef struct {
+    uint8_t connected;
+    uint8_t enabled;
+    uint8_t speed;
+    uint8_t reset_complete;
+} rix_xhci_port_status_t;
+
 int xhci_init(void);
 size_t xhci_controller_count(void);
 const rix_xhci_controller_t *xhci_controller(size_t index);
+int xhci_port_status(size_t controller, uint8_t port, rix_xhci_port_status_t *out);
+int xhci_reset_port(size_t controller, uint8_t port);
