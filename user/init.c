@@ -212,6 +212,9 @@ static int run_pipeline_command(const rix_shell_command_t *command, size_t comma
         if (child_input >= 0 && child_input != 0) (void)close(child_input);
         if (next_pipe[1] >= 0 && next_pipe[1] != 1) (void)close(next_pipe[1]);
         if (next_pipe[0] >= 0 && next_pipe[0] != 0) (void)close(next_pipe[0]);
+        if (close_pipes_except(child_input >= 0 ? 0 : -1,
+                               next_pipe[1] >= 0 ? 1 : -1) != 0)
+            child_error("rixuri: pipe cleanup failed\n", 125);
         if (apply_redirections(command) != 0) child_error("rixuri: redirection failed\n", 125);
         run_external_child(command);
     }

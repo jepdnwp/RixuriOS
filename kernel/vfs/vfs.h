@@ -30,6 +30,7 @@ int vfs_dup(uint64_t pid,int old_fd,int *new_fd);
 int vfs_dup_to(uint64_t pid,int old_fd,int new_fd);
 int vfs_fd_is_open(uint64_t pid,int fd);
 int vfs_clone_fds(uint64_t parent_pid,uint64_t child_pid);
+int vfs_close_pipes_except(uint64_t pid,int keep_fd0,int keep_fd1);
 int vfs_close_all(uint64_t pid);
 int vfs_close(uint64_t pid,int fd);
 int vfs_read(uint64_t pid,int fd,void *buffer,size_t size,size_t *out_read);

@@ -38,7 +38,6 @@ int pipe_close_read(rix_pipe_t *pipe) {
     --pipe->read_refs;
     if (!pipe->read_refs) {
         pipe->read_open = 0u;
-        return ipc_close(&pipe->channel);
     }
     return 0;
 }

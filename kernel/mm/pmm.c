@@ -74,6 +74,13 @@ uint64_t pmm_alloc_page_below(uint64_t max_exclusive){
     return 0;
 }
 uint64_t pmm_alloc_page(void){return pmm_alloc_page_below(PMM_MAX_PHYS);}
+void pmm_reserve_page(uint64_t physical_address){
+    if((physical_address&(RIXURI_PAGE_SIZE-1ULL))!=0)return;
+    uint64_t page=physical_address/RIXURI_PAGE_SIZE;if(page>=PMM_MAX_PAGES)return;
+    uint64_t*managed=&managed_bitmap[page>>6],*used=&page_bitmap[page>>6],bit=1ULL<<(page&63ULL);
+    if(!(*managed&bit))return;
+    if(!(*used&bit)){*used|=bit;if(free_pages_count)--free_pages_count;}
+}
 void pmm_free_page(uint64_t physical_address){
     if((physical_address&(RIXURI_PAGE_SIZE-1ULL))!=0)return;
     uint64_t page=physical_address/RIXURI_PAGE_SIZE;if(page>=PMM_MAX_PAGES)return;

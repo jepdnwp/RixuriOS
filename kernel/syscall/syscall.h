@@ -5,6 +5,7 @@
 #define RIX_SYS_OPENAT 2
 #define RIX_SYS_CLOSE 3
 #define RIX_SYS_PIPE 22
+#define RIX_SYS_CLOSE_PIPES_EXCEPT 248
 #define RIX_SYS_DUP 32
 #define RIX_SYS_DUP2 33
 #define RIX_SYS_SPAWN 134
