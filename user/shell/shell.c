@@ -224,3 +224,91 @@ int rix_shell_parse_pipeline(rix_shell_tokens_t *tokens, rix_shell_pipeline_t *o
     if (out->command[out->command_count - 1u].argc == 0) return -8;
     return 0;
 }
+
+void rix_shell_history_init(rix_shell_history_t *history) {
+    if (!history) return;
+    history->count = 0;
+    history->cursor = 0;
+}
+
+int rix_shell_history_add(rix_shell_history_t *history, const char *line) {
+    if (!history || !line) return -1;
+    size_t length = text_length(line);
+    if (length == 0u || length >= RIX_SHELL_TOKEN_TEXT) return -2;
+    if (history->count && text_length(history->entry[history->count - 1u]) == length) {
+        size_t i = 0;
+        while (i < length && history->entry[history->count - 1u][i] == line[i]) ++i;
+        if (i == length) { history->cursor = history->count; return 0; }
+    }
+    if (history->count == RIX_SHELL_HISTORY_COUNT) {
+        for (size_t i = 1; i < history->count; ++i)
+            for (size_t j = 0; j < RIX_SHELL_TOKEN_TEXT; ++j)
+                history->entry[i - 1u][j] = history->entry[i][j];
+        history->count--;
+    }
+    for (size_t i = 0; i < length; ++i) history->entry[history->count][i] = line[i];
+    history->entry[history->count][length] = 0;
+    history->count++;
+    history->cursor = history->count;
+    return 0;
+}
+
+static int history_copy(const char *line, char *output, size_t capacity) {
+    size_t length = text_length(line);
+    if (length >= capacity) return -1;
+    for (size_t i = 0; i < length; ++i) output[i] = line[i];
+    output[length] = 0;
+    return 0;
+}
+
+int rix_shell_history_prev(rix_shell_history_t *history, char *output, size_t capacity) {
+    if (!history || !output || capacity == 0u || history->count == 0u) return -1;
+    if (history->cursor > 0u) --history->cursor;
+    return history_copy(history->entry[history->cursor], output, capacity);
+}
+
+int rix_shell_history_next(rix_shell_history_t *history, char *output, size_t capacity) {
+    if (!history || !output || capacity == 0u || history->count == 0u) return -1;
+    if (history->cursor + 1u < history->count) {
+        ++history->cursor;
+        return history_copy(history->entry[history->cursor], output, capacity);
+    }
+    history->cursor = history->count;
+    output[0] = 0;
+    return 0;
+}
+
+int rix_shell_history_export(const rix_shell_history_t *history, char *output,
+                             size_t capacity, size_t *written) {
+    if (written) *written = 0;
+    if (!history || !output || capacity == 0u) return -1;
+    size_t used = 0;
+    for (size_t i = 0; i < history->count; ++i) {
+        size_t length = text_length(history->entry[i]);
+        if (used + length + 1u >= capacity) return -2;
+        for (size_t j = 0; j < length; ++j) output[used++] = history->entry[i][j];
+        output[used++] = '\n';
+    }
+    output[used] = 0;
+    if (written) *written = used;
+    return 0;
+}
+
+int rix_shell_history_import(rix_shell_history_t *history, const char *input) {
+    if (!history || !input) return -1;
+    char line[RIX_SHELL_TOKEN_TEXT];
+    size_t length = 0;
+    for (size_t i = 0;; ++i) {
+        char ch = input[i];
+        if (ch == '\n' || ch == 0) {
+            line[length] = 0;
+            if (length && rix_shell_history_add(history, line) != 0) return -2;
+            length = 0;
+            if (!ch) break;
+        } else {
+            if (length + 1u >= sizeof(line)) return -3;
+            line[length++] = ch;
+        }
+    }
+    return 0;
+}

@@ -48,6 +48,29 @@ int main(void) {
     if (expect(rix_shell_complete("z", commands, 4, expanded, sizeof(expanded),
                                   &matches) == 0 && matches == 0 && expanded[0] == 0,
                 "no autocomplete match")) return 1;
+    rix_shell_history_t history;
+    rix_shell_history_init(&history);
+    if (expect(rix_shell_history_add(&history, "one") == 0 &&
+                rix_shell_history_add(&history, "one") == 0 &&
+                rix_shell_history_add(&history, "two") == 0,
+                "history add and duplicate suppression")) return 1;
+    if (expect(rix_shell_history_prev(&history, expanded, sizeof(expanded)) == 0 &&
+                strcmp(expanded, "two") == 0 &&
+                rix_shell_history_prev(&history, expanded, sizeof(expanded)) == 0 &&
+                strcmp(expanded, "one") == 0, "history previous navigation")) return 1;
+    if (expect(rix_shell_history_next(&history, expanded, sizeof(expanded)) == 0 &&
+                strcmp(expanded, "two") == 0 &&
+                rix_shell_history_next(&history, expanded, sizeof(expanded)) == 0 &&
+                expanded[0] == 0, "history next navigation")) return 1;
+    char persisted[128];
+    size_t persisted_size = 0;
+    if (expect(rix_shell_history_export(&history, persisted, sizeof(persisted),
+                                        &persisted_size) == 0 && persisted_size == 8,
+                "history export")) return 1;
+    rix_shell_history_t restored;
+    rix_shell_history_init(&restored);
+    if (expect(rix_shell_history_import(&restored, persisted) == 0 && restored.count == 2,
+                "history import")) return 1;
     puts("shell parser tests: PASS");
     return 0;
 }

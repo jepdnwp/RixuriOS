@@ -6,6 +6,7 @@
 #define RIX_SHELL_MAX_COMMANDS 16u
 #define RIX_SHELL_MAX_ARGS 16u
 #define RIX_SHELL_MAX_REDIRS 8u
+#define RIX_SHELL_HISTORY_COUNT 64u
 
 typedef enum {
     RIX_SHELL_WORD,
@@ -46,6 +47,12 @@ typedef struct {
     size_t background;
 } rix_shell_pipeline_t;
 
+typedef struct {
+    char entry[RIX_SHELL_HISTORY_COUNT][RIX_SHELL_TOKEN_TEXT];
+    size_t count;
+    size_t cursor;
+} rix_shell_history_t;
+
 int rix_shell_lex(const char *input, rix_shell_tokens_t *out);
 int rix_shell_parse_pipeline(rix_shell_tokens_t *tokens, rix_shell_pipeline_t *out);
 typedef const char *(*rix_shell_variable_lookup_t)(const char *name, void *context);
@@ -54,3 +61,10 @@ int rix_shell_expand_word(const char *input, char *output, size_t capacity,
 int rix_shell_complete(const char *prefix, const char *const *candidates,
                        size_t candidate_count, char *output, size_t capacity,
                        size_t *match_count);
+void rix_shell_history_init(rix_shell_history_t *history);
+int rix_shell_history_add(rix_shell_history_t *history, const char *line);
+int rix_shell_history_prev(rix_shell_history_t *history, char *output, size_t capacity);
+int rix_shell_history_next(rix_shell_history_t *history, char *output, size_t capacity);
+int rix_shell_history_export(const rix_shell_history_t *history, char *output,
+                             size_t capacity, size_t *written);
+int rix_shell_history_import(rix_shell_history_t *history, const char *input);
