@@ -203,6 +203,10 @@ static int run_pipeline_command(const rix_shell_command_t *command, size_t comma
         return -1;
     }
     if (child == 0) {
+        /* Redirection syscalls must not leave the child using mutable parser
+         * storage through the parent's command pointer.  Keep the command
+         * descriptor stable across fd setup and exec preparation. */
+        rix_shell_command_t child_command = *command;
         if (child_input >= 0 && child_input != 0) {
             if (dup2(child_input, 0) < 0) child_error("rixuri: stdin setup failed\n", 125);
         }
@@ -215,8 +219,8 @@ static int run_pipeline_command(const rix_shell_command_t *command, size_t comma
         if (close_pipes_except(child_input >= 0 ? 0 : -1,
                                next_pipe[1] >= 0 ? 1 : -1) != 0)
             child_error("rixuri: pipe cleanup failed\n", 125);
-        if (apply_redirections(command) != 0) child_error("rixuri: redirection failed\n", 125);
-        run_external_child(command);
+        if (apply_redirections(&child_command) != 0) child_error("rixuri: redirection failed\n", 125);
+        run_external_child(&child_command);
     }
 
     if (child_input >= 0) (void)close(child_input);

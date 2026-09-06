@@ -359,3 +359,50 @@ The implementation design for removing physical identity-mapping assumptions fro
 ## Fork/address-space redesign Phase A — in progress
 
 A strict-build-safe `vmm_phys_ptr()` boundary remains in place and address-space table access goes through it. The permanent mapping-window redesign remains future work; however, the current identity-backed implementation now passes the Phase 19 fork/exec/xargs acceptance harness with explicit page-table ownership semantics.
+
+
+## Phase 19 systematic validation — 2026-09-06
+
+The current `main` branch was audited from commit `b2335fa` and the complete available Phase 19 utility set was rebuilt into the UEFI/RixFS image. The utility targets include `find`, `xargs`, `sed`, `test`, `touch`, `stat`, `ln`, `head`, `tail`, `wc`, `cut`, `tr`, `sort`, `uniq`, `env`, `printf`, `pwd`, `which`, `kill`, `ps`, `uname`, `du`, `cp`, `mv`, `mkdir`, `rm`, and `rmdir`. Existing QEMU harnesses cover their VFS, fork/exec, stdin/stdout/stderr, pipeline, redirection, error-path and exit-status behavior within each utility's bounded implementation contract.
+
+The strict build and host tests passed with:
+
+```text
+make clean
+make -j2 all CROSS=x86_64-linux-gnu-
+make HOST_CC=x86_64-linux-gnu-gcc usb-test hid-test tty-test shell-test pipe-test
+```
+
+The real QEMU suite passed after a fresh image build:
+
+```text
+make image CROSS=x86_64-linux-gnu-
+python3 scripts/qemu_phase19_utils_test.py
+python3 scripts/qemu_file_utils_test.py
+python3 scripts/qemu_text_utils_test.py
+python3 scripts/qemu_env_utils_test.py
+python3 scripts/qemu_head_tail_test.py
+python3 scripts/qemu_ln_test.py
+python3 scripts/qemu_stat_test.py
+python3 scripts/qemu_touch_test.py
+python3 scripts/qemu_cp_mv_edge_test.py
+python3 scripts/qemu_process_utils_test.py
+python3 scripts/qemu_pipe_stress_test.py
+python3 scripts/qemu_signal_test.py
+```
+
+The QEMU evidence includes successful NVMe discovery, RixFS mount, kernel readiness, shell prompt recovery, file creation/removal/stat/link/copy/move operations, text pipelines, exit-status connectors, process utilities, blocked-reader pipe behavior, fork/reap behavior, and all three control-signal scenarios: Ctrl-C, Ctrl-Z, and Ctrl-\\. An explicit continuation regression also passed:
+
+```text
+/bin/echo one two | /usr/bin/xargs /bin/echo
+one two
+/bin/echo after-xargs
+after-xargs
+qemu xargs continuation test: PASS
+```
+
+An additional real-QEMU background-job regression passed `sleep 1 &`, prompt continuation, `ps`, job completion notification and a subsequent shell command. No `PAGE FAULT`, `CPU exception`, `PANIC`, timeout or prompt loss was observed in the final suite.
+
+During the audit, `qemu_cp_mv_edge_test.py` exposed a previously untested shell-redirection failure at `/bin/true > /usr/empty-source`. The exact fault occurred in `rix_shell_run_builtin` after child fd setup: the child still used the parsed command pointer while redirection syscalls were active, and `command->argv[0]` became invalid. The minimal fix is in `user/init.c`: the child snapshots `rix_shell_command_t` before fd setup, applies redirections to that snapshot, and passes the stable snapshot to external-command preparation. The isolated reproducer and the complete QEMU suite pass after this fix; no pipe or address-space redesign was made.
+
+Phase 19 is now **IMPLEMENTED / QEMU-VALIDATED** for the complete available utility and shell-integration scope. It is not a claim of full POSIX coreutils compatibility: bounded utility behavior, unsupported options, hardware validation, and the deliberately deferred `df`, `free`, `dmesg`, `mount`, and `umount` kernel APIs remain documented limitations.
