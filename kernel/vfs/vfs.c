@@ -89,16 +89,22 @@ int vfs_mount_root(rix_block_device_t *device){
     return 0;
 }
 
+int vfs_unmount_root(void){
+    if(!mounts[0].active)return -1;
+    rixfs_unmount(&mounts[0].fs);mounts[0].active=0;
+    root.node.inode=1;root.node.type=RIX_VFS_DIR;root.node.mode=0755;root.node.uid=0;root.node.gid=0;root.node.size=0;
+    return 0;
+}
+
 int vfs_root(rix_vfs_path_t *out){if(!out)return -1;out->node=&root.node;out->path[0]='/';out->path[1]=0;return 0;}
 int vfs_lookup(const char *path,rix_vfs_path_t *out){if(!path||!out)return -1;if(vfs_normalize_path(path,out->path,sizeof(out->path))!=0)return -1;if(out->path[0]=='/'&&out->path[1]==0)return vfs_root(out);return lookup_rixfs_path(out->path,out);}
 int vfs_lookup_from(const rix_vfs_path_t *base,const char *path,rix_vfs_path_t *out){
     if(!base||!path||!out)return -1;
     if(path[0]=='/')return vfs_lookup(path,out);
-    char combined[RIX_VFS_PATH_MAX];size_t len=0;
-    for(size_t i=0;base->path[i]&&i<sizeof(combined)-1;i++)combined[len++]=base->path[i];
-    if(len==0||combined[len-1]!='/')combined[len++]='/';
-    for(size_t i=0;path[i]&&len<sizeof(combined)-1;i++)combined[len++]=path[i];
-    if(len>=sizeof(combined)-1&&path[len-(base->path[0]?1:0)]!=0)return -1;
-    combined[len]=0;
-    return vfs_lookup(combined,out);
+    char joined[RIX_VFS_PATH_MAX];size_t len=0;
+    for(size_t i=0;base->path[i];i++){if(len+1>=sizeof(joined))return -1;joined[len++]=base->path[i];}
+    if(len==0||joined[len-1]!='/'){if(len+1>=sizeof(joined))return -1;joined[len++]='/';}
+    for(size_t i=0;path[i];i++){if(len+1>=sizeof(joined))return -1;joined[len++]=path[i];}
+    joined[len]=0;
+    return vfs_lookup(joined,out);
 }
