@@ -157,9 +157,12 @@ static int run_external_child(const rix_shell_command_t *command) {
         (char *)0
     };
     char path[RIX_INIT_PATH_CAP];
+    char *child_argv[RIX_SHELL_MAX_ARGS];
     int handled = 0;
     int status = 2;
     int output_fd = 1;
+    for (size_t i = 0; i < command->argc; ++i) child_argv[i] = command->argv[i];
+    child_argv[command->argc] = NULL;
     if (rix_shell_run_builtin(command, fd_writer, &output_fd, &handled, &status) != 0)
         child_error("rixuri: builtin failed\n", 125);
     if (handled) _exit(status);
@@ -170,7 +173,7 @@ static int run_external_child(const rix_shell_command_t *command) {
         (void)write_text(2, "\n");
         _exit(127);
     }
-    (void)execve(path, command->argv, shell_environment);
+    (void)execve(path, child_argv, shell_environment);
     (void)write_text(2, "rixuri: exec failed: ");
     (void)write_text(2, path);
     (void)write_text(2, "\n");
@@ -183,9 +186,9 @@ static int run_pipeline_command(const rix_shell_command_t *command, size_t comma
     int next_pipe[2] = {-1, -1};
     int child_input;
     if (!execution || !command || !command->argc || command_index >= RIX_INIT_PIDS_CAP) return -1;
-    if (input_fd == 0) reset_execution(execution);
-    child_input = input_fd == 0 ? -1 : execution->input_fd;
-    if (input_fd != 0 && child_input < 0) return -1;
+    if (command_index == 0u) reset_execution(execution);
+    child_input = input_fd == (int)RIX_SHELL_PIPE_INPUT_MARKER ? execution->input_fd : -1;
+    if (input_fd == (int)RIX_SHELL_PIPE_INPUT_MARKER && child_input < 0) return -1;
     if (output_fd != 1 && pipe(next_pipe) != 0) return -1;
 
     rix_pid_t child = fork();
@@ -196,15 +199,15 @@ static int run_pipeline_command(const rix_shell_command_t *command, size_t comma
         return -1;
     }
     if (child == 0) {
-        if (child_input >= 0) {
+        if (child_input >= 0 && child_input != 0) {
             if (dup2(child_input, 0) < 0) child_error("rixuri: stdin setup failed\n", 125);
-            (void)close(child_input);
         }
-        if (next_pipe[1] >= 0) {
+        if (next_pipe[1] >= 0 && next_pipe[1] != 1) {
             if (dup2(next_pipe[1], 1) < 0) child_error("rixuri: stdout setup failed\n", 125);
-            (void)close(next_pipe[1]);
         }
-        if (next_pipe[0] >= 0) (void)close(next_pipe[0]);
+        if (child_input >= 0 && child_input != 0) (void)close(child_input);
+        if (next_pipe[1] >= 0 && next_pipe[1] != 1) (void)close(next_pipe[1]);
+        if (next_pipe[0] >= 0 && next_pipe[0] != 0) (void)close(next_pipe[0]);
         if (apply_redirections(command) != 0) child_error("rixuri: redirection failed\n", 125);
         run_external_child(command);
     }

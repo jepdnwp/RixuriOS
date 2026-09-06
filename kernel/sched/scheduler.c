@@ -9,7 +9,20 @@
 #define RIX_STACK_SIZE 16384
 
 typedef enum { TASK_UNUSED=0, TASK_RUNNABLE=1, TASK_RUNNING=2, TASK_DEAD=3 } task_state_t;
-typedef struct { rix_task_id_t id; task_state_t state; uint64_t rsp; rix_kernel_thread_fn entry; void *arg; uint64_t process_pid; uint64_t user_entry; uint64_t user_stack; uint64_t user_return; uint8_t stack[RIX_STACK_SIZE] __attribute__((aligned(16))); } rix_task_t;
+typedef struct {
+    rix_task_id_t id;
+    task_state_t state;
+    uint64_t rsp;
+    rix_kernel_thread_fn entry;
+    void *arg;
+    uint64_t process_pid;
+    uint64_t user_entry;
+    uint64_t user_stack;
+    uint64_t user_return;
+    uint8_t user_context_valid;
+    rix_user_context_t user_context;
+    uint8_t stack[RIX_STACK_SIZE] __attribute__((aligned(16)));
+} rix_task_t;
 
 extern void rix_context_switch(uint64_t *old_rsp,uint64_t new_rsp);
 static volatile uint64_t ticks;
@@ -27,7 +40,8 @@ static void task_bootstrap(void){
     if(t->process_pid){
         rix_process_t *p=process_lookup(t->process_pid);
         if(!p||process_activate(t->process_pid)!=0)task_returned();
-        if (t->user_return == UINT64_MAX) x86_enter_user(p->address_space.pml4_phys,t->user_entry,t->user_stack);
+        if(t->user_context_valid)x86_enter_user_context(p->address_space.pml4_phys,&t->user_context);
+        if(t->user_return==UINT64_MAX)x86_enter_user(p->address_space.pml4_phys,t->user_entry,t->user_stack);
         x86_enter_user_return(p->address_space.pml4_phys,t->user_entry,t->user_stack,t->user_return);
     }
     sti();
@@ -37,8 +51,11 @@ static void task_bootstrap(void){
 
 int scheduler_init(void){
     ticks=0;current_index=0;next_id=1;
-    for(uint32_t i=0;i<RIX_MAX_TASKS;i++){tasks[i].id=0;tasks[i].state=TASK_UNUSED;tasks[i].rsp=0;tasks[i].entry=NULL;tasks[i].arg=NULL;tasks[i].process_pid=0;tasks[i].user_entry=0;tasks[i].user_stack=0;tasks[i].user_return=UINT64_MAX;
-}
+    for(uint32_t i=0;i<RIX_MAX_TASKS;i++){
+        tasks[i].id=0;tasks[i].state=TASK_UNUSED;tasks[i].rsp=0;tasks[i].entry=NULL;tasks[i].arg=NULL;
+        tasks[i].process_pid=0;tasks[i].user_entry=0;tasks[i].user_stack=0;tasks[i].user_return=UINT64_MAX;
+        tasks[i].user_context_valid=0;
+    }
     tasks[0].id=0;tasks[0].state=TASK_RUNNING;
     return 0;
 }
@@ -60,26 +77,40 @@ static void task_init_stack(rix_task_t *t){
 
 int scheduler_create_kernel_thread(rix_kernel_thread_fn entry,void *arg,rix_task_id_t *out_id){
     if(!entry)return -1;
-    rix_task_t *t;if(task_alloc(&t)!=0)return -1;
-    t->id=next_id++;if(!t->id)t->id=next_id++;t->entry=entry;t->arg=arg;t->process_pid=0;t->user_entry=0;t->user_stack=0;t->user_return=UINT64_MAX;t->state=TASK_RUNNABLE;task_init_stack(t);
+    rix_task_t*t;if(task_alloc(&t)!=0)return -1;
+    t->id=next_id++;if(!t->id)t->id=next_id++;t->entry=entry;t->arg=arg;t->process_pid=0;
+    t->user_entry=0;t->user_stack=0;t->user_return=UINT64_MAX;t->user_context_valid=0;t->state=TASK_RUNNABLE;task_init_stack(t);
     if(out_id)*out_id=t->id;
     return 0;
 }
 
 int scheduler_create_user_process(uint64_t pid,uint64_t entry,uint64_t user_stack,rix_task_id_t *out_id){
     if(!pid||!entry||!user_stack)return -1;
-    rix_process_t *p=process_lookup(pid);if(!p||!p->address_space.pml4_phys||!p->kernel_stack)return -1;
-    rix_task_t *t;if(task_alloc(&t)!=0)return -1;
-    t->id=next_id++;if(!t->id)t->id=next_id++;t->entry=NULL;t->arg=NULL;t->process_pid=pid;t->user_entry=entry;t->user_stack=user_stack;t->user_return=UINT64_MAX;t->state=TASK_RUNNABLE;task_init_stack(t);
+    rix_process_t*p=process_lookup(pid);if(!p||!p->address_space.pml4_phys||!p->kernel_stack)return -1;
+    rix_task_t*t;if(task_alloc(&t)!=0)return -1;
+    t->id=next_id++;if(!t->id)t->id=next_id++;t->entry=NULL;t->arg=NULL;t->process_pid=pid;
+    t->user_entry=entry;t->user_stack=user_stack;t->user_return=UINT64_MAX;t->user_context_valid=0;t->state=TASK_RUNNABLE;task_init_stack(t);
     if(out_id)*out_id=t->id;
     return 0;
 }
 
-int scheduler_create_fork_child(uint64_t pid,uint64_t entry,uint64_t user_stack,uint64_t return_value,rix_task_id_t *out_id){
+int scheduler_create_fork_child(uint64_t pid,uint64_t entry,uint64_t user_stack,uint64_t return_value,rix_task_id_t*out_id){
     if(!pid||!entry||!user_stack)return -1;
-    rix_process_t *p=process_lookup(pid);if(!p||!p->address_space.pml4_phys||!p->kernel_stack)return -1;
-    rix_task_t *t;if(task_alloc(&t)!=0)return -1;
-    t->id=next_id++;if(!t->id)t->id=next_id++;t->entry=NULL;t->arg=NULL;t->process_pid=pid;t->user_entry=entry;t->user_stack=user_stack;t->user_return=return_value;t->state=TASK_RUNNABLE;task_init_stack(t);
+    rix_process_t*p=process_lookup(pid);if(!p||!p->address_space.pml4_phys||!p->kernel_stack)return -1;
+    rix_task_t*t;if(task_alloc(&t)!=0)return -1;
+    t->id=next_id++;if(!t->id)t->id=next_id++;t->entry=NULL;t->arg=NULL;t->process_pid=pid;
+    t->user_entry=entry;t->user_stack=user_stack;t->user_return=return_value;t->user_context_valid=0;t->state=TASK_RUNNABLE;task_init_stack(t);
+    if(out_id)*out_id=t->id;
+    return 0;
+}
+
+int scheduler_create_fork_child_context(uint64_t pid,const rix_user_context_t*context,rix_task_id_t*out_id){
+    if(!pid||!context)return -1;
+    rix_process_t*p=process_lookup(pid);if(!p||!p->address_space.pml4_phys||!p->kernel_stack)return -1;
+    rix_task_t*t;if(task_alloc(&t)!=0)return -1;
+    t->id=next_id++;if(!t->id)t->id=next_id++;t->entry=NULL;t->arg=NULL;t->process_pid=pid;
+    t->user_entry=context->rip;t->user_stack=context->rsp;t->user_return=0;t->user_context=*context;t->user_context.rax=0;
+    t->user_context_valid=1;t->state=TASK_RUNNABLE;task_init_stack(t);
     if(out_id)*out_id=t->id;
     return 0;
 }
@@ -103,11 +134,8 @@ void scheduler_yield(void){
     /* The context switch returns in the task that was waiting in this
        function. The address space must follow the resumed task, not the task
        that ran immediately before it. */
-    rix_task_t *resumed=&tasks[current_index];
-    if(resumed->process_pid){
-        if(process_activate(resumed->process_pid)!=0)resumed->state=TASK_DEAD;
-    }else if(resumed->id==0){
-        (void)process_activate(0);
-    }
+    rix_task_t*resumed=&tasks[current_index];
+    if(resumed->process_pid){if(process_activate(resumed->process_pid)!=0)resumed->state=TASK_DEAD;}
+    else if(resumed->id==0){(void)process_activate(0);}
     if(flags&0x200ULL)sti();
 }

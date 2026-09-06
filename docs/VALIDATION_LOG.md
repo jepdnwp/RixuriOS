@@ -99,3 +99,40 @@ make image CROSS=
 ```
 
 The host suite reported `hid report tests: PASS`, `tty tests: PASS` and `shell parser tests: PASS`; the shell test now also covers indexed pipeline callback propagation. The UEFI/QEMU smoke run reached `RIXURI:KERNEL_READY`, printed `RixuriOS shell ready` and the `rixuri$ ` prompt, and emitted no CPU exception. QEMU still reported zero NVMe and xHCI controllers, and no disposable RixFS command image or real keyboard input path was available in this run. Therefore this is build/boot/prompt evidence only; it does not claim hardware-backed interactive input or external-command execution completion.
+
+
+## 2026-09-06 — real userspace chain and disposable RixFS QEMU qualification
+
+The continuation was validated after a clean rebuild with `make test CROSS=` and `make image CROSS=`. The host suite reported `hid report tests: PASS`, `tty tests: PASS`, `shell parser tests: PASS`, and `Static kernel build checks completed.` The image builder reported a 64 MiB RixFS image with real ELF files at `/bin/echo`, `/bin/cat`, `/usr/bin/args`, `/usr/bin/grep`, `/bin/true`, `/sbin/false`, and `/usr/sbin/true`; the UEFI packager generated `build/uefi/esp.img`.
+
+A bounded interactive run of `bash ./scripts/run-qemu.sh` used the serial-to-TTY worker and the mounted disposable image. The boot evidence included `NVMe: controllers=1`, `VFS: mount nvme0n1 rc=0`, `RIXURI:KERNEL_READY`, `RixuriOS shell ready`, and the `rixuri$ ` prompt. The QEMU firmware also reported that the NVMe UEFI boot entry was not found and continued through the SATA-backed UEFI boot entry; the kernel then discovered and mounted the NVMe test image as intended.
+
+The following real command results were observed on the serial console:
+
+```text
+/bin/echo hello | /usr/bin/grep hello
+hello
+
+/usr/bin/args arg1 arg2
+argc=3
+argv[0]=/usr/bin/args
+argv[1]=arg1
+argv[2]=arg2
+envp=PATH=/bin:/usr/bin:/sbin:/usr/sbin
+envp=PWD=/
+
+/bin/echo one > file
+/bin/cat file
+one
+/bin/cat < file
+one
+
+true && echo yes
+yes
+false || echo recovered
+recovered
+```
+
+These observations cover the real serial-input-to-TTY-to-shell-to-fork/exec-to-argv/envp-stack-to-VFS/pipe/dup2/read/write-to-wait-to-prompt path for the listed scenarios. An attempted non-interactive stdin pipe was intentionally not counted as evidence because QEMU consumed input before shell initialization in one run and produced a bounded `qemu_rc=124`; the accepted evidence above came from the live interactive serial session, not from that failed capture.
+
+The evidence does not close all Phase 18 gates. Append redirection, multi-stage pipeline depth, background job lifecycle and notifications, `waitpid(WNOHANG)`, foreground process-group signal delivery, malformed-pointer runtime cases, permission/error matrices, and a `sleep` executable remain open. QEMU reported zero xHCI controllers, so physical USB keyboard/HID evidence and the historical completion-code-11 / keyboard `0x74` regressions remain blocked.

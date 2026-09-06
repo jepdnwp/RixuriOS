@@ -8,4 +8,5 @@ void serial_write(const char *s){if(!s)return;while(*s)serial_putc(*s++);}
 void serial_write_n(const char *s,size_t length){if(!s)return;for(size_t i=0;i<length;i++)serial_putc(s[i]);}
 void serial_write_hex(uint64_t value){static const char digits[]="0123456789abcdef";serial_write("0x");for(int shift=60;shift>=0;shift-=4)serial_putc(digits[(value>>shift)&0xFULL]);}
 void serial_write_dec(uint64_t value){char buf[21];size_t i=sizeof(buf);if(value==0){serial_putc('0');return;}while(value){buf[--i]=(char)('0'+value%10ULL);value/=10ULL;}serial_write(&buf[i]);}
+int serial_read_byte(uint8_t *byte){if(!byte||(inb(COM1+5)&0x01u)==0)return -1;*byte=inb(COM1);return 0;}
 void panic(const char *reason){serial_write("RixuriOS PANIC: ");serial_write(reason?reason:"unknown");serial_write("\r\n");for(;;)__asm__ volatile("cli; hlt");}

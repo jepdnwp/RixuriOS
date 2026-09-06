@@ -237,7 +237,7 @@ int rix_shell_resolve_path(const char *command, const char *path,
         if (command_length >= capacity) return -3;
         for (size_t i = 0; i < command_length; ++i) output[i] = command[i];
         output[command_length] = 0;
-        return exists(output, context) ? 0 : -2;
+        return exists(output, context) == 0 ? 0 : -2;
     }
     if (!path) return -2;
     const char *segment = path;
@@ -607,9 +607,9 @@ int rix_shell_execute_pipeline_indexed(const rix_shell_pipeline_t *pipeline,
         int input_fd = 0;
         int output_fd = 1;
         if (i != 0u && pipeline->connector[i - 1u] == RIX_SHELL_PIPE)
-            input_fd = (int)i;
+            input_fd = (int)RIX_SHELL_PIPE_INPUT_MARKER;
         if (i + 1u < pipeline->command_count && pipeline->connector[i] == RIX_SHELL_PIPE)
-            output_fd = (int)(i + 1u);
+            output_fd = (int)RIX_SHELL_PIPE_OUTPUT_MARKER;
         else if (i + 1u < pipeline->command_count && pipeline->connector[i] != RIX_SHELL_AND &&
                  pipeline->connector[i] != RIX_SHELL_OR && pipeline->connector[i] != RIX_SHELL_SEMI) {
             *status = -2;
@@ -635,6 +635,8 @@ static int legacy_pipeline_runner(const rix_shell_command_t *command, size_t com
                                   int input_fd, int output_fd, void *context) {
     (void)command_index;
     legacy_pipeline_context_t *legacy = context;
+    if (input_fd == (int)RIX_SHELL_PIPE_INPUT_MARKER) input_fd = (int)command_index;
+    if (output_fd == (int)RIX_SHELL_PIPE_OUTPUT_MARKER) output_fd = 1;
     return legacy->runner(command, input_fd, output_fd, legacy->context);
 }
 

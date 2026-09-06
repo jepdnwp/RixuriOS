@@ -17,11 +17,7 @@ static int copy_fd(int input) {
     }
 }
 
-void _start(void) {
-    uint64_t *sp;
-    __asm__ volatile("mov %%rsp,%0" : "=r"(sp));
-    int argc = (int)sp[0];
-    char **argv = (char **)(uintptr_t)sp[1];
+int program_main(int argc, char **argv) {
     int status = 0;
     if (argc <= 1) {
         status = copy_fd(0);
@@ -33,5 +29,5 @@ void _start(void) {
             (void)close(fd);
         }
     }
-    _exit(status);
+    return status;
 }

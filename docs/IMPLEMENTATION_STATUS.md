@@ -190,3 +190,23 @@ Phase 15 continuation: add device-manager policy around port-event attach/detach
 ## Next phase
 
 Phase 18 qualification: provide a controller-backed or otherwise documented real input path, populate a disposable RixFS test image with known user binaries, exercise simple external commands, redirection, multi-stage pipelines, conditional execution and failure paths, then preserve raw serial/input/output evidence. Do not mark Phase 18 COMPLETE from the current banner/prompt smoke test alone.
+
+
+## Latest continuation — Phase 18 real userspace chain qualification — 2026-09-06
+
+- Added a reproducible `scripts/build-rixfs-image.py` tool and Makefile integration. The generated disposable 64 MiB RixFS image creates the standard directory tree and embeds real ELF utilities at `/bin/echo`, `/bin/cat`, `/usr/bin/args`, `/usr/bin/grep`, `/bin/true`, `/sbin/false` and `/usr/sbin/true`.
+- Connected the generated RixFS image to QEMU through the real NVMe device path in `scripts/run-qemu.sh`. The observed boot path discovered one QEMU NVMe controller, mounted `nvme0n1` through VFS with `rc=0`, and reached the shell without a host-side filesystem shortcut.
+- Completed the userspace startup ABI with a shared `_start` wrapper that passes `argc`, `argv` and `envp` to normal C entrypoints. The `args` executable prints all three values; the QEMU evidence showed `argc=3`, both arguments, `PATH=/bin:/usr/bin:/sbin:/usr/sbin`, and `PWD=/`.
+- Hardened exec argument and environment handling, initial-stack construction, fork child register restoration, and per-process exec-image buffers. This prevents concurrent or nested exec calls from sharing a single kernel image buffer.
+- Connected the real shell to serial-backed TTY input, fork/exec/wait, VFS-backed PATH lookup, pipe/dup2, regular-file redirection and external utility execution. Pipeline callback markers are now distinct from real file descriptors, so standalone and conditional commands do not accidentally create or require pipes.
+- Added real userspace `grep`, `args`, `true` and `false` programs, plus host regression coverage for absolute command resolution. Temporary serial diagnostics were removed after validation.
+
+### Qualification evidence
+
+- `make test CROSS=` passed the HID report, TTY and shell parser suites and completed the strict static kernel checks with `-Wall -Wextra -Werror`.
+- `make image CROSS=` generated `build/rixfs.img` and `build/uefi/esp.img` successfully.
+- Bounded interactive QEMU evidence reached `RIXURI:KERNEL_READY`, mounted the disposable image, and demonstrated external `/bin/echo`, `/usr/bin/args`, `/bin/cat`, `/usr/bin/grep`, `<` and `>` redirections, a real `echo | grep` pipeline, and `true && echo yes` / `false || echo recovered` conditional behavior.
+
+### Evidence boundary
+
+The tested external-command, argv/envp, redirection, pipeline and conditional paths are now `IMPLEMENTED / QEMU-VALIDATED` for the observed scenarios. Phase 18 is not marked COMPLETE: append redirection, multi-stage pipeline depth, background jobs and reaping, `waitpid(WNOHANG)`, foreground process-group signal delivery, Ctrl-C/Ctrl-Z/Ctrl-\\ behavior, malformed-user-pointer runtime tests, and the requested `sleep` utility still require dedicated evidence. xHCI/HID keyboard qualification remains blocked because this QEMU topology reports zero xHCI controllers; the tested input path is the documented serial-to-TTY worker path.

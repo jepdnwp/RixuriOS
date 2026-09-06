@@ -18,3 +18,5 @@ _start:
 stack_bottom:
 .skip 32768
 stack_top:
+
+.section .note.GNU-stack,"",@progbits

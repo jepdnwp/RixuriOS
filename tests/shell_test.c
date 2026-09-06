@@ -76,6 +76,9 @@ int main(void) {
                 rix_shell_resolve_path("local", ":/bin", path_exists, NULL,
                                        resolved, sizeof(resolved)) == 0 &&
                 strcmp(resolved, "./local") == 0 &&
+                rix_shell_resolve_path("/bin/echo", "/sbin:/bin", path_exists, NULL,
+                                       resolved, sizeof(resolved)) == 0 &&
+                strcmp(resolved, "/bin/echo") == 0 &&
                 rix_shell_resolve_path("missing", "/bin", path_exists, NULL,
                                        resolved, sizeof(resolved)) == -2,
                 "PATH resolution")) return 1;

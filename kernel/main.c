@@ -101,6 +101,17 @@ static void xhci_hotplug_worker(void *arg){
   scheduler_yield();
  }
 }
+static void serial_tty_worker(void *arg){
+ (void)arg;
+ for(;;){
+  uint8_t byte;
+  while(serial_read_byte(&byte)==0){
+   if(byte=='\r')byte='\n';
+   if(tty_input(0,byte)==0)serial_write_n((const char*)&byte,1);
+  }
+  scheduler_yield();
+ }
+}
 static void try_mount_root(void){const char *names[]={"nvme0n1","nvme0n1p1","nvme1n1","nvme1n1p1"};for(size_t i=0;i<sizeof(names)/sizeof(names[0]);i++){rix_block_device_t*d=block_find(names[i]);if(!d)continue;int rc=vfs_mount_root(d);serial_write("VFS: mount ");serial_write(names[i]);serial_write(" rc=");serial_write_dec((uint64_t)(rc<0?-rc:rc));serial_write("\r\n");if(rc==0)return;}}
 void kernel_main(const rixuri_boot_info_t *boot){
  serial_init();serial_write("RixuriOS kernel: x86_64 / AMD64 64-bit\r\n");
@@ -141,9 +152,11 @@ void kernel_main(const rixuri_boot_info_t *boot){
  tty_set_foreground_pgrp(0, (uint32_t)user_proc->process_group);
  rix_task_id_t xhci_worker_task=0;
  if(scheduler_create_kernel_thread(xhci_hotplug_worker,0,&xhci_worker_task)!=0)panic("failed to create xHCI hotplug worker");
+ rix_task_id_t serial_worker_task=0;
+ if(scheduler_create_kernel_thread(serial_tty_worker,0,&serial_worker_task)!=0)panic("failed to create serial TTY worker");
  serial_write("USER: embedded init prepared, pid=");serial_write_dec(user_pid);serial_write(" task=");serial_write_dec(user_task);serial_write("\r\n");
  int io_ready=0;if(acpi_ioapic_count()&&ioapic_init()==0){if(ioapic_route_irq(0,32,(uint8_t)lapic_id())!=0)panic("failed to route PIT IRQ");ioapic_unmask_irq(0);pic_disable();io_ready=1;}
  if(io_ready){idt_enable();serial_write("IRQ: PIT routed to vector 32; interrupts enabled\r\n");}else serial_write("IRQ: no usable IOAPIC; interrupts remain disabled\r\n");
- serial_write("xHCI: hotplug worker task=");serial_write_dec(xhci_worker_task);serial_write("\r\n");
+ serial_write("xHCI: hotplug worker task=");serial_write_dec(xhci_worker_task);serial_write(" serial TTY worker task=");serial_write_dec(serial_worker_task);serial_write("\r\n");
  serial_write("Core services: timer/scheduler/process/syscall/PCI/NVMe/xHCI/HID/block/VFS/time initialized\r\n");serial_write("LAPIC: initialized, id=");serial_write_dec(lapic_id());serial_write("\r\n");serial_write("RIXURI:KERNEL_READY\r\n");scheduler_yield();serial_write("USER: init returned to kernel\r\n");for(;;)scheduler_yield();
 }

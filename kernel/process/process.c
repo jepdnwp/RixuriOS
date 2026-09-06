@@ -63,8 +63,8 @@ static int stack_copy_string(const rix_address_space_t *as, uint64_t *sp,
 static int stack_build_args(const rix_address_space_t *as, uint64_t *out_sp,
                             const char *const *argv, size_t argc,
                             const char *const *envp, size_t envc) {
-    if (!as || !out_sp || argc > RIX_PROCESS_ARG_MAX || envc > RIX_PROCESS_ARG_MAX ||
-        (argc && !argv) || (envc && !envp)) return -1;
+    if (!as || !out_sp || argc == 0 || argc > RIX_PROCESS_ARG_MAX ||
+        envc > RIX_PROCESS_ARG_MAX || !argv || (envc && !envp)) return -1;
     uint64_t arg_address[RIX_PROCESS_ARG_MAX];
     uint64_t env_address[RIX_PROCESS_ARG_MAX];
     uint64_t sp = USER_STACK_TOP;
@@ -98,8 +98,9 @@ int process_exec_user_with_args(pid_t pid, const void *image, uint64_t image_siz
                                 const char *const *argv, size_t argc,
                                 const char *const *envp, size_t envc,
                                 uint64_t *out_entry, uint64_t *out_user_stack) {
-    if (!image || !image_size || !out_entry || !out_user_stack || argc > RIX_PROCESS_ARG_MAX ||
-        envc > RIX_PROCESS_ARG_MAX) return -1;
+    if (!image || !image_size || !out_entry || !out_user_stack || argc == 0 ||
+        argc > RIX_PROCESS_ARG_MAX || envc > RIX_PROCESS_ARG_MAX || !argv ||
+        (envc && !envp)) return -1;
     rix_process_t *p = process_lookup(pid);
     if (!p || !p->address_space.pml4_phys) return -1;
     rix_address_space_t replacement = {0};
