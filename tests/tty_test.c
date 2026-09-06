@@ -37,6 +37,14 @@ int main(void) {
     if (expect(tty_set_canonical(0, 0) == 0 && tty_input(0, 'x') == 0 &&
                 tty_read(0, buffer, sizeof(buffer), &count) == 0 && count == 1 &&
                 buffer[0] == 'x', "raw input read")) return 1;
+    rix_termios_t termios = {0};
+    if (expect(tty_get_termios(0, &termios) == 0 &&
+                (termios.lflag & (RIX_TTY_LFLAG_ECHO | RIX_TTY_LFLAG_UTF8)) ==
+                    (RIX_TTY_LFLAG_ECHO | RIX_TTY_LFLAG_UTF8),
+                "get termios flags")) return 1;
+    termios.lflag = RIX_TTY_LFLAG_CANONICAL | RIX_TTY_LFLAG_ECHO |
+                     RIX_TTY_LFLAG_ISIG | RIX_TTY_LFLAG_UTF8;
+    if (expect(tty_set_termios(0, &termios) == 0, "set termios flags")) return 1;
     if (expect(tty_set_foreground_pgrp(0, 42) == 0, "set foreground pgrp")) return 1;
     uint32_t pgrp = 0;
     if (expect(tty_get_foreground_pgrp(0, &pgrp) == 0 && pgrp == 42,
@@ -59,6 +67,9 @@ int main(void) {
                 "cursor and dimensions")) return 1;
     if (expect(tty_output(0, "X", 1, &written) == 0 && written == 1,
                 "screen character output")) return 1;
+    if (expect(tty_output(0, "\xC3\xA9", 2, &written) == 0 && written == 2 &&
+                tty_get_cursor(0, &row, &column) == 0 && row == 4 && column == 11,
+                "UTF-8 sequence occupies one screen cell")) return 1;
     uint8_t screen[24u * 80u] = {0};
     size_t screen_size = 0;
     if (expect(tty_read_screen(0, screen, sizeof(screen), &screen_size) == 0 &&
@@ -66,6 +77,17 @@ int main(void) {
                 "screen buffer read")) return 1;
     unsigned pty = 0;
     if (expect(tty_pty_open(&pty) == 0, "open pty")) return 1;
+    if (expect(tty_pty_get_termios(pty, &termios) == 0 &&
+                (termios.lflag & RIX_TTY_LFLAG_CANONICAL), "get pty termios")) return 1;
+    termios.lflag = RIX_TTY_LFLAG_UTF8;
+    if (expect(tty_pty_set_termios(pty, &termios) == 0 &&
+                tty_pty_master_write(pty, "xy", 2, &written) == 0 && written == 2 &&
+                tty_pty_slave_read(pty, buffer, sizeof(buffer), &count) == 0 && count == 2 &&
+                memcmp(buffer, "xy", 2) == 0, "pty raw termios input")) return 1;
+    if (expect(tty_pty_master_read(pty, output, sizeof(output), &count) == -3 && count == 0,
+                "pty raw mode suppresses echo when disabled")) return 1;
+    termios.lflag = RIX_TTY_LFLAG_CANONICAL | RIX_TTY_LFLAG_ECHO | RIX_TTY_LFLAG_ISIG | RIX_TTY_LFLAG_UTF8;
+    if (expect(tty_pty_set_termios(pty, &termios) == 0, "restore pty termios")) return 1;
     if (expect(tty_pty_master_write(pty, "cmd\n", 4, &written) == 0 && written == 4,
                 "pty master writes input")) return 1;
     if (expect(tty_pty_slave_read(pty, buffer, sizeof(buffer), &count) == 0 &&

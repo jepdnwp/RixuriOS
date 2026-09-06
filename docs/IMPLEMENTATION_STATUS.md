@@ -23,7 +23,7 @@ A subsystem is not marked COMPLETE merely because source exists. Completion requ
 - USB/xHCI: controller/capability, multi-endpoint transfer rings, HID report delivery adapters and port-event polling are implemented; hardware qualification remains open.
 - GUI: deliberately untouched; GUI remains last in the roadmap.
 - Shell: Phase 18 bounded lexer/parser frontend, callback-driven variable/arithmetic/command substitution expansion, prefix autocomplete and persistent-format history/navigation are implemented and host-tested for quoting, escaping, comments, pipelines, logical/sequential/background operators and input/output/append redirections; real execution remains open.
-- TTY: canonical/raw input, line readiness, echo/output queues, foreground process-group state, PTY master/slave byte/line flow, terminal dimensions, bounded ANSI/VT screen state, control-signal delivery and controlling-terminal session state are implemented and host-tested; shell/pipeline policy remains open.
+- TTY: canonical/raw input, line readiness, echo/output queues, termios-like canonical/echo/ISIG/UTF-8 flags, foreground process-group state, PTY master/slave byte/line flow, terminal dimensions, bounded ANSI/VT screen state, control-signal delivery and controlling-terminal session state are implemented and host-tested; shell/pipeline policy remains open.
 - Linker hardening: kernel program headers are explicitly split into `R-X`, `R--`, `RW-`, with a non-executable `GNU_STACK`; the prior generated-blob executable-stack warning no longer produces an executable stack.
 
 ## Validation boundary
@@ -147,3 +147,11 @@ Phase 15 continuation: add device-manager policy around port-event attach/detach
 - Added a bounded `RIX_SYS_SPAWN` ABI and userspace `spawn()` wrapper. The kernel validates a user name, copies a maximum 4096-byte ELF image into kernel memory, creates a child address space, inherits descriptors and schedules a user task.
 - Added a deep-copy address-space clone for user pages, a `fork()` syscall/libc wrapper with inherited FD state and a child user-entry path returning `rax=0`, plus a path-based `execve()` syscall/libc wrapper that atomically builds a replacement image and redirects the syscall return frame to the new ELF entry/RSP.
 - The current exec ABI validates and loads the executable path but does not yet copy POSIX argv/envp onto the new stack; command runner/PATH search remains a separate shell integration gate.
+
+## Latest continuation — Phase 17 terminal configuration and validation
+
+- Added a bounded termios-like `rix_termios_t` interface for TTY and PTY slaves. `CANONICAL`, `ECHO`, `ISIG` and `UTF8` flags now have explicit get/set behavior; control characters respect `ISIG`, and PTY raw mode is configurable rather than fixed.
+- Added bounded UTF-8 sequence handling in the VT screen path. Valid sequences advance one display cell, malformed sequences are replaced by a safe placeholder, and raw byte mode remains available when UTF-8 is disabled.
+- Extended `tests/tty_test.c` with termios, UTF-8 cell-width, PTY raw-mode and echo-suppression regression cases.
+- `make all CROSS=`, `make check CROSS=`, `make usb-test hid-test tty-test shell-test CROSS=`, `make image CROSS=` and the QEMU boot path completed successfully in the validation environment. QEMU reached `RIXURI:KERNEL_READY` and `USER: init returned to kernel`.
+- Phase 17 remains `IMPLEMENTED / NOT YET VALIDATED` for physical interactive keyboard-to-TTY evidence and real shell process/pipeline/redirection execution. No hardware or synthetic output was counted as a substitute for those gates.

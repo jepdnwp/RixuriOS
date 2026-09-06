@@ -30,9 +30,14 @@ typedef struct {
     uint8_t screen[RIX_TTY_MAX_ROWS * RIX_TTY_MAX_COLUMNS];
     uint8_t canonical;
     uint8_t echo;
+    uint8_t isig;
+    uint8_t utf8;
     uint8_t controlling;
     uint32_t session;
     uint32_t foreground_pgrp;
+    uint32_t utf8_codepoint;
+    uint8_t utf8_expected;
+    uint8_t utf8_seen;
 } rix_tty_t;
 
 void tty_init(void);
@@ -43,6 +48,18 @@ int tty_output(unsigned id, const void *buf, size_t n, size_t *written);
 int tty_read_output(unsigned id, void *buf, size_t n, size_t *out);
 int tty_set_canonical(unsigned id, int enabled);
 int tty_set_echo(unsigned id, int enabled);
+
+#define RIX_TTY_LFLAG_CANONICAL 0x0001u
+#define RIX_TTY_LFLAG_ECHO      0x0002u
+#define RIX_TTY_LFLAG_ISIG      0x0004u
+#define RIX_TTY_LFLAG_UTF8      0x0008u
+
+typedef struct {
+    uint32_t lflag;
+} rix_termios_t;
+
+int tty_get_termios(unsigned id, rix_termios_t *termios);
+int tty_set_termios(unsigned id, const rix_termios_t *termios);
 int tty_set_foreground_pgrp(unsigned id, uint32_t pgrp);
 int tty_get_foreground_pgrp(unsigned id, uint32_t *pgrp);
 int tty_set_session(unsigned id, uint32_t session, int controlling);
@@ -57,6 +74,8 @@ int tty_recover(unsigned id);
 
 int tty_pty_open(unsigned *pty_id);
 int tty_pty_close(unsigned pty_id);
+int tty_pty_get_termios(unsigned pty_id, rix_termios_t *termios);
+int tty_pty_set_termios(unsigned pty_id, const rix_termios_t *termios);
 int tty_pty_master_write(unsigned pty_id, const void *buf, size_t n, size_t *written);
 int tty_pty_master_read(unsigned pty_id, void *buf, size_t n, size_t *out);
 int tty_pty_slave_write(unsigned pty_id, const void *buf, size_t n, size_t *written);

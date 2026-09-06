@@ -79,6 +79,49 @@ static void vt_erase_display(rix_tty_t *t, uint16_t mode) {
 }
 
 static void vt_consume(rix_tty_t *t, uint8_t ch) {
+    if (!t->utf8) {
+        /* In raw byte mode the screen still receives each byte as a cell. */
+    } else if (t->utf8_expected != 0u) {
+        if ((ch & 0xc0u) == 0x80u) {
+            t->utf8_codepoint = (t->utf8_codepoint << 6) | (uint32_t)(ch & 0x3fu);
+            t->utf8_seen++;
+            if (t->utf8_seen == t->utf8_expected) {
+                /* The bounded screen stores one display cell per code point. */
+                uint8_t cell = t->utf8_codepoint <= 0x7fu ? (uint8_t)t->utf8_codepoint : (uint8_t)'?';
+                t->utf8_expected = 0;
+                t->utf8_seen = 0;
+                t->utf8_codepoint = 0;
+                vt_print(t, cell);
+            }
+            return;
+        }
+        t->utf8_expected = 0;
+        t->utf8_seen = 0;
+        t->utf8_codepoint = 0;
+        vt_print(t, '?');
+    }
+    if ((t->utf8_expected == 0u) && ch >= 0x80u && ch <= 0xf4u) {
+        if (ch >= 0xc2u && ch <= 0xdfu) {
+            t->utf8_expected = 1u;
+            t->utf8_codepoint = ch & 0x1fu;
+            t->utf8_seen = 0;
+            return;
+        }
+        if (ch >= 0xe0u && ch <= 0xefu) {
+            t->utf8_expected = 2u;
+            t->utf8_codepoint = ch & 0x0fu;
+            t->utf8_seen = 0;
+            return;
+        }
+        if (ch >= 0xf0u && ch <= 0xf4u) {
+            t->utf8_expected = 3u;
+            t->utf8_codepoint = ch & 0x07u;
+            t->utf8_seen = 0;
+            return;
+        }
+        vt_print(t, '?');
+        return;
+    }
     if (t->vt_state == VT_NORMAL) {
         if (ch == 0x1bu) {
             t->vt_state = VT_ESC;
@@ -159,9 +202,14 @@ void tty_init(void) {
         t->vt_value_index = 0;
         t->vt_value[0] = 0;
         t->vt_value[1] = 0;
+        t->utf8_codepoint = 0;
+        t->utf8_expected = 0;
+        t->utf8_seen = 0;
         vt_clear_screen(t);
         t->canonical = 1;
         t->echo = 1;
+        t->isig = 1;
+        t->utf8 = 1;
         t->controlling = 0;
         t->session = 0;
         t->foreground_pgrp = 0;
@@ -217,7 +265,7 @@ static int echo_bytes(rix_tty_t *t, const uint8_t *data, size_t n) {
 int tty_input(unsigned id, uint8_t ch) {
     rix_tty_t *t = tty_valid(id);
     if (!t) return -1;
-    if (t->canonical && (ch == 0x03u || ch == 0x1au || ch == 0x1cu)) {
+    if (t->canonical && t->isig && (ch == 0x03u || ch == 0x1au || ch == 0x1cu)) {
         return tty_control_signal(t, ch);
     }
     if (t->canonical && (ch == 8u || ch == 127u)) {
@@ -278,6 +326,32 @@ int tty_set_echo(unsigned id, int enabled) {
     rix_tty_t *t = tty_valid(id);
     if (!t) return -1;
     t->echo = enabled ? 1u : 0u;
+    return 0;
+}
+
+int tty_get_termios(unsigned id, rix_termios_t *termios) {
+    rix_tty_t *t = tty_valid(id);
+    if (!t || !termios) return -1;
+    termios->lflag = (t->canonical ? RIX_TTY_LFLAG_CANONICAL : 0u) |
+                     (t->echo ? RIX_TTY_LFLAG_ECHO : 0u) |
+                     (t->isig ? RIX_TTY_LFLAG_ISIG : 0u) |
+                     (t->utf8 ? RIX_TTY_LFLAG_UTF8 : 0u);
+    return 0;
+}
+
+int tty_set_termios(unsigned id, const rix_termios_t *termios) {
+    rix_tty_t *t = tty_valid(id);
+    if (!t || !termios || (termios->lflag & ~(RIX_TTY_LFLAG_CANONICAL |
+        RIX_TTY_LFLAG_ECHO | RIX_TTY_LFLAG_ISIG | RIX_TTY_LFLAG_UTF8))) return -1;
+    t->canonical = (termios->lflag & RIX_TTY_LFLAG_CANONICAL) != 0u;
+    t->echo = (termios->lflag & RIX_TTY_LFLAG_ECHO) != 0u;
+    t->isig = (termios->lflag & RIX_TTY_LFLAG_ISIG) != 0u;
+    t->utf8 = (termios->lflag & RIX_TTY_LFLAG_UTF8) != 0u;
+    if ((termios->lflag & RIX_TTY_LFLAG_UTF8) == 0u) {
+        t->utf8_expected = 0;
+        t->utf8_seen = 0;
+        t->utf8_codepoint = 0;
+    }
     return 0;
 }
 
@@ -410,9 +484,14 @@ int tty_pty_open(unsigned *pty_id) {
         ptys[i].slave.vt_value_index = 0;
         ptys[i].slave.vt_value[0] = 0;
         ptys[i].slave.vt_value[1] = 0;
+        ptys[i].slave.utf8_codepoint = 0;
+        ptys[i].slave.utf8_expected = 0;
+        ptys[i].slave.utf8_seen = 0;
         vt_clear_screen(&ptys[i].slave);
         ptys[i].slave.canonical = 1;
         ptys[i].slave.echo = 1;
+        ptys[i].slave.isig = 1;
+        ptys[i].slave.utf8 = 1;
         ptys[i].slave.controlling = 0;
         ptys[i].slave.session = 0;
         ptys[i].slave.foreground_pgrp = 0;
@@ -432,6 +511,32 @@ int tty_pty_close(unsigned pty_id) {
     return 0;
 }
 
+int tty_pty_get_termios(unsigned pty_id, rix_termios_t *termios) {
+    rix_pty_t *pty = pty_valid(pty_id);
+    if (!pty || !termios) return -1;
+    termios->lflag = (pty->slave.canonical ? RIX_TTY_LFLAG_CANONICAL : 0u) |
+                     (pty->slave.echo ? RIX_TTY_LFLAG_ECHO : 0u) |
+                     (pty->slave.isig ? RIX_TTY_LFLAG_ISIG : 0u) |
+                     (pty->slave.utf8 ? RIX_TTY_LFLAG_UTF8 : 0u);
+    return 0;
+}
+
+int tty_pty_set_termios(unsigned pty_id, const rix_termios_t *termios) {
+    rix_pty_t *pty = pty_valid(pty_id);
+    if (!pty || !termios || (termios->lflag & ~(RIX_TTY_LFLAG_CANONICAL |
+        RIX_TTY_LFLAG_ECHO | RIX_TTY_LFLAG_ISIG | RIX_TTY_LFLAG_UTF8))) return -1;
+    pty->slave.canonical = (termios->lflag & RIX_TTY_LFLAG_CANONICAL) != 0u;
+    pty->slave.echo = (termios->lflag & RIX_TTY_LFLAG_ECHO) != 0u;
+    pty->slave.isig = (termios->lflag & RIX_TTY_LFLAG_ISIG) != 0u;
+    pty->slave.utf8 = (termios->lflag & RIX_TTY_LFLAG_UTF8) != 0u;
+    if (!pty->slave.utf8) {
+        pty->slave.utf8_expected = 0;
+        pty->slave.utf8_seen = 0;
+        pty->slave.utf8_codepoint = 0;
+    }
+    return 0;
+}
+
 int tty_pty_master_write(unsigned pty_id, const void *buf, size_t n, size_t *written) {
     if (written) *written = 0;
     rix_pty_t *pty = pty_valid(pty_id);
@@ -440,7 +545,8 @@ int tty_pty_master_write(unsigned pty_id, const void *buf, size_t n, size_t *wri
     size_t done = 0;
     while (done < n) {
         uint8_t ch = src[done];
-        if (pty->slave.canonical && (ch == 0x03u || ch == 0x1au || ch == 0x1cu)) {
+        if (pty->slave.canonical && pty->slave.isig &&
+            (ch == 0x03u || ch == 0x1au || ch == 0x1cu)) {
             int signal_rc = tty_control_signal(&pty->slave, ch);
             if (signal_rc != 0) return signal_rc;
             done++;
