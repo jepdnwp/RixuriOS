@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include "../storage/block.h"
 #define RIXFS_MAGIC 0x5249584653465331ULL
-#define RIXFS_VERSION 2u
+#define RIXFS_VERSION 1u
 #define RIXFS_BLOCK_SECTOR 0u
 #define RIXFS_INODE_SIZE 128u
 #define RIXFS_NAME_MAX 255u
