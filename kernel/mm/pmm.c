@@ -1,6 +1,7 @@
 #include "pmm.h"
 #include <stddef.h>
 #include <stdint.h>
+extern void serial_write(const char *s);extern void serial_write_hex(uint64_t value);
 
 #define PMM_MAX_PHYS RIXURI_MAX_PHYS_BYTES
 #define PMM_MAX_PAGES RIXURI_MAX_PAGES
@@ -10,6 +11,7 @@
 static uint64_t page_bitmap[RIXURI_BITMAP_WORDS];
 /* managed_bitmap: 1 = page belongs to firmware-reported usable memory. */
 static uint64_t managed_bitmap[RIXURI_BITMAP_WORDS];
+static uint64_t reserved_bitmap[RIXURI_BITMAP_WORDS];
 static uint64_t total_pages_count;
 static uint64_t free_pages_count;
 
@@ -35,7 +37,7 @@ static void mark_range(uint64_t base,uint64_t pages,int freeable){
     }
 }
 void pmm_init(const void*memory_map,uint64_t memory_map_size,uint64_t descriptor_size,uint64_t kernel_base,uint64_t kernel_end,uint64_t boot_info,uint64_t boot_info_size){
-    for(size_t i=0;i<RIXURI_BITMAP_WORDS;i++){page_bitmap[i]=UINT64_MAX;managed_bitmap[i]=0;}
+    for(size_t i=0;i<RIXURI_BITMAP_WORDS;i++){page_bitmap[i]=UINT64_MAX;managed_bitmap[i]=0;reserved_bitmap[i]=0;}
     total_pages_count=free_pages_count=0;
     if(!memory_map||descriptor_size<EFI_DESCRIPTOR_MIN_SIZE||descriptor_size>4096||memory_map_size<descriptor_size)return;
     uint64_t offset=0;
@@ -77,15 +79,17 @@ uint64_t pmm_alloc_page(void){return pmm_alloc_page_below(PMM_MAX_PHYS);}
 void pmm_reserve_page(uint64_t physical_address){
     if((physical_address&(RIXURI_PAGE_SIZE-1ULL))!=0)return;
     uint64_t page=physical_address/RIXURI_PAGE_SIZE;if(page>=PMM_MAX_PAGES)return;
-    uint64_t*managed=&managed_bitmap[page>>6],*used=&page_bitmap[page>>6],bit=1ULL<<(page&63ULL);
+    uint64_t*managed=&managed_bitmap[page>>6],*used=&page_bitmap[page>>6],*reserved=&reserved_bitmap[page>>6],bit=1ULL<<(page&63ULL);
     if(!(*managed&bit))return;
+    *reserved |= bit;
     if(!(*used&bit)){*used|=bit;if(free_pages_count)--free_pages_count;}
 }
 void pmm_free_page(uint64_t physical_address){
     if((physical_address&(RIXURI_PAGE_SIZE-1ULL))!=0)return;
     uint64_t page=physical_address/RIXURI_PAGE_SIZE;if(page>=PMM_MAX_PAGES)return;
-    uint64_t*managed=&managed_bitmap[page>>6],*used=&page_bitmap[page>>6],bit=1ULL<<(page&63ULL);
-    if(!(*managed&bit)||!(*used&bit))return;
+    uint64_t*managed=&managed_bitmap[page>>6],*used=&page_bitmap[page>>6],*reserved=&reserved_bitmap[page>>6],bit=1ULL<<(page&63ULL);
+    if(!(*managed&bit)||!(*used&bit)||(*reserved&bit))return;
+    if(physical_address<0x400000ULL){serial_write("PMM free low=");serial_write_hex(physical_address);serial_write("\r\n");}
     *used&=~bit;++free_pages_count;
 }
 uint64_t pmm_total_pages(void){return total_pages_count;}
