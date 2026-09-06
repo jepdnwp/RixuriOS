@@ -30,6 +30,47 @@ static void vt_move(rix_tty_t *t, int row_delta, int column_delta) {
     t->cursor_column = vt_clamp((uint16_t)column, t->columns);
 }
 
+static void vt_clear_screen(rix_tty_t *t) {
+    for (size_t i = 0; i < (size_t)RIX_TTY_MAX_ROWS * RIX_TTY_MAX_COLUMNS; ++i)
+        t->screen[i] = ' ';
+}
+
+static void vt_print(rix_tty_t *t, uint8_t ch) {
+    size_t index = (size_t)t->cursor_row * RIX_TTY_MAX_COLUMNS + t->cursor_column;
+    t->screen[index] = ch;
+    if (t->cursor_column + 1u >= t->columns) {
+        t->cursor_column = 0;
+        if (t->cursor_row + 1u < t->rows) t->cursor_row++;
+    } else {
+        t->cursor_column++;
+    }
+}
+
+static void vt_erase_line(rix_tty_t *t, uint16_t mode) {
+    uint16_t start = mode == 1u ? 0u : t->cursor_column;
+    uint16_t end = mode == 1u ? t->cursor_column : t->columns;
+    if (mode == 2u) { start = 0u; end = t->columns; }
+    for (uint16_t column = start; column < end; ++column)
+        t->screen[(size_t)t->cursor_row * RIX_TTY_MAX_COLUMNS + column] = ' ';
+}
+
+static void vt_erase_display(rix_tty_t *t, uint16_t mode) {
+    if (mode == 2u) { vt_clear_screen(t); return; }
+    if (mode == 0u) {
+        for (uint16_t row = t->cursor_row; row < t->rows; ++row) {
+            uint16_t start = row == t->cursor_row ? t->cursor_column : 0u;
+            for (uint16_t column = start; column < t->columns; ++column)
+                t->screen[(size_t)row * RIX_TTY_MAX_COLUMNS + column] = ' ';
+        }
+    } else if (mode == 1u) {
+        for (uint16_t row = 0; row <= t->cursor_row; ++row) {
+            uint16_t end = row == t->cursor_row ? t->cursor_column + 1u : t->columns;
+            for (uint16_t column = 0; column < end; ++column)
+                t->screen[(size_t)row * RIX_TTY_MAX_COLUMNS + column] = ' ';
+        }
+    }
+}
+
 static void vt_consume(rix_tty_t *t, uint8_t ch) {
     if (t->vt_state == VT_NORMAL) {
         if (ch == 0x1bu) {
@@ -41,7 +82,7 @@ static void vt_consume(rix_tty_t *t, uint8_t ch) {
         } else if (ch == 8u) {
             vt_move(t, 0, -1);
         } else if (ch >= 0x20u && ch != 0x7fu) {
-            vt_move(t, 0, 1);
+            vt_print(t, ch);
         }
         return;
     }
@@ -78,8 +119,8 @@ static void vt_consume(rix_tty_t *t, uint8_t ch) {
             t->cursor_row = vt_clamp((uint16_t)(first - 1u), t->rows);
             t->cursor_column = vt_clamp((uint16_t)(second - 1u), t->columns);
             break;
-        case 'J':
-        case 'K':
+        case 'J': vt_erase_display(t, t->vt_value[0]); break;
+        case 'K': vt_erase_line(t, t->vt_value[0]); break;
         case 'm':
             break;
         default:
@@ -111,6 +152,7 @@ void tty_init(void) {
         t->vt_value_index = 0;
         t->vt_value[0] = 0;
         t->vt_value[1] = 0;
+        vt_clear_screen(t);
         t->canonical = 1;
         t->echo = 1;
         t->foreground_pgrp = 0;
@@ -239,7 +281,8 @@ int tty_get_foreground_pgrp(unsigned id, uint32_t *pgrp) {
 
 int tty_set_dimensions(unsigned id, uint16_t rows, uint16_t columns) {
     rix_tty_t *t = tty_valid(id);
-    if (!t || rows == 0u || columns == 0u) return -1;
+    if (!t || rows == 0u || columns == 0u || rows > RIX_TTY_MAX_ROWS ||
+        columns > RIX_TTY_MAX_COLUMNS) return -1;
     t->rows = rows;
     t->columns = columns;
     t->cursor_row = vt_clamp(t->cursor_row, rows);
@@ -260,6 +303,19 @@ int tty_get_cursor(unsigned id, uint16_t *row, uint16_t *column) {
     if (!t || !row || !column) return -1;
     *row = t->cursor_row;
     *column = t->cursor_column;
+    return 0;
+}
+
+int tty_read_screen(unsigned id, void *buf, size_t capacity, size_t *out) {
+    if (out) *out = 0;
+    rix_tty_t *t = tty_valid(id);
+    size_t required = t ? (size_t)t->rows * t->columns : 0;
+    if (!t || !buf || capacity < required) return -1;
+    for (size_t row = 0; row < t->rows; ++row)
+        for (size_t column = 0; column < t->columns; ++column)
+            ((uint8_t *)buf)[row * t->columns + column] =
+                t->screen[row * RIX_TTY_MAX_COLUMNS + column];
+    if (out) *out = required;
     return 0;
 }
 
@@ -305,6 +361,7 @@ int tty_pty_open(unsigned *pty_id) {
         ptys[i].slave.vt_value_index = 0;
         ptys[i].slave.vt_value[0] = 0;
         ptys[i].slave.vt_value[1] = 0;
+        vt_clear_screen(&ptys[i].slave);
         ptys[i].slave.canonical = 1;
         ptys[i].slave.echo = 1;
         ptys[i].slave.foreground_pgrp = 0;

@@ -6,6 +6,8 @@
 #define RIX_TTY_INPUT 4096u
 #define RIX_TTY_OUTPUT 4096u
 #define RIX_PTY_COUNT 4u
+#define RIX_TTY_MAX_ROWS 64u
+#define RIX_TTY_MAX_COLUMNS 128u
 
 typedef struct {
     uint8_t input[RIX_TTY_INPUT];
@@ -25,6 +27,7 @@ typedef struct {
     uint16_t vt_value[2];
     uint8_t vt_state;
     uint8_t vt_value_index;
+    uint8_t screen[RIX_TTY_MAX_ROWS * RIX_TTY_MAX_COLUMNS];
     uint8_t canonical;
     uint8_t echo;
     uint32_t foreground_pgrp;
@@ -43,6 +46,7 @@ int tty_get_foreground_pgrp(unsigned id, uint32_t *pgrp);
 int tty_set_dimensions(unsigned id, uint16_t rows, uint16_t columns);
 int tty_get_dimensions(unsigned id, uint16_t *rows, uint16_t *columns);
 int tty_get_cursor(unsigned id, uint16_t *row, uint16_t *column);
+int tty_read_screen(unsigned id, void *buf, size_t capacity, size_t *out);
 
 int tty_pty_open(unsigned *pty_id);
 int tty_pty_close(unsigned pty_id);

@@ -39,6 +39,13 @@ int main(void) {
     if (expect(tty_get_cursor(0, &row, &column) == 0 && row == 4 && column == 9 &&
                 tty_get_dimensions(0, &rows, &columns) == 0 && rows == 24 && columns == 80,
                 "cursor and dimensions")) return 1;
+    if (expect(tty_output(0, "X", 1, &written) == 0 && written == 1,
+                "screen character output")) return 1;
+    uint8_t screen[24u * 80u] = {0};
+    size_t screen_size = 0;
+    if (expect(tty_read_screen(0, screen, sizeof(screen), &screen_size) == 0 &&
+                screen_size == sizeof(screen) && screen[4u * 80u + 9u] == 'X',
+                "screen buffer read")) return 1;
     unsigned pty = 0;
     if (expect(tty_pty_open(&pty) == 0, "open pty")) return 1;
     if (expect(tty_pty_master_write(pty, "cmd\n", 4, &written) == 0 && written == 4,
