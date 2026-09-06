@@ -140,4 +140,5 @@ Phase 15 continuation: add device-manager policy around port-event attach/detach
 - Added `RIX_SYS_PIPE` and a userspace `pipe(int fds[2])` wrapper. The syscall allocates read/write endpoints, validates the user result pointer and rolls back both descriptors on copy failure.
 - Added `vfs_dup()` plus `RIX_SYS_DUP` and a userspace `dup()` wrapper; regular file descriptor state and pipe endpoint references can now be duplicated within one process.
 - Added VFS FD-table cloning during process creation; inherited regular-file state and pipe endpoint references are retained for a child process.
-- Phase 17 now has pipe transport, VFS FD endpoints, `pipe`, `dup`, and process-creation FD inheritance. It still lacks a user-visible fork/exec syscall and shell pipeline executor, so the full Phase 17 pipeline/redirection gate remains open.
+- Phase 17 now has pipe transport, VFS FD endpoints, `pipe`, `dup`, process-creation FD inheritance and process-lifetime descriptor cleanup on failure/reap paths.
+- It still lacks a user-visible fork/exec syscall and shell pipeline executor, so the full Phase 17 pipeline/redirection gate remains open.
