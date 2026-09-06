@@ -264,3 +264,15 @@ The tested external-command, argv/envp, redirection, pipeline, conditional, and 
 - Added RixFS inode link counts, `rixfs_link()`, link-count-aware unlink, VFS `link()`, syscall 86, libc `link()`, and `/bin/ln`.
 - Real QEMU validation passed same-inode observations for source and alias, alias survival after source unlink, directory-source rejection, and missing-source rejection.
 - This is `QEMU-VALIDATED` for regular-file hard links only. Directory hard links and symbolic links remain unsupported.
+
+### 2026-09-06 — Phase 19 `head` / `tail`
+
+- Problem: Phase 19 listesinde `head` ve `tail` eksikti; mevcut `read`, pipe ve open ABI’leri üzerinden utility katmanı bulunmuyordu.
+- Root cause: Kullanıcı programları ve image entegrasyonu yoktu. Ayrıca mevcut pipe okuma ABI’si kısmi veri sonrası EOF’yi negatif dönüşle bildirebildiği için utility’lerin bunu veri sonrası EOF olarak ele alması gerekiyor.
+- Changed: Added `/bin/head` and `/bin/tail`, including stdin/pipeline mode, regular-file mode, argument validation, missing-path errors, bounded buffering, and strict image integration.
+- Files: `user/programs/head.c`, `user/programs/tail.c`, `scripts/qemu_head_tail_test.py`, `Makefile`.
+- Tests: `make CROSS=x86_64-linux-gnu- test image` passed with `-Wall -Wextra -Werror`; host USB/HID/TTY/shell/pipe tests passed.
+- QEMU validation: PASS for `/usr/bin/args alpha beta | /bin/head`, `/usr/bin/args alpha beta | /bin/tail`, missing-path failures, shell prompt recovery, and no CPU exception/panic marker.
+- Hardware validation: NOT TESTED; QEMU NVMe-backed disposable image only.
+- Remaining limitations: `head`/`tail` currently implement the default ten-line behavior only; option parsing and multi-file labels are unsupported. `tail` uses a bounded 8192-byte buffer and the current pipe EOF ABI remains degraded for some timing/error distinctions.
+- Status: IMPLEMENTED / QEMU-VALIDATED for the observed default stdin/path scenarios.

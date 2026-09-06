@@ -359,3 +359,29 @@ qemu ln test: PASS
 ```
 
 This validates regular-file hard-link creation and lifetime through unlink; directory links and symlink semantics remain unsupported.
+
+## 2026-09-06 — Phase 19 `/bin/head` and `/bin/tail`
+
+Added default ten-line `/bin/head` and `/bin/tail` utilities with path and stdin modes. The real QEMU harness exercised both through the existing process/pipe/shell path and checked missing-path failures:
+
+```text
+/usr/bin/args alpha beta | /bin/head
+argc=3
+argv[0]=/usr/bin/args
+argv[1]=alpha
+argv[2]=beta
+...
+/usr/bin/args alpha beta | /bin/tail
+argc=3
+argv[0]=/usr/bin/args
+argv[1]=alpha
+argv[2]=beta
+...
+/bin/head /missing
+head: failed
+/bin/tail /missing
+tail: failed
+qemu head/tail test: PASS
+```
+
+No CPU exception or panic marker was observed. This is QEMU evidence for the default stdin/path scenarios only; options, multi-file output labels, and large-file tail behavior remain open.
