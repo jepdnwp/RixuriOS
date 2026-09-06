@@ -722,6 +722,48 @@ int xhci_get_hid_report_descriptor(size_t controller, uint8_t slot_id,
     return xhci_control_transfer(controller, slot_id, &setup, buffer, actual_length);
 }
 
+int xhci_hid_set_protocol(size_t controller, uint8_t slot_id, uint8_t interface_number,
+                          uint8_t protocol) {
+    if (interface_number >= 32u || protocol > 1u) return -1;
+    rix_usb_setup_packet_t setup = {
+        .request_type = 0x21u,
+        .request = 0x0bu,
+        .value = protocol,
+        .index = interface_number,
+        .length = 0
+    };
+    return xhci_control_transfer(controller, slot_id, &setup, NULL, NULL);
+}
+
+int xhci_hid_set_idle(size_t controller, uint8_t slot_id, uint8_t interface_number,
+                      uint8_t report_id, uint8_t duration_4ms) {
+    if (interface_number >= 32u) return -1;
+    rix_usb_setup_packet_t setup = {
+        .request_type = 0x21u,
+        .request = 0x0au,
+        .value = (uint16_t)(((uint16_t)duration_4ms << 8) | report_id),
+        .index = interface_number,
+        .length = 0
+    };
+    return xhci_control_transfer(controller, slot_id, &setup, NULL, NULL);
+}
+
+int xhci_hid_get_protocol(size_t controller, uint8_t slot_id, uint8_t interface_number,
+                          uint8_t *protocol) {
+    if (interface_number >= 32u || !protocol) return -1;
+    uint16_t actual = 0;
+    rix_usb_setup_packet_t setup = {
+        .request_type = 0xa1u,
+        .request = 0x03u,
+        .value = 0,
+        .index = interface_number,
+        .length = 1
+    };
+    int rc = xhci_control_transfer(controller, slot_id, &setup, protocol, &actual);
+    if (rc != 0) return rc;
+    return actual == 1u && *protocol <= 1u ? 0 : -2;
+}
+
 int xhci_enumerate_device(size_t controller, uint8_t slot_id,
                           rix_usb_device_descriptor_t *device,
                           uint8_t *configuration, uint16_t configuration_capacity,

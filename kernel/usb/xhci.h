@@ -48,6 +48,12 @@ int xhci_get_descriptor(size_t controller, uint8_t slot, uint8_t descriptor_type
 int xhci_get_hid_report_descriptor(size_t controller, uint8_t slot,
                                    uint8_t interface_number, void *buffer,
                                    uint16_t length, uint16_t *actual_length);
+int xhci_hid_set_protocol(size_t controller, uint8_t slot, uint8_t interface_number,
+                          uint8_t protocol);
+int xhci_hid_set_idle(size_t controller, uint8_t slot, uint8_t interface_number,
+                      uint8_t report_id, uint8_t duration_4ms);
+int xhci_hid_get_protocol(size_t controller, uint8_t slot, uint8_t interface_number,
+                          uint8_t *protocol);
 int xhci_enumerate_device(size_t controller, uint8_t slot,
                           rix_usb_device_descriptor_t *device,
                           uint8_t *configuration, uint16_t configuration_capacity,

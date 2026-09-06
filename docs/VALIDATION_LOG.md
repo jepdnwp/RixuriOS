@@ -55,4 +55,6 @@ Phase 16 parser work now includes a bounds-checked HID report descriptor parser 
 
 The xHCI layer now exposes `xhci_get_hid_report_descriptor()`, which issues the standard interface-scoped `GET_DESCRIPTOR` request for descriptor type `0x22`. It is strict-build validated and is ready to feed the returned bytes to `hid_parse_report_descriptor()` once a controller-backed enumeration path is exercised.
 
+The HID control path now also exposes class requests for `SET_PROTOCOL`, `SET_IDLE` and `GET_PROTOCOL`, including interface and protocol validation. Boot keyboard/mouse interrupt adapters reject oversized completions before converting the length to their legacy 8-bit parser API, preventing silent truncation. These paths remain hardware-unexercised in the current QEMU topology.
+
 Review of the composite-device path found and corrected a context-construction defect: each Configure Endpoint operation now updates the input Slot Context's Context Entries field to the highest configured DCI and sets Add Slot Context alongside the endpoint bit. This is required by xHCI when adding endpoints beyond the initial EP0 context; the fix is strict-build validated but still awaits controller-backed execution.

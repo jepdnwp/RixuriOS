@@ -172,6 +172,7 @@ int hid_xhci_keyboard_poll(size_t controller, uint8_t slot, uint8_t endpoint_add
                                       report_capacity, &received);
     if (actual_length) *actual_length = received;
     if (rc != 0) return rc;
+    if (received > UINT8_MAX) return -3;
     if (received < RIX_HID_BOOT_KEYBOARD_REPORT) return -2;
     return hid_keyboard_report(tty_id, report, (uint8_t)received);
 }
@@ -185,6 +186,7 @@ int hid_xhci_mouse_poll(size_t controller, uint8_t slot, uint8_t endpoint_addres
                                       report_capacity, &received);
     if (actual_length) *actual_length = received;
     if (rc != 0) return rc;
+    if (received > UINT8_MAX) return -2;
     return hid_mouse_report(report, (uint8_t)received, out);
 }
 #endif
