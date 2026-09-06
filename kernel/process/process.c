@@ -1,4 +1,5 @@
 #include "process.h"
+#include "kernel.h"
 #include "../elf/loader.h"
 #include "../mm/pmm.h"
 #include "../mm/vmm.h"
@@ -23,9 +24,11 @@ int process_create_user(const char*name,pid_t parent,const void*image,uint64_t i
 int process_fork(pid_t parent,uint64_t user_rip,uint64_t user_rsp,pid_t *out_pid){
     if (!out_pid || !user_rip || !user_rsp) return -1;
     rix_process_t *pp=process_lookup(parent);if(!pp||!pp->address_space.pml4_phys)return -1;
+    serial_write("PROC fork parent=");serial_write_dec(parent);serial_write(" pml4=");serial_write_hex(pp->address_space.pml4_phys);serial_write("\r\n");
     pid_t child;if(process_create("fork-child",parent,&child)!=0)return -1;
     rix_process_t *cp=process_lookup(child);if(!cp)return -1;
     if(address_space_clone(&pp->address_space,&cp->address_space)!=0)goto fail;
+    serial_write("PROC fork child=");serial_write_dec(child);serial_write(" pml4=");serial_write_hex(cp->address_space.pml4_phys);serial_write("\r\n");
     uint64_t ks=pmm_alloc_page();if(!ks)goto fail;
     zero_page(ks);cp->kernel_stack=ks;cp->kernel_stack_size=KERNEL_STACK_SIZE;cp->state=RIX_PROC_SLEEPING;*out_pid=child;return 0;
 fail:
@@ -117,8 +120,10 @@ int process_exec_user_with_args(pid_t pid, const void *image, uint64_t image_siz
         (envc && !envp)) return -1;
     rix_process_t *p = process_lookup(pid);
     if (!p || !p->address_space.pml4_phys) return -1;
+    serial_write("PROC exec begin pid=");serial_write_dec(pid);serial_write(" old_pml4=");serial_write_hex(p->address_space.pml4_phys);serial_write("\r\n");
     rix_address_space_t replacement = {0};
     if (address_space_create(&replacement) != 0) return -1;
+    serial_write("PROC exec replacement pid=");serial_write_dec(pid);serial_write(" new_pml4=");serial_write_hex(replacement.pml4_phys);serial_write("\r\n");
     for (uint64_t i = 0; i < USER_STACK_PAGES; ++i) {
         uint64_t pa = pmm_alloc_page();
         if (!pa) goto fail;
@@ -133,6 +138,7 @@ int process_exec_user_with_args(pid_t pid, const void *image, uint64_t image_siz
     if (elf_load_image(image, image_size, &replacement, &elf) != 0) goto fail;
     uint64_t user_stack = USER_STACK_TOP;
     if (stack_build_args(&replacement, &user_stack, argv, argc, envp, envc) != 0) goto fail;
+    serial_write("PROC exec destroy pid=");serial_write_dec(pid);serial_write(" old_pml4=");serial_write_hex(p->address_space.pml4_phys);serial_write("\r\n");
     address_space_destroy(&p->address_space);
     p->address_space = replacement;
     *out_entry = elf.entry;
