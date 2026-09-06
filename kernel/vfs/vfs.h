@@ -1,6 +1,8 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
+#include "../storage/block.h"
+#include "../fs/rixfs_dir.h"
 #define RIX_VFS_PATH_MAX 4096
 #define RIX_VFS_NAME_MAX 255
 #define RIX_VFS_FD_MAX 64
@@ -13,8 +15,9 @@ typedef struct { uint64_t inode; rix_vfs_type_t type; uint32_t mode; uint32_t ui
 typedef struct { rix_vnode_t *node; char path[RIX_VFS_PATH_MAX]; } rix_vfs_path_t;
 typedef struct { uint64_t inode; uint8_t type; uint8_t reserved[7]; } rix_vfs_dirent_t;
 int vfs_init(void);
-int vfs_mount_root(struct rix_block_device *device);
+int vfs_mount_root(rix_block_device_t *device);
 int vfs_unmount_root(void);
+rixfs_t *vfs_root_fs(void);
 int vfs_normalize_path(const char *input,char *output,size_t output_size);
 int vfs_root(rix_vfs_path_t *out);
 int vfs_lookup(const char *path,rix_vfs_path_t *out);
