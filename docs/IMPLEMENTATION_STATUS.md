@@ -22,7 +22,7 @@ A subsystem is not marked COMPLETE merely because source exists. Completion requ
 - Power: hardware reboot path and ACPI S5 shutdown path when validated FADT/DSDT power data is available; otherwise shutdown returns unsupported rather than faking success.
 - USB/xHCI: controller/capability, multi-endpoint transfer rings, HID report delivery adapters and port-event polling are implemented; hardware qualification remains open.
 - GUI: deliberately untouched; GUI remains last in the roadmap.
-- Shell: Phase 18 bounded lexer/parser frontend, callback-driven variable expansion, prefix autocomplete and persistent-format history/navigation are implemented and host-tested for quoting, escaping, comments, pipelines, logical/sequential/background operators and input/output/append redirections; execution and command substitution remain open.
+- Shell: Phase 18 bounded lexer/parser frontend, callback-driven variable/arithmetic/command substitution expansion, prefix autocomplete and persistent-format history/navigation are implemented and host-tested for quoting, escaping, comments, pipelines, logical/sequential/background operators and input/output/append redirections; real execution remains open.
 - TTY: canonical/raw input, line readiness, echo/output queues, foreground process-group state, PTY master/slave byte/line flow, terminal dimensions, bounded ANSI/VT screen state, control-signal delivery and controlling-terminal session state are implemented and host-tested; shell/pipeline policy remains open.
 - Linker hardening: kernel program headers are explicitly split into `R-X`, `R--`, `RW-`, with a non-executable `GNU_STACK`; the prior generated-blob executable-stack warning no longer produces an executable stack.
 
@@ -67,6 +67,7 @@ The current source tree has now passed a clean strict build and a real UEFI-to-k
 - Added bounded `$NAME`/`${NAME}` expansion with caller-provided lookup, single-quote suppression, double-quote expansion, backslash escaping and safe handling of missing variables/output capacity.
 - Added bounded completion over caller-provided candidates, returning match count and the full candidate or longest common prefix without output truncation.
 - Added bounded interactive history with consecutive-duplicate suppression, previous/next navigation, newline-delimited export/import and capacity-safe copying.
+- Added overflow-checked arithmetic evaluation for unary/binary `+ - * / %` and parentheses, plus callback-driven nested `$(...)` substitution with trailing-newline trimming and bounded command/output buffers.
 - Added `xhci_poll_port_status_change()` for cycle-aware, non-destructive event-ring peeking that consumes only Port Status Change Events and reports the current connection state.
 
 This remains `IMPLEMENTED / NOT YET VALIDATED`. The control-transfer, multi-endpoint, HID adapter and port-event paths are source/build validated but not hardware-exercised: QEMU reported zero xHCI controllers. Device-manager policy for automatic attach/enumeration after a port event, hardware evidence and the historical completion-code-11 regression remain open.

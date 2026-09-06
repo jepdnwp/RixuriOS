@@ -1,5 +1,6 @@
 #pragma once
 #include <stddef.h>
+#include <stdint.h>
 
 #define RIX_SHELL_MAX_TOKENS 64u
 #define RIX_SHELL_TOKEN_TEXT 128u
@@ -68,3 +69,8 @@ int rix_shell_history_next(rix_shell_history_t *history, char *output, size_t ca
 int rix_shell_history_export(const rix_shell_history_t *history, char *output,
                              size_t capacity, size_t *written);
 int rix_shell_history_import(rix_shell_history_t *history, const char *input);
+int rix_shell_arithmetic_eval(const char *expression, int64_t *result);
+typedef int (*rix_shell_command_runner_t)(const char *command, char *output,
+                                          size_t capacity, void *context);
+int rix_shell_command_substitute(const char *input, char *output, size_t capacity,
+                                 rix_shell_command_runner_t runner, void *context);

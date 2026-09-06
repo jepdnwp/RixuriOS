@@ -312,3 +312,160 @@ int rix_shell_history_import(rix_shell_history_t *history, const char *input) {
     }
     return 0;
 }
+
+typedef struct { const char *text; size_t offset; int error; } arithmetic_parser_t;
+
+static void arithmetic_space(arithmetic_parser_t *parser) {
+    while (parser->text[parser->offset] == ' ' || parser->text[parser->offset] == '\t') ++parser->offset;
+}
+
+static int64_t arithmetic_expression(arithmetic_parser_t *parser);
+
+static int arithmetic_add_overflow(int64_t left, int64_t right, int subtract, int64_t *value) {
+    if (subtract) {
+        if ((right > 0 && left < INT64_MIN + right) ||
+            (right < 0 && left > INT64_MAX + right)) return 1;
+        *value = left - right;
+    } else {
+        if ((right > 0 && left > INT64_MAX - right) ||
+            (right < 0 && left < INT64_MIN - right)) return 1;
+        *value = left + right;
+    }
+    return 0;
+}
+
+static int arithmetic_mul_overflow(int64_t left, int64_t right, int64_t *value) {
+    if (left == 0 || right == 0) { *value = 0; return 0; }
+    if ((left == -1 && right == INT64_MIN) || (right == -1 && left == INT64_MIN)) return 1;
+    if (left > 0) {
+        if (right > 0 && left > INT64_MAX / right) return 1;
+        if (right < 0 && right < INT64_MIN / left) return 1;
+    } else {
+        if (right > 0 && left < INT64_MIN / right) return 1;
+        if (right < 0 && left < INT64_MAX / right) return 1;
+    }
+    *value = left * right;
+    return 0;
+}
+
+static int64_t arithmetic_primary(arithmetic_parser_t *parser) {
+    arithmetic_space(parser);
+    if (parser->text[parser->offset] == '(') {
+        ++parser->offset;
+        int64_t value = arithmetic_expression(parser);
+        arithmetic_space(parser);
+        if (parser->text[parser->offset] != ')') parser->error = 1;
+        else ++parser->offset;
+        return value;
+    }
+    if (parser->text[parser->offset] < '0' || parser->text[parser->offset] > '9') {
+        parser->error = 1;
+        return 0;
+    }
+    int64_t value = 0;
+    while (parser->text[parser->offset] >= '0' && parser->text[parser->offset] <= '9') {
+        uint8_t digit = (uint8_t)(parser->text[parser->offset++] - '0');
+        if (value > (INT64_MAX - digit) / 10) { parser->error = 1; return 0; }
+        value = value * 10 + digit;
+    }
+    return value;
+}
+
+static int64_t arithmetic_unary(arithmetic_parser_t *parser) {
+    arithmetic_space(parser);
+    if (parser->text[parser->offset] == '+') { ++parser->offset; return arithmetic_unary(parser); }
+    if (parser->text[parser->offset] == '-') {
+        ++parser->offset;
+        int64_t value = arithmetic_unary(parser);
+        if (value == INT64_MIN) parser->error = 1;
+        return -value;
+    }
+    return arithmetic_primary(parser);
+}
+
+static int64_t arithmetic_term(arithmetic_parser_t *parser) {
+    int64_t value = arithmetic_unary(parser);
+    for (;;) {
+        arithmetic_space(parser);
+        char op = parser->text[parser->offset];
+        if (op != '*' && op != '/' && op != '%') return value;
+        ++parser->offset;
+        int64_t rhs = arithmetic_unary(parser);
+        if (op == '*') {
+            int64_t result = 0;
+            if (arithmetic_mul_overflow(value, rhs, &result)) parser->error = 1;
+            value = result;
+        }
+        else if (rhs == 0) parser->error = 1;
+        else if (op == '/') {
+            if (value == INT64_MIN && rhs == -1) parser->error = 1;
+            else value /= rhs;
+        }
+        else {
+            if (value == INT64_MIN && rhs == -1) parser->error = 1;
+            else value %= rhs;
+        }
+    }
+}
+
+static int64_t arithmetic_expression(arithmetic_parser_t *parser) {
+    int64_t value = arithmetic_term(parser);
+    for (;;) {
+        arithmetic_space(parser);
+        char op = parser->text[parser->offset];
+        if (op != '+' && op != '-') return value;
+        ++parser->offset;
+        int64_t rhs = arithmetic_term(parser);
+        int64_t result = 0;
+        if (arithmetic_add_overflow(value, rhs, op == '-', &result)) parser->error = 1;
+        value = result;
+    }
+}
+
+int rix_shell_arithmetic_eval(const char *expression, int64_t *result) {
+    if (!expression || !result) return -1;
+    arithmetic_parser_t parser = {expression, 0, 0};
+    int64_t value = arithmetic_expression(&parser);
+    arithmetic_space(&parser);
+    if (parser.error || expression[parser.offset] != 0) return -2;
+    *result = value;
+    return 0;
+}
+
+int rix_shell_command_substitute(const char *input, char *output, size_t capacity,
+                                 rix_shell_command_runner_t runner, void *context) {
+    if (!input || !output || capacity == 0u || !runner) return -1;
+    size_t in = 0, out = 0;
+    while (input[in]) {
+        if (input[in] != '$' || input[in + 1u] != '(') {
+            if (out + 1u >= capacity) return -2;
+            output[out++] = input[in++];
+            continue;
+        }
+        in += 2u;
+        size_t start = in;
+        size_t depth = 1u;
+        while (input[in] && depth) {
+            if (input[in] == '(') ++depth;
+            else if (input[in] == ')') --depth;
+            ++in;
+        }
+        if (depth != 0u) return -3;
+        size_t length = in - start - 1u;
+        if (length >= RIX_SHELL_TOKEN_TEXT) return -4;
+        char command[RIX_SHELL_TOKEN_TEXT];
+        for (size_t i = 0; i < length; ++i) command[i] = input[start + i];
+        command[length] = 0;
+        char result[RIX_SHELL_TOKEN_TEXT];
+        int rc = runner(command, result, sizeof(result), context);
+        if (rc != 0) return rc;
+        size_t result_length = text_length(result);
+        while (result_length && result[result_length - 1u] == '\n') --result_length;
+        for (size_t i = 0; i < result_length; ++i) {
+            if (out + 1u >= capacity) return -2;
+            output[out++] = result[i];
+        }
+    }
+    output[out] = 0;
+    return 0;
+}

@@ -14,6 +14,13 @@ static const char *lookup(const char *name, void *context) {
     return NULL;
 }
 
+static int run_command(const char *command, char *output, size_t capacity, void *context) {
+    (void)context;
+    if (strcmp(command, "whoami") != 0 || capacity < 4u) return -1;
+    strcpy(output, "rix\n");
+    return 0;
+}
+
 int main(void) {
     rix_shell_tokens_t tokens;
     if (expect(rix_shell_lex("echo 'hello world' a\\ b # comment", &tokens) == 0 &&
@@ -71,6 +78,18 @@ int main(void) {
     rix_shell_history_init(&restored);
     if (expect(rix_shell_history_import(&restored, persisted) == 0 && restored.count == 2,
                 "history import")) return 1;
+    int64_t arithmetic = 0;
+    if (expect(rix_shell_arithmetic_eval("2 + 3 * (4 - 1)", &arithmetic) == 0 &&
+                arithmetic == 11, "arithmetic expansion")) return 1;
+    if (expect(rix_shell_arithmetic_eval("4 / 0", &arithmetic) != 0,
+                "arithmetic division by zero rejected")) return 1;
+    if (expect(rix_shell_arithmetic_eval("9223372036854775807 + 1", &arithmetic) != 0 &&
+                rix_shell_arithmetic_eval("3037000500 * 3037000500", &arithmetic) != 0,
+                "arithmetic overflow rejected")) return 1;
+    if (expect(rix_shell_command_substitute("user=$(whoami)", expanded,
+                                             sizeof(expanded), run_command, NULL) == 0 &&
+                strcmp(expanded, "user=rix") == 0,
+                "command substitution")) return 1;
     puts("shell parser tests: PASS");
     return 0;
 }
