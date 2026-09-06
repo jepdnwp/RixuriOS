@@ -12,6 +12,7 @@ int openat(int dirfd, const char *path, uint32_t flags, uint32_t mode);
 int mkdir(const char *path, uint32_t mode);
 int rmdir(const char *path);
 int unlink(const char *path);
+int link(const char *old_path, const char *new_path);
 int getdents(int fd, rix_dirent_t *entries, size_t capacity, size_t *count);
 int stat(const char *path, rix_stat_t *out);
 int close(int fd);

@@ -335,3 +335,27 @@ qemu stat test: PASS
 ```
 
 This validates regular-file, directory, and missing-path behavior for the current stat ABI.
+
+## 2026-09-06 — Phase 19 `/bin/ln`
+
+Implemented hard links over RixFS directory entries and inode link counts. The kernel now provides `link()` syscall number 86, VFS destination-parent resolution, RixFS same-inode directory-entry creation, and link-count-aware unlink cleanup. A real QEMU serial harness created `/usr/ln-source`, linked `/usr/ln-alias`, verified both names had inode 27, removed the source, verified the alias still worked, and checked directory and missing-source failures.
+
+```text
+inode 27
+type 2
+mode 33188
+size 0
+inode 27
+type 2
+mode 33188
+size 0
+inode 27
+type 2
+mode 33188
+size 0
+ln: failed
+ln: failed
+qemu ln test: PASS
+```
+
+This validates regular-file hard-link creation and lifetime through unlink; directory links and symlink semantics remain unsupported.

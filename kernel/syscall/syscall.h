@@ -14,6 +14,7 @@
 #define RIX_SYS_MKDIR 83
 #define RIX_SYS_RMDIR 84
 #define RIX_SYS_UNLINK 87
+#define RIX_SYS_LINK 86
 #define RIX_SYS_GETDENTS 78
 #define RIX_SYS_POLL 7
 #define RIX_SYS_MMAP 9

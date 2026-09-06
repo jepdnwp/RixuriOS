@@ -258,3 +258,9 @@ The tested external-command, argv/envp, redirection, pipeline, conditional, and 
 - Exposed the existing `RIX_SYS_STAT` kernel path through the freestanding libc as `stat()` and added `/bin/stat` to the strict image build.
 - Real QEMU validation passed regular-file creation and inspection, directory inspection, missing-path failure, and cleanup.
 - The observed ABI fields were inode, type, mode, and size; no timestamp fields are currently exposed.
+
+## Latest continuation — Phase 19 `/bin/ln` — 2026-09-06
+
+- Added RixFS inode link counts, `rixfs_link()`, link-count-aware unlink, VFS `link()`, syscall 86, libc `link()`, and `/bin/ln`.
+- Real QEMU validation passed same-inode observations for source and alias, alias survival after source unlink, directory-source rejection, and missing-source rejection.
+- This is `QEMU-VALIDATED` for regular-file hard links only. Directory hard links and symbolic links remain unsupported.

@@ -7,6 +7,7 @@ int openat(int dirfd,const char*path,uint32_t flags,uint32_t mode){return(int)ri
 int mkdir(const char *path,uint32_t mode){return(int)rix_sys(83,(long)path,mode,0);}
 int rmdir(const char *path){return(int)rix_sys(84,(long)path,0,0);}
 int unlink(const char *path){return(int)rix_sys(87,(long)path,0,0);}
+int link(const char *old_path,const char *new_path){return(int)rix_sys(86,(long)old_path,(long)new_path,0);}
 int getdents(int fd,rix_dirent_t *entries,size_t capacity,size_t *count){return(int)rix_sys4(78,fd,(long)entries,capacity,(long)count);}
 int stat(const char *path,rix_stat_t *out){return(int)rix_sys(4,(long)path,(long)out,0);}
 int close(int fd){return(int)rix_sys(3,fd,0,0);}

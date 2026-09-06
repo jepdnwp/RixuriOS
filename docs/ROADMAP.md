@@ -593,7 +593,7 @@ Every command gets argument validation, errors, exit status and pipeline behavio
 
 ### Current evidence — 2026-09-06
 
-`/bin/touch` is implemented over the existing `openat(O_WRONLY|O_CREAT, 0644)` and `close` ABI. A real QEMU serial harness passed new-file creation, reopening an existing file, missing-parent rejection, cleanup with `/bin/rm`, and final directory verification. Timestamp mutation semantics remain unsupported because the current stat/inode ABI exposes no timestamp update operation. The existing kernel `RIX_SYS_STAT` path is now exposed through libc and `/bin/stat`; QEMU passed regular-file, directory, and missing-path observations.
+`/bin/touch` is implemented over the existing `openat(O_WRONLY|O_CREAT, 0644)` and `close` ABI. A real QEMU serial harness passed new-file creation, reopening an existing file, missing-parent rejection, cleanup with `/bin/rm`, and final directory verification. Timestamp mutation semantics remain unsupported because the current stat/inode ABI exposes no timestamp update operation. The existing kernel `RIX_SYS_STAT` path is now exposed through libc and `/bin/stat`; QEMU passed regular-file, directory, and missing-path observations. Regular-file hard links are now implemented as well: QEMU passed same-inode source/alias observations, alias survival after source unlink, and invalid-source failures. Directory links and symbolic links remain unsupported.
 
 ---
 
