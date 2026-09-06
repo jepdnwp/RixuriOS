@@ -43,6 +43,9 @@ int main(void) {
     if (expect(hid_keyboard_report_protocol(0, keyboard_report_id,
                                             sizeof(keyboard_report_id), 8) == -2,
                 "keyboard report ID mismatch rejected")) return 1;
+    if (expect(hid_keyboard_report_protocol(0, keyboard_report_id,
+                                            (uint16_t)UINT8_MAX + 1u, 0) == -3,
+                "keyboard oversized report rejected")) return 1;
     static const uint8_t rollover[] = {0, 0, 1, 0, 0, 0, 0, 0};
     if (expect(hid_keyboard_report(0, rollover, sizeof(rollover)) == -2,
                 "keyboard rollover rejected")) return 1;
@@ -52,6 +55,10 @@ int main(void) {
                                          &mouse) == 0 && mouse.buttons == 1 &&
                 mouse.dx == -2 && mouse.dy == 3 && mouse.wheel == 4,
                 "mouse report ID parsed")) return 1;
+    static const uint8_t mouse_no_id[] = {1, 2, 3, 4};
+    if (expect(hid_mouse_report_protocol(mouse_no_id, sizeof(mouse_no_id), 0,
+                                         &mouse) == 0 && mouse.buttons == 1,
+                "mouse report without ID parsed")) return 1;
     puts("hid report tests: PASS");
     return 0;
 }

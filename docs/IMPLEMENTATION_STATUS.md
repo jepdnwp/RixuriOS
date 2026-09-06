@@ -114,3 +114,8 @@ Phase 15 continuation: add device-manager policy around port-event attach/detach
 - Keyboard/mouse HID interfaces request report protocol and zero idle duration through the existing class-control helpers; unsupported HID usages are left available without being falsely claimed as keyboard or mouse devices.
 - Oversized or failed report-descriptor transfers fail the attach configuration path and trigger slot cleanup.
 - QEMU still exposes zero xHCI controllers, so this remains source/build validated rather than physical HID evidence.
+
+## Latest continuation — Phase 16 boundary regression coverage
+
+- Extended host HID tests for report-ID mismatch rejection, oversized report rejection, rollover rejection and no-report-ID mouse parsing.
+- The complete host test suite and QEMU boot remain clean; Phase 16 is intentionally still open because the real xHCI-to-HID-to-TTY keyboard path and historical `0x74` (`t`) hardware evidence cannot be claimed without a controller-backed target.
