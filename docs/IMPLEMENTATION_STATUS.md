@@ -22,6 +22,7 @@ A subsystem is not marked COMPLETE merely because source exists. Completion requ
 - Power: hardware reboot path and ACPI S5 shutdown path when validated FADT/DSDT power data is available; otherwise shutdown returns unsupported rather than faking success.
 - USB/xHCI: controller/capability, multi-endpoint transfer rings, HID report delivery adapters and port-event polling are implemented; hardware qualification remains open.
 - GUI: deliberately untouched; GUI remains last in the roadmap.
+- TTY: canonical/raw input, line readiness, echo/output queues and foreground process-group state are implemented and host-tested; PTY, signals and terminal parser remain open.
 
 ## Validation boundary
 
@@ -54,6 +55,7 @@ The current source tree has now passed a clean strict build and a real UEFI-to-k
 - Added HID class control helpers for `SET_PROTOCOL`, `SET_IDLE` and `GET_PROTOCOL`, with interface/protocol validation; interrupt report adapters now reject lengths that cannot be represented by the boot-report parser instead of truncating them.
 - Began Phase 16 report-protocol support with report-ID framing helpers for keyboard/mouse reports, explicit ID mismatch rejection and boot-keyboard rollover rejection tests while preserving the existing boot-report API.
 - Added dedicated completion-code-11 diagnostics for command and transfer events, recording controller/event TRB, parameter, control/status, slot/DCI, port/speed/route, DCBAA device context, input context and endpoint-ring state.
+- Began Phase 17 TTY work: canonical reads wait for a complete newline-terminated line, raw reads return available bytes, erase handling is bounded, echo is routed through an output queue, output can be drained separately, and foreground process-group getters/setters are available.
 - Added `xhci_poll_port_status_change()` for cycle-aware, non-destructive event-ring peeking that consumes only Port Status Change Events and reports the current connection state.
 
 This remains `IMPLEMENTED / NOT YET VALIDATED`. The control-transfer, multi-endpoint, HID adapter and port-event paths are source/build validated but not hardware-exercised: QEMU reported zero xHCI controllers. Device-manager policy for automatic attach/enumeration after a port event, hardware evidence and the historical completion-code-11 regression remain open.

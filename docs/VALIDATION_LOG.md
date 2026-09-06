@@ -61,4 +61,6 @@ The historical completion-code-11 regression now has dedicated runtime instrumen
 
 Phase 16 report-protocol work now includes report-ID framing helpers for keyboard and mouse reports. The helpers validate the expected report ID before dispatching to the existing boot parsers; keyboard rollover error usages are rejected and mouse signed motion/wheel fields are covered by host tests. This remains parser-level evidence until a real report-protocol HID device is exercised.
 
+Phase 17 TTY work now has host evidence (`tty tests: PASS`) for canonical reads waiting on newline, raw reads returning immediately, echo flowing through a separate output queue, and foreground process-group state. PTY master/slave objects, signal generation, ANSI/VT parsing, session ownership and shell integration remain open; no full Phase 17 completion claim is made.
+
 Review of the composite-device path found and corrected a context-construction defect: each Configure Endpoint operation now updates the input Slot Context's Context Entries field to the highest configured DCI and sets Add Slot Context alongside the endpoint bit. This is required by xHCI when adding endpoints beyond the initial EP0 context; the fix is strict-build validated but still awaits controller-backed execution.
