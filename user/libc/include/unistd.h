@@ -32,6 +32,8 @@ uint32_t getuid(void);
 uint32_t getgid(void);
 int setuid(uint32_t uid);
 int setgid(uint32_t gid);
+int getgroups(size_t capacity, uint32_t *groups);
+int setgroups(size_t count, const uint32_t *groups);
 int execve(const char *path, char *const argv[], char *const envp[]);
 rix_pid_t getpid(void);
 int kill(rix_pid_t pid, uint32_t signal);

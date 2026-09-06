@@ -26,9 +26,9 @@ static vfs_pipe_slot_t pipe_slots[VFS_PIPE_MAX];
 #define VFS_ACCESS_EXEC 1u
 static int permission_allowed(const rix_vnode_t *node,unsigned access){
     if(!node)return -1;
-    uint32_t uid=process_uid(process_current()),gid=process_gid(process_current());
+    uint32_t uid=process_uid(process_current());
     if(uid==0)return 0;
-    unsigned bits=(uid==node->uid)?((node->mode>>6)&7u):(gid==node->gid?((node->mode>>3)&7u):(node->mode&7u));
+    unsigned bits=(uid==node->uid)?((node->mode>>6)&7u):(process_in_group(process_current(),node->gid)?((node->mode>>3)&7u):(node->mode&7u));
     return (bits&access)==access?0:-1;
 }
 

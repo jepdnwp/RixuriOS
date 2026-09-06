@@ -456,3 +456,18 @@ qemu Phase 20 credential/permission test: PASS
 ```
 
 The strict cross build and host USB/HID/TTY/shell/pipe regressions also pass after this slice. Phase 20 remains **IN PROGRESS** because supplementary groups, saved IDs, complete permission coverage, credential-aware exec/set-id policy, environment sanitization, and broader security regression gates are still outstanding. The colored `username@computer-name ~(directory) :` prompt remains deferred until those gates are complete.
+
+
+## Phase 20 supplementary groups slice — 2026-09-07
+
+Supplementary groups were implemented without changing the layout of `rix_process_t`, after an earlier in-struct experiment caused a QEMU hang during post-transition VFS activity and was reverted. The stable implementation stores bounded groups in a PID-indexed kernel table, inherits them during process creation, evaluates group-mode access through `process_in_group`, and exposes root-controlled `setgroups` plus count/query `getgroups` operations. Count-only group queries are supported; full user-buffer group-list coverage remains a follow-up gate.
+
+The strengthened `credtest` now sets groups as root, drops to UID/GID 1000, confirms the supplementary-group count, confirms that a non-root process cannot replace its groups, and verifies that mutation of the root directory is denied. The real-QEMU result passed with no page fault, CPU exception, panic, timeout, or prompt loss:
+
+```text
+before uid=0 gid=0
+after uid=1000 gid=1000
+qemu Phase 20 credential/permission test: PASS
+```
+
+The strict cross build and host regressions pass with this implementation. Phase 20 remains **IN PROGRESS** because saved IDs, complete full-buffer `getgroups` coverage, set-id exec policy, environment sanitization, and broader owner/group/other QEMU matrices are still outstanding.

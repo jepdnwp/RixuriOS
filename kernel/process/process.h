@@ -12,6 +12,7 @@ typedef enum { RIX_PROC_UNUSED=0, RIX_PROC_RUNNING=1, RIX_PROC_SLEEPING=2, RIX_P
 #define RIX_PROCESS_ARG_MAX 16
 #define RIX_PROCESS_ARG_TEXT_MAX 128
 #define RIX_PROCESS_CWD_MAX 256
+#define RIX_PROCESS_GROUP_MAX 8
 
 typedef struct { pid_t pid; pid_t parent; pid_t process_group; pid_t session; rix_process_state_t state; uint32_t uid; uint32_t gid; rix_address_space_t address_space; uint64_t kernel_stack; uint64_t kernel_stack_size; uint64_t exit_status; uint64_t fd_bitmap; uint64_t signal_pending; uint64_t signal_mask; char name[RIX_PROCESS_NAME_MAX]; char cwd[RIX_PROCESS_CWD_MAX]; } rix_process_t;
 int process_init(void);
@@ -39,3 +40,6 @@ uint32_t process_uid(pid_t pid);
 uint32_t process_gid(pid_t pid);
 int process_setuid(pid_t pid,uint32_t uid);
 int process_setgid(pid_t pid,uint32_t gid);
+int process_in_group(pid_t pid,uint32_t gid);
+int process_getgroups(pid_t pid,uint32_t *groups,size_t capacity,size_t *count);
+int process_setgroups(pid_t pid,const uint32_t *groups,size_t count);
