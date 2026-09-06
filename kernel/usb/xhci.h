@@ -5,30 +5,22 @@
 typedef struct {
     uint8_t bus, device, function;
     uint64_t bar0;
-    uint8_t cap_length;
-    uint8_t max_slots;
-    uint8_t max_intrs;
-    uint8_t max_ports;
-    uint32_t hci_version;
-    uint32_t hcc_params1;
-    uint32_t usbcmd;
-    uint32_t usbsts;
-    uint64_t dcbaa_phys;
-    uint64_t cmd_ring_phys;
-    uint64_t event_ring_phys;
-    uint64_t erst_phys;
+    uint8_t cap_length, max_slots, max_intrs, max_ports;
+    uint32_t hci_version, hcc_params1, usbcmd, usbsts;
+    uint64_t dcbaa_phys, cmd_ring_phys, event_ring_phys, erst_phys;
     uint8_t running;
 } rix_xhci_controller_t;
 
-typedef struct {
-    uint8_t connected;
-    uint8_t enabled;
-    uint8_t speed;
-    uint8_t reset_complete;
-} rix_xhci_port_status_t;
+typedef struct { uint8_t connected, enabled, speed, reset_complete; } rix_xhci_port_status_t;
+typedef struct { uint8_t slot_id, port, speed, state; } rix_xhci_device_t;
 
 int xhci_init(void);
 size_t xhci_controller_count(void);
 const rix_xhci_controller_t *xhci_controller(size_t index);
 int xhci_port_status(size_t controller, uint8_t port, rix_xhci_port_status_t *out);
 int xhci_reset_port(size_t controller, uint8_t port);
+int xhci_enable_slot(size_t controller, uint8_t *out_slot);
+int xhci_disable_slot(size_t controller, uint8_t slot);
+int xhci_address_device(size_t controller, uint8_t slot, uint8_t port, uint8_t speed);
+int xhci_device_attach(size_t controller, uint8_t port, rix_xhci_device_t *out);
+int xhci_device_detach(size_t controller, uint8_t slot);
