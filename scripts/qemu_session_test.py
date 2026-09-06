@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 out = bytearray()
 cur = 0
 
-with tempfile.TemporaryDirectory(prefix="rixurios-phase20-") as temporary:
+with tempfile.TemporaryDirectory(prefix="rixurios-session-") as temporary:
     temporary_root = Path(temporary)
     test_image = temporary_root / "rixfs.img"
     test_esp = temporary_root / "esp"
@@ -48,7 +48,7 @@ with tempfile.TemporaryDirectory(prefix="rixurios-phase20-") as temporary:
         if not until(b"USER: init returned to kernel"):
             raise RuntimeError("boot")
         time.sleep(1)
-        process.stdin.write(b"/usr/bin/credtest\n")
+        process.stdin.write(b"/usr/bin/sessiontest\n")
         process.stdin.flush()
         if not until(b"rixuri$ ", 20):
             raise RuntimeError("prompt")
@@ -59,19 +59,12 @@ with tempfile.TemporaryDirectory(prefix="rixurios-phase20-") as temporary:
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
+        Path("/tmp/session-qemu.log").write_bytes(out)
 
-Path("/tmp/phase20-cred-qemu.log").write_bytes(out)
+Path("/tmp/session-qemu.log").write_bytes(out)
 print(out.decode("utf-8", "replace"))
-for marker in (
-    b"before uid=0 gid=0",
-    b"after uid=1000 gid=1000",
-    b"acl=PASS",
-    b"cap=PASS",
-    b"matrix=PASS",
-    b"setid=PASS",
-):
-    if marker not in out:
-        raise SystemExit(f"missing {marker!r}")
+if b"session=PASS" not in out:
+    raise SystemExit("missing session pass marker")
 if b"PAGE FAULT" in out or b"CPU exception" in out or b"PANIC" in out:
     raise SystemExit("fault")
-print("qemu Phase 20 credential/permission test: PASS")
+print("qemu session lifecycle test: PASS")

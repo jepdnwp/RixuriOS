@@ -63,7 +63,10 @@ int program_main(int argc, char **argv, char **envp) {
     uint32_t groups[2] = {1000u, 2000u};
     uint32_t received_groups[2] = {0, 0};
     uint64_t status = 0;
+    uint64_t caps = 0;
     rix_stat_t stat_result;
+    rix_acl_t acl;
+    rix_acl_t acl_read;
     char *id_argv[] = {(char *)"/usr/bin/id", (char *)0};
     char *empty_env[] = {(char *)0};
 
@@ -87,12 +90,54 @@ int program_main(int argc, char **argv, char **envp) {
         stat_result.uid != 0u || stat_result.gid != 2000u ||
         (stat_result.mode & 07777u) != 0640u)
         return 1;
+    if (create_byte_file("/phase20-work/acl-user", 0600u, 'u') != 0 ||
+        create_byte_file("/phase20-work/acl-group", 0600u, 'g') != 0 ||
+        create_byte_file("/phase20-work/acl-clear", 0600u, 'c') != 0)
+        return 1;
+    acl = (rix_acl_t){RIX_ACL_VERSION, 1000u, 4u, RIX_ACL_NONE, 0u, 4u};
+    if (setacl("/phase20-work/acl-user", &acl) != 0 ||
+        getacl("/phase20-work/acl-user", &acl_read) != 0 ||
+        acl_read.version != RIX_ACL_VERSION || acl_read.user != 1000u ||
+        acl_read.user_perm != 4u || acl_read.group != RIX_ACL_NONE ||
+        acl_read.mask != 4u)
+        return 1;
+    acl.version = 2u;
+    if (expect_error(setacl("/phase20-work/acl-user", &acl), RIX_EINVAL) != 0)
+        return 1;
+    acl.version = RIX_ACL_VERSION;
+    acl = (rix_acl_t){RIX_ACL_VERSION, RIX_ACL_NONE, 0u, 2000u, 4u, 4u};
+    if (setacl("/phase20-work/acl-group", &acl) != 0 ||
+        setacl("/phase20-work/acl-clear", &acl) != 0 ||
+        clearacl("/phase20-work/acl-clear") != 0 ||
+        getacl("/phase20-work/acl-clear", &acl_read) != 0 ||
+        acl_read.user != RIX_ACL_NONE || acl_read.group != RIX_ACL_NONE)
+        return 1;
 
+    if (get_capabilities(&caps) != 0 || caps != RIX_CAP_ALL ||
+        drop_capabilities(RIX_CAP_ALL & ~(RIX_CAP_SETUID | RIX_CAP_SETGID)) != 0 ||
+        get_capabilities(&caps) != 0 || caps != (RIX_CAP_SETUID | RIX_CAP_SETGID) ||
+        expect_error(setacl("/phase20-work/acl-user", &acl_read), RIX_EACCES) != 0 ||
+        expect_error(chmod("/phase20-mode", 0777u), RIX_EACCES) != 0 ||
+        expect_error(openat(RIX_VFS_AT_FDCWD, "/phase20-other", 0u, 0u), RIX_EACCES) != 0)
+        return 1;
+    if (emit("cap=PASS\n") != 0) return 1;
     if (setgroups(2u, groups) != 0 || setgid(1000u) != 0 || setuid(1000u) != 0)
         return 1;
     if (emit("after uid=") != 0 || emit_number(getuid()) != 0 ||
         emit(" gid=") != 0 || emit_number(getgid()) != 0 || emit("\n") != 0)
         return 1;
+
+    if (read_byte_file("/phase20-work/acl-user", 'u') != 0 ||
+        expect_error(openat(RIX_VFS_AT_FDCWD, "/phase20-work/acl-user",
+                            RIX_VFS_O_WRONLY, 0u), RIX_EACCES) != 0 ||
+        read_byte_file("/phase20-work/acl-group", 'g') != 0 ||
+        expect_error(openat(RIX_VFS_AT_FDCWD, "/phase20-work/acl-group",
+                            RIX_VFS_O_WRONLY, 0u), RIX_EACCES) != 0 ||
+        getacl("/phase20-work/acl-user", &acl_read) != 0 ||
+        acl_read.user != 1000u || acl_read.user_perm != 4u ||
+        expect_error(setacl("/phase20-work/acl-user", &acl_read), RIX_EACCES) != 0)
+        return 1;
+    if (emit("acl=PASS\n") != 0) return 1;
 
     /* The process owns this file and reaches the group-owned file through gid 2000. */
     if (create_byte_file("/phase20-work/owner", 0600u, 'o') != 0 ||

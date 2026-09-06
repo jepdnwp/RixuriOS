@@ -6,6 +6,18 @@ typedef uint64_t rix_pid_t;
 typedef struct { uint64_t sec; uint64_t nsec; } rix_timespec_t;
 typedef struct { uint64_t inode; uint8_t type; char name[256]; } rix_dirent_t;
 typedef struct { uint64_t inode; uint8_t type; uint32_t mode; uint32_t uid; uint32_t gid; uint64_t size; } rix_stat_t;
+#define RIX_ACL_VERSION 1u
+#define RIX_ACL_NONE UINT32_MAX
+#define RIX_ACL_PERM_MASK 7u
+#define RIX_CAP_DAC_OVERRIDE (1ULL << 0)
+#define RIX_CAP_SETUID       (1ULL << 1)
+#define RIX_CAP_SETGID       (1ULL << 2)
+#define RIX_CAP_KILL         (1ULL << 3)
+#define RIX_CAP_TTY_ADMIN    (1ULL << 4)
+#define RIX_CAP_ACL_ADMIN    (1ULL << 5)
+#define RIX_CAP_SESSION_ADMIN (1ULL << 6)
+#define RIX_CAP_ALL (RIX_CAP_DAC_OVERRIDE | RIX_CAP_SETUID | RIX_CAP_SETGID | RIX_CAP_KILL | RIX_CAP_TTY_ADMIN | RIX_CAP_ACL_ADMIN | RIX_CAP_SESSION_ADMIN)
+typedef struct { uint32_t version; uint32_t user; uint32_t user_perm; uint32_t group; uint32_t group_perm; uint32_t mask; } rix_acl_t;
 rix_ssize_t read(int fd, void *buf, size_t count);
 rix_ssize_t write(int fd,const void *buf,size_t count);
 int openat(int dirfd, const char *path, uint32_t flags, uint32_t mode);
@@ -33,6 +45,17 @@ uint32_t getgid(void);
 int setuid(uint32_t uid);
 int setgid(uint32_t gid);
 int chmod(const char *path, uint32_t mode);
+int getacl(const char *path, rix_acl_t *out);
+int setacl(const char *path, const rix_acl_t *acl);
+int clearacl(const char *path);
+int get_session(rix_pid_t pid, rix_pid_t *out_session);
+int create_session(rix_pid_t *out_session);
+int attach_tty(uint32_t tty_id);
+int detach_tty(uint32_t tty_id);
+int login_session(uint32_t tty_id, rix_pid_t *out_session);
+int logout_session(void);
+int get_capabilities(uint64_t *out);
+int drop_capabilities(uint64_t mask);
 int getgroups(size_t capacity, uint32_t *groups);
 int setgroups(size_t count, const uint32_t *groups);
 int execve(const char *path, char *const argv[], char *const envp[]);

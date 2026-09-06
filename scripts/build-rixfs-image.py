@@ -81,7 +81,7 @@ def inode(number: int, mode: int, size: int, extents: list[tuple[int, int]]) -> 
         starts[index] = start
         lengths[index] = length
     return struct.pack(
-        "<QIIIIQQ4Q4Q24x",
+        "<QIIIIQQ4Q4Q6I",
         number,
         mode,
         0,
@@ -91,6 +91,12 @@ def inode(number: int, mode: int, size: int, extents: list[tuple[int, int]]) -> 
         1,
         *starts,
         *lengths,
+        1,
+        0xFFFFFFFF,
+        0,
+        0xFFFFFFFF,
+        0,
+        7,
     )
 
 

@@ -44,3 +44,6 @@ int vfs_mkdir(const char *path,uint32_t mode,uint32_t uid,uint32_t gid);
 int vfs_unlink(const char *path);
 int vfs_link(const char *old_path,const char *new_path);
 int vfs_rmdir(const char *path);
+int vfs_get_acl(const char *path, rixfs_acl_t *out);
+int vfs_set_acl(const char *path, const rixfs_acl_t *acl);
+int vfs_clear_acl(const char *path);

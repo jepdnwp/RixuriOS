@@ -503,3 +503,15 @@ The expanded `/usr/bin/credtest` creates root-owned fixtures with distinct group
 The Phase 20 harness uses disposable copies of both the RixFS image and UEFI ESP so repeated runs cannot leave fixture mutations or FAT-backed firmware changes for later tests. Two consecutive harness runs passed with `before uid=0 gid=0`, `after uid=1000 gid=1000`, `matrix=PASS`, `uid=0 gid=0`, and `setid=PASS`. The Phase 19 extended, utility, process-utility, and cp/mv edge QEMU harnesses also passed when each was started from a freshly generated image. No page fault, CPU exception, panic, timeout, or prompt loss was observed.
 
 The strict userspace fork ABI declaration now carries `returns_twice`, and fork callers whose state is intentionally inspected after fork use volatile status storage where required by `-Werror=clobbered`. Phase 20 remains **IN PROGRESS**: ACL policy, login/session lifecycle, capability/least-privilege interfaces, audit identity, broader metadata-preserving copy/move semantics, and physical-hardware security evidence remain open.
+
+## Latest continuation — Phase 20 ACL, session and capability v1
+
+- Added persistent RixFS ACL v1 metadata in the existing inode slot, with journal-backed get/set/clear operations and legacy images keeping ACL disabled.
+- Added owner/group/mask-aware VFS ACL evaluation, stable EACCES mapping and QEMU coverage for named-user, named-group, mask, invalid-version, clear and non-owner mutation cases.
+- Added session lifecycle v1 primitives and syscalls for session creation/query, controlling-TTY attach/detach, login and logout. The disposable QEMU session test validates create/login, controlling-terminal transitions and logout cleanup in isolated session leaders.
+- Added a process capability bitmask with DAC override, SETUID, SETGID, KILL, TTY administration, ACL administration and session administration bits. Capabilities inherit across fork/spawn, are cleared on setuid/setgid executable transitions and can only be reduced by the current process.
+- Added `get_capabilities` and `drop_capabilities` userspace ABI. VFS root bypass now requires `CAP_DAC_OVERRIDE`; root ACL mutation requires `CAP_ACL_ADMIN`; TTY/session management requires the corresponding administrative capability; cross-UID signal delivery requires `CAP_KILL`.
+- Extended the real Phase 20 QEMU credential test with capability drop evidence. The observed markers were `cap=PASS`, `acl=PASS`, `matrix=PASS`, `after uid=1000 gid=1000` and `setid=PASS`.
+- Clean strict build, host tests, Phase 20 credential QEMU, session QEMU, Phase 19 extended/utilities, process utilities, cp/mv edge and foreground-signal QEMU suites all passed in this environment.
+
+Phase 20 remains `IMPLEMENTED / NOT YET VALIDATED` for hardware-specific security claims and for a full login database/PAM-equivalent authentication service, persistent multi-session manager, capability delegation across exec, and a dedicated cross-UID `CAP_KILL` runtime fixture. These are intentionally separate from the validated kernel ABI and enforcement slice above.

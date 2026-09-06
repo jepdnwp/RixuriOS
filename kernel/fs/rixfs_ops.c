@@ -21,7 +21,8 @@ int rixfs_truncate(rixfs_t*f,uint64_t ino,uint64_t ns){if(!f||!f->mounted)return
 static int valid_name(const char*n,size_t*l){if(!n||!n[0]||n[0]=='/'||(n[0]=='.'&&n[1]==0)||(n[0]=='.'&&n[1]=='.'&&n[2]==0))return-1;size_t x=0;while(n[x]){if(n[x]=='/'||++x>RIXFS_NAME_MAX)return-1;}*l=x;return 0;}
 static int alloc_inode(rixfs_t*f,uint64_t*out){for(uint64_t i=1;i<=f->super.inode_count;i++){rixfs_inode_disk_t in;if(rixfs_read_inode(f,i,&in))return-1;if(in.inode==0){*out=i;return 0;}}return-2;}
 static int dir_sector(const rixfs_inode_disk_t*dir,uint64_t logical,uint64_t*sector){uint64_t pos=logical;for(unsigned e=0;e<RIXFS_DIRECT_EXTENTS;e++){if(pos<dir->extent_length[e]){*sector=dir->extent_start[e]+pos;return 0;}pos-=dir->extent_length[e];}return-1;}
-static int dir_append(rixfs_t*f,rixfs_inode_disk_t*dir,uint64_t ino,uint8_t type,const char*name,size_t nl){uint64_t ss=f->device->sector_size;if(ss>UINT16_MAX||nl>RIXFS_NAME_MAX||dir->size%ss)return-1;uint64_t sectors=dir->size/ss,sec=0;int existing=0,add_size=0;uint64_t q=pmm_alloc_page();if(!q)return-2;uint8_t*b=(uint8_t*)(uintptr_t)q;for(uint64_t logical=0;logical<sectors;logical++){if(dir_sector(dir,logical,&sec)||rd(f->device,sec,b)){pmm_free_page(q);return-3;}uint64_t old=0;for(unsigned i=0;i<8;i++)old|=(uint64_t)b[i]<<(8*i);if(!old){existing=1;break;}}if(!existing&&dir_sector(dir,sectors,&sec)==0){existing=1;add_size=sectors==0;}if(!existing){if(alloc_sec(f,&sec)){pmm_free_page(q);return-4;}if(append_extent(dir,sec)){bit(f,sec,0);pmm_free_page(q);return-5;}add_size=1;}int r=existing?rd(f->device,sec,b):0;if(r){pmm_free_page(q);return-6;}if(!existing)for(uint32_t i=0;i<ss;i++)b[i]=0;uint16_t rs=(uint16_t)ss;for(unsigned i=0;i<8;i++)b[i]=(uint8_t)(ino>>(8*i));b[8]=(uint8_t)rs;b[9]=(uint8_t)(rs>>8);b[10]=type;b[11]=(uint8_t)nl;for(size_t i=0;i<nl;i++)b[16+i]=name[i];r=journal_write(f,sec,b);pmm_free_page(q);if(r){if(!existing)bit(f,sec,0);return-7;}if(add_size)dir->size+=ss;return 0;}
+static int dir_append(rixfs_t*f,rixfs_inode_disk_t*dir,uint64_t ino,uint8_t type,const char*name,size_t nl){uint64_t ss=f->device->sector_size;if(ss>UINT16_MAX||nl>RIXFS_NAME_MAX||dir->size%ss)return-1;uint64_t sectors=dir->size/ss,sec=0;int existing=0,add_size=0;uint64_t q=pmm_alloc_page();if(!q)return-2;uint8_t*b=(uint8_t*)(uintptr_t)q;for(uint64_t logical=0;logical<sectors;logical++){if(dir_sector(dir,logical,&sec)||rd(f->device,sec,b)){pmm_free_page(q);return-3;}uint64_t old=0;for(unsigned i=0;i<8;i++)old|=(uint64_t)b[i]<<(8*i);if(!old){existing=1;break;}}if(!existing&&dir_sector(dir,sectors,&sec)==0){existing=1;add_size=sectors==0;}if(!existing){if(alloc_sec(f,&sec)){pmm_free_page(q);return-4;}if(append_extent(dir,sec)){bit(f,sec,0);pmm_free_page(q);return-5;}
+add_size=1;}int r=existing?rd(f->device,sec,b):0;if(r){pmm_free_page(q);return-6;}if(!existing)for(uint32_t i=0;i<ss;i++)b[i]=0;uint16_t rs=(uint16_t)ss;for(unsigned i=0;i<8;i++)b[i]=(uint8_t)(ino>>(8*i));b[8]=(uint8_t)rs;b[9]=(uint8_t)(rs>>8);b[10]=type;b[11]=(uint8_t)nl;for(size_t i=0;i<nl;i++)b[16+i]=name[i];r=journal_write(f,sec,b);pmm_free_page(q);if(r){if(!existing)bit(f,sec,0);return-7;}if(add_size)dir->size+=ss;return 0;}
 int rixfs_mkdir(rixfs_t*f,uint64_t d,const char*name,uint32_t mode,uint32_t uid,uint32_t gid,uint64_t*out){size_t nl;if(!f||!out||valid_name(name,&nl))return-1;uint64_t old;uint8_t t;if(rixfs_lookup_name(f,d,name,&old,&t)==0)return-2;uint64_t ino;if(alloc_inode(f,&ino))return-3;uint64_t sec;if(alloc_sec(f,&sec))return-4;rixfs_inode_disk_t in={0};in.inode=ino;in.mode=RIXFS_IFDIR|(mode&07777u);in.uid=uid;in.gid=gid;in.generation=1;in.links=1;in.extent_start[0]=sec;in.extent_length[0]=1;if(rixfs_write_inode(f,ino,&in)){bit(f,sec,0);return-5;}rixfs_inode_disk_t dir;if(rixfs_read_inode(f,d,&dir)||dir_append(f,&dir,ino,RIXFS_DIR_TYPE_DIR,name,nl)){free_inode_data(f,&in);rixfs_inode_disk_t z={0};rixfs_write_inode(f,ino,&z);return-6;}if(rixfs_write_inode(f,d,&dir))return-7;*out=ino;return 0;}
 int rixfs_create(rixfs_t*f,uint64_t d,const char*name,uint32_t mode,uint32_t uid,uint32_t gid,uint64_t*out){size_t nl;if(!f||!out||valid_name(name,&nl))return-1;uint64_t old;uint8_t t;if(rixfs_lookup_name(f,d,name,&old,&t)==0)return-2;uint64_t ino;if(alloc_inode(f,&ino))return-3;rixfs_inode_disk_t in={0};in.inode=ino;in.mode=RIXFS_IFREG|(mode&07777u);in.uid=uid;in.gid=gid;in.generation=1;in.links=1;if(rixfs_write_inode(f,ino,&in))return-4;rixfs_inode_disk_t dir;if(rixfs_read_inode(f,d,&dir)||dir_append(f,&dir,ino,RIXFS_DIR_TYPE_FILE,name,nl)){rixfs_inode_disk_t z={0};rixfs_write_inode(f,ino,&z);return-5;}if(rixfs_write_inode(f,d,&dir))return-6;*out=ino;return 0;}
 int rixfs_link(rixfs_t*f,uint64_t source,uint64_t d,const char*name,uint8_t type){size_t nl;if(!f||valid_name(name,&nl))return-1;uint64_t old;uint8_t t;if(rixfs_lookup_name(f,d,name,&old,&t)==0)return-2;rixfs_inode_disk_t in;if(rixfs_read_inode(f,source,&in)||!in.inode)return-3;if((in.mode&RIXFS_IFMT)==RIXFS_IFDIR)return-4;if(in.links==UINT32_MAX)return-5;rixfs_inode_disk_t dir;if(rixfs_read_inode(f,d,&dir)||dir_append(f,&dir,source,type,name,nl))return-6;if(rixfs_write_inode(f,d,&dir))return-7;in.links=in.links?in.links+1u:2u;return rixfs_write_inode(f,source,&in);}
@@ -30,3 +31,59 @@ static int directory_empty(rixfs_t*f,uint64_t ino){uint64_t off=0;rixfs_dirent_d
 int rixfs_rmdir(rixfs_t*f,uint64_t d,const char*name){size_t nl;if(!f||valid_name(name,&nl))return-1;uint64_t ino;uint8_t type;if(rixfs_lookup_name(f,d,name,&ino,&type))return-2;if(ino==f->super.root_inode)return-3;rixfs_inode_disk_t in;if(rixfs_read_inode(f,ino,&in))return-4;if((in.mode&RIXFS_IFMT)!=RIXFS_IFDIR)return-5;if(directory_empty(f,ino))return-6;if(free_inode_data(f,&in))return-7;if(rixfs_remove_name(f,d,name))return-8;rixfs_inode_disk_t z={0};return rixfs_write_inode(f,ino,&z);}
 int rixfs_format(rix_block_device_t*d,uint64_t ic){if(!d||d->sector_size<512||d->sector_size>RIXFS_SECTOR_MAX||d->sector_count<128||ic<8)return-1;uint64_t is=(ic*RIXFS_INODE_SIZE+d->sector_size-1)/d->sector_size,bs=(d->sector_count+8*d->sector_size-1)/(8*d->sector_size),js=1+is+bs,ds=js+2;if(ds+1>=d->sector_count)return-2;uint64_t q=pmm_alloc_page();if(!q)return-3;uint8_t*b=(uint8_t*)(uintptr_t)q;for(uint32_t i=0;i<d->sector_size;i++)b[i]=0;rixfs_superblock_t sb={0};sb.magic=RIXFS_MAGIC;sb.version=RIXFS_VERSION;sb.header_size=sizeof(sb);sb.sector_size=d->sector_size;sb.total_sectors=d->sector_count;sb.inode_table_sector=1;sb.inode_count=ic;sb.bitmap_sector=1+is;sb.bitmap_sectors=bs;sb.journal_sector=js;sb.journal_sectors=2;sb.data_start_sector=ds;sb.root_inode=1;sb.generation=1;sb.free_hint=ds;sb.checksum=hash64(&sb,sizeof(sb));for(size_t i=0;i<sizeof(sb);i++)b[i]=((const uint8_t*)&sb)[i];if(wr(d,0,b)){pmm_free_page(q);return-4;}for(uint64_t s=1;s<ds;s++){for(uint32_t i=0;i<d->sector_size;i++)b[i]=0;if(wr(d,s,b)){pmm_free_page(q);return-5;}}rixfs_t f={.device=d,.super=sb,.mounted=1};for(uint64_t s=0;s<ds;s++)if(bit(&f,s,1)){pmm_free_page(q);return-6;}uint64_t root;if(alloc_sec(&f,&root)){pmm_free_page(q);return-7;}rixfs_inode_disk_t in={0};in.inode=1;in.mode=RIXFS_IFDIR|0755u;in.generation=1;in.extent_start[0]=root;in.extent_length[0]=1;if(rixfs_write_inode(&f,1,&in)){pmm_free_page(q);return-8;}for(uint32_t i=0;i<d->sector_size;i++)b[i]=0;if(wr(d,root,b)){pmm_free_page(q);return-9;}pmm_free_page(q);return 0;}
 int rixfs_format_standard_tree(rix_block_device_t*d,uint64_t ic){if(rixfs_format(d,ic)!=0)return-1;rixfs_t f={0};if(rixfs_mount(d,&f)!=0)return-2;static const char*dirs[]={"boot","bin","sbin","lib","lib64","usr","etc","home","root","var","tmp","dev","proc","sys","run","opt","mnt","media"};for(size_t i=0;i<sizeof(dirs)/sizeof(dirs[0]);i++){uint64_t ino=0;if(rixfs_mkdir(&f,f.super.root_inode,dirs[i],0755,0,0,&ino)!=0){rixfs_unmount(&f);return-3;}}if(rixfs_sync(&f)!=0){rixfs_unmount(&f);return-4;}rixfs_unmount(&f);return 0;}
+
+
+static int acl_valid(const rixfs_acl_t *acl) {
+    if (!acl || acl->version != RIXFS_ACL_VERSION) return -1;
+    if (acl->user != RIXFS_ACL_NONE && (acl->user_perm & ~RIXFS_ACL_PERM_MASK)) return -2;
+    if (acl->group != RIXFS_ACL_NONE && (acl->group_perm & ~RIXFS_ACL_PERM_MASK)) return -3;
+    if (acl->mask & ~RIXFS_ACL_PERM_MASK) return -4;
+    return 0;
+}
+
+int rixfs_get_acl(rixfs_t *f, uint64_t ino, rixfs_acl_t *out) {
+    if (!f || !out) return -1;
+    rixfs_inode_disk_t in;
+    if (rixfs_read_inode(f, ino, &in)) return -2;
+    out->version = RIXFS_ACL_VERSION;
+    if (!(in.flags & RIXFS_INODE_FLAG_ACL)) {
+        out->user = RIXFS_ACL_NONE;
+        out->user_perm = 0;
+        out->group = RIXFS_ACL_NONE;
+        out->group_perm = 0;
+        out->mask = RIXFS_ACL_PERM_MASK;
+        return 0;
+    }
+    out->user = in.acl_user;
+    out->user_perm = in.acl_user_perm & RIXFS_ACL_PERM_MASK;
+    out->group = in.acl_group;
+    out->group_perm = in.acl_group_perm & RIXFS_ACL_PERM_MASK;
+    out->mask = in.acl_mask & RIXFS_ACL_PERM_MASK;
+    return 0;
+}
+
+int rixfs_set_acl(rixfs_t *f, uint64_t ino, const rixfs_acl_t *acl) {
+    if (acl_valid(acl)) return -1;
+    rixfs_inode_disk_t in;
+    if (rixfs_read_inode(f, ino, &in)) return -2;
+    in.flags |= RIXFS_INODE_FLAG_ACL;
+    in.acl_user = acl->user;
+    in.acl_user_perm = acl->user_perm & RIXFS_ACL_PERM_MASK;
+    in.acl_group = acl->group;
+    in.acl_group_perm = acl->group_perm & RIXFS_ACL_PERM_MASK;
+    in.acl_mask = acl->mask & RIXFS_ACL_PERM_MASK;
+    return rixfs_write_inode(f, ino, &in);
+}
+
+int rixfs_clear_acl(rixfs_t *f, uint64_t ino) {
+    if (!f) return -1;
+    rixfs_inode_disk_t in;
+    if (rixfs_read_inode(f, ino, &in)) return -2;
+    in.flags &= ~RIXFS_INODE_FLAG_ACL;
+    in.acl_user = RIXFS_ACL_NONE;
+    in.acl_user_perm = 0;
+    in.acl_group = RIXFS_ACL_NONE;
+    in.acl_group_perm = 0;
+    in.acl_mask = RIXFS_ACL_PERM_MASK;
+    return rixfs_write_inode(f, ino, &in);
+}

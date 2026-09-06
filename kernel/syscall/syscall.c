@@ -72,6 +72,9 @@ void syscall_dispatch(rix_syscall_frame_t*frame){
  case RIX_SYS_CLOSE:if(vfs_close(self,(int)frame->rdi)!=0)result=-RIX_EINVAL;else result=0;break;
  case RIX_SYS_CLOSE_PIPES_EXCEPT:if(vfs_close_pipes_except(self,(int)frame->rdi,(int)frame->rsi)!=0)result=-RIX_EINVAL;else result=0;break;
  case RIX_SYS_STAT:{char path[RIX_VFS_PATH_MAX];if(user_string(frame->rdi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}rix_vnode_t st;int rc=vfs_stat(path,&st);if(rc!=0)result=vfs_result(rc);else if(copy_to_user(frame->rsi,&st,sizeof(st))!=0)result=-RIX_EFAULT;else result=0;break;}
+ case RIX_SYS_GETACL:{char path[RIX_VFS_PATH_MAX];rixfs_acl_t acl;if(user_string(frame->rdi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}int rc=vfs_get_acl(path,&acl);if(rc!=0)result=vfs_result(rc);else if(copy_to_user(frame->rsi,&acl,sizeof(acl))!=0)result=-RIX_EFAULT;else result=0;break;}
+ case RIX_SYS_SETACL:{char path[RIX_VFS_PATH_MAX];rixfs_acl_t acl;if(user_string(frame->rdi,path,sizeof(path))!=0||copy_from_user(&acl,frame->rsi,sizeof(acl))!=0){result=-RIX_EFAULT;break;}result=vfs_result(vfs_set_acl(path,&acl));break;}
+ case RIX_SYS_CLEARACL:{char path[RIX_VFS_PATH_MAX];if(user_string(frame->rdi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}result=vfs_result(vfs_clear_acl(path));break;}
  case RIX_SYS_CHMOD:{char path[RIX_VFS_PATH_MAX];if(user_string(frame->rdi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}result=vfs_result(vfs_chmod(path,(uint32_t)frame->rsi));break;}
  case RIX_SYS_EXIT:if(process_exit(self,frame->rdi)!=0)result=-RIX_EINVAL;else scheduler_exit_current();break;
  case RIX_SYS_WAIT:{
@@ -89,7 +92,7 @@ void syscall_dispatch(rix_syscall_frame_t*frame){
   if(copy_to_user(frame->rsi,&status,sizeof(status))!=0){result=-RIX_EFAULT;break;}
   result=(int64_t)child;break;
  }
- case RIX_SYS_KILL:if(process_signal_send((pid_t)frame->rdi,(unsigned)frame->rsi)!=0)result=-RIX_ESRCH;else result=0;break;
+ case RIX_SYS_KILL:{pid_t target=(pid_t)frame->rdi;if(process_uid(target)!=process_uid(self)&&!process_has_capability(self,RIX_CAP_KILL)){result=-RIX_EACCES;break;}if(process_signal_send(target,(unsigned)frame->rsi)!=0)result=-RIX_ESRCH;else result=0;break;}
  case RIX_SYS_GETPID:result=(int64_t)self;break;
  case RIX_SYS_SIGMASK:if(process_signal_mask(self,frame->rdi)!=0)result=-RIX_EINVAL;else result=0;break;
  case RIX_SYS_SIGPENDING:{uint64_t pending;if(process_signal_pending(self,&pending)!=0||copy_to_user(frame->rdi,&pending,sizeof(pending))!=0)result=-RIX_EFAULT;else result=0;break;}
@@ -97,10 +100,20 @@ void syscall_dispatch(rix_syscall_frame_t*frame){
  case RIX_SYS_GETCWD:{char cwd[RIX_PROCESS_CWD_MAX];size_t cap=(size_t)frame->rsi;if(!cap||process_getcwd(self,cwd,sizeof(cwd))!=0){result=-RIX_EINVAL;break;}size_t n=0;while(cwd[n])++n;if(n+1>cap||copy_to_user(frame->rdi,cwd,n+1)!=0)result=-RIX_EFAULT;else result=(int64_t)(n+1);break;}
  case RIX_SYS_GETUID:result=(int64_t)process_uid(self);break;
  case RIX_SYS_GETGID:result=(int64_t)process_gid(self);break;
- case RIX_SYS_SETUID:result=process_setuid(self,(uint32_t)frame->rdi)==0?0:-RIX_EINVAL;break;
- case RIX_SYS_SETGID:result=process_setgid(self,(uint32_t)frame->rdi)==0?0:-RIX_EINVAL;break;
+ case RIX_SYS_SETUID:if(process_uid(self)==0&&!process_has_capability(self,RIX_CAP_SETUID))result=-RIX_EACCES;else result=process_setuid(self,(uint32_t)frame->rdi)==0?0:-RIX_EINVAL;break;
+ case RIX_SYS_SETGID:if(process_uid(self)==0&&!process_has_capability(self,RIX_CAP_SETGID))result=-RIX_EACCES;else result=process_setgid(self,(uint32_t)frame->rdi)==0?0:-RIX_EINVAL;break;
  case RIX_SYS_GETGROUPS:{size_t count=(size_t)frame->rdi,actual=0;uint32_t groups[RIX_PROCESS_GROUP_MAX];if(count>RIX_PROCESS_GROUP_MAX||process_getgroups(self,groups,count,&actual)!=0){result=-RIX_EINVAL;break;}if(count&&actual&&copy_to_user(frame->rsi,groups,actual*sizeof(groups[0]))!=0){result=-RIX_EFAULT;break;}result=(int64_t)actual;break;}
  case RIX_SYS_SETGROUPS:{size_t count=(size_t)frame->rdi;uint32_t groups[RIX_PROCESS_GROUP_MAX];if(count>RIX_PROCESS_GROUP_MAX||(count&&copy_from_user(groups,frame->rsi,count*sizeof(groups[0]))!=0)||process_setgroups(self,groups,count)!=0)result=-RIX_EINVAL;else result=0;break;}
+ case RIX_SYS_GETSID:{pid_t target=frame->rdi?((pid_t)frame->rdi):self;pid_t session;if(process_get_session(target,&session)!=0)result=-RIX_ESRCH;else if(copy_to_user(frame->rsi,&session,sizeof(session))!=0)result=-RIX_EFAULT;else result=0;break;}
+ case RIX_SYS_GETCAP:{uint64_t caps;if(process_get_capabilities(self,&caps)!=0||copy_to_user(frame->rdi,&caps,sizeof(caps))!=0)result=-RIX_EFAULT;else result=0;break;}
+ case RIX_SYS_DROPCAP:if(!capability_valid(frame->rdi)||process_drop_capabilities(self,frame->rdi)!=0)result=-RIX_EINVAL;else result=0;break;
+ case RIX_SYS_SETSID:{rix_process_t*p=process_lookup(self);pid_t old_session=p?p->session:0,old_group=p?p->process_group:0,session;if(process_create_session(self,&session)!=0){result=-RIX_EINVAL;break;}if(copy_to_user(frame->rdi,&session,sizeof(session))!=0){(void)process_set_session(self,old_session);(void)process_set_group(self,old_group);result=-RIX_EFAULT;}else result=0;break;}
+ case RIX_SYS_TTY_ATTACH:{rix_process_t*p=process_lookup(self);if(!p||!process_is_session_leader(self)||!process_has_capability(self,RIX_CAP_TTY_ADMIN)){result=-RIX_EACCES;break;}int rc=tty_attach_session((unsigned)frame->rdi,(uint32_t)p->session,(uint32_t)p->process_group);result=rc==0?0:(rc==-2?-RIX_EACCES:-RIX_EINVAL);break;}
+ case RIX_SYS_TTY_DETACH:{rix_process_t*p=process_lookup(self);if(!p||!process_is_session_leader(self)||!process_has_capability(self,RIX_CAP_TTY_ADMIN)){result=-RIX_EACCES;break;}int rc=tty_detach_session((unsigned)frame->rdi,(uint32_t)p->session);result=rc==0?0:(rc==-2?-RIX_EACCES:-RIX_EINVAL);break;}
+ case RIX_SYS_SESSION_LOGIN:{rix_process_t*p=process_lookup(self);pid_t old_session=p?p->session:0,old_group=p?p->process_group:0,session;if(!p||!process_has_capability(self,RIX_CAP_SESSION_ADMIN)){result=-RIX_EACCES;break;}if(process_create_session(self,&session)!=0){result=-RIX_EINVAL;break;}
+int rc=tty_attach_session((unsigned)frame->rdi,(uint32_t)session,(uint32_t)p->process_group);if(rc!=0||copy_to_user(frame->rsi,&session,sizeof(session))!=0){if(rc==0)(void)tty_detach_session((unsigned)frame->rdi,(uint32_t)session);(void)process_set_session(self,old_session);(void)process_set_group(self,old_group);result=rc==-2?-RIX_EACCES:(rc!=0?-RIX_EINVAL:-RIX_EFAULT);}else result=0;break;}
+ case RIX_SYS_SESSION_LOGOUT:{rix_process_t*p=process_lookup(self);if(!p||!process_is_session_leader(self)||!process_has_capability(self,RIX_CAP_SESSION_ADMIN)){result=-RIX_EACCES;break;}
+pid_t session=p->session;for(unsigned tty=0;tty<RIX_TTY_COUNT;tty++)(void)tty_detach_session(tty,(uint32_t)session);result=process_logout_session(self,0)==0&&process_leave_session(self)==0?0:-RIX_EINVAL;break;}
  case RIX_SYS_CLOCK_GETTIME:{rix_timespec_t now;if(time_realtime(&now)!=0||copy_to_user(frame->rdi,&now,sizeof(now))!=0)result=-RIX_EINVAL;else result=0;break;}
  case RIX_SYS_NANOSLEEP:{rix_timespec_t request;if(copy_from_user(&request,frame->rdi,sizeof(request))!=0||request.nsec>=1000000000ULL){result=-RIX_EINVAL;break;}if(request.sec>UINT64_MAX/1000000000ULL||request.sec*1000000000ULL>UINT64_MAX-request.nsec){result=-RIX_EINVAL;break;}uint64_t duration=request.sec*1000000000ULL+request.nsec;uint64_t start=time_monotonic_ns();if(duration>UINT64_MAX-start){result=-RIX_EINVAL;break;}uint64_t deadline=start+duration;while(time_monotonic_ns()<deadline){if(syscall_interrupted(self)){result=-RIX_EINTR;break;}scheduler_yield();}if(result!=-(int64_t)RIX_EINTR)result=0;break;}
  case RIX_SYS_SHM_CREATE:{uint32_t id;if(shm_create(frame->rdi,(rix_shm_id_t*)&id)!=0){result=-RIX_EINVAL;break;}if(copy_to_user(frame->rsi,&id,sizeof(id))!=0){(void)shm_destroy(id);result=-RIX_EFAULT;break;}result=0;break;}

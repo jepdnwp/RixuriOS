@@ -386,6 +386,27 @@ int tty_get_session(unsigned id, uint32_t *session, int *controlling) {
     return 0;
 }
 
+int tty_attach_session(unsigned id, uint32_t session, uint32_t foreground_pgrp) {
+    rix_tty_t *t = tty_valid(id);
+    if (!t || session == 0u || foreground_pgrp == 0u) return -1;
+    if (t->controlling && t->session != session) return -2;
+    t->session = session;
+    t->controlling = 1u;
+    t->foreground_pgrp = foreground_pgrp;
+    return 0;
+}
+
+int tty_detach_session(unsigned id, uint32_t session) {
+    rix_tty_t *t = tty_valid(id);
+    if (!t || session == 0u) return -1;
+    if (!t->controlling) return 0;
+    if (t->session != session) return -2;
+    t->session = 0;
+    t->controlling = 0;
+    t->foreground_pgrp = 0;
+    return 0;
+}
+
 int tty_set_dimensions(unsigned id, uint16_t rows, uint16_t columns) {
     rix_tty_t *t = tty_valid(id);
     if (!t || rows == 0u || columns == 0u || rows > RIX_TTY_MAX_ROWS ||

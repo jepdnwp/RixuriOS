@@ -27,8 +27,28 @@ static vfs_pipe_slot_t pipe_slots[VFS_PIPE_MAX];
 static int permission_allowed(const rix_vnode_t *node,unsigned access){
     if(!node)return -1;
     uint32_t uid=process_uid(process_current());
-    if(uid==0)return 0;
-    unsigned bits=(uid==node->uid)?((node->mode>>6)&7u):(process_in_group(process_current(),node->gid)?((node->mode>>3)&7u):(node->mode&7u));
+    if(uid==0&&process_has_capability(process_current(),RIX_CAP_DAC_OVERRIDE))return 0;
+    unsigned bits;
+    rixfs_acl_t acl;
+    if(uid==node->uid){
+        bits=(node->mode>>6)&7u;
+    }else{
+        int acl_rc=rixfs_get_acl(vfs_root_fs(),node->inode,&acl);
+        if(acl_rc!=0)return RIX_VFS_ERR_PERMISSION;
+        if(acl.version==RIXFS_ACL_VERSION &&
+           acl.user!=RIXFS_ACL_NONE && acl.user==uid){
+            bits=acl.user_perm & RIXFS_ACL_PERM_MASK;
+            bits&=acl.mask & RIXFS_ACL_PERM_MASK;
+        }else if(acl.version==RIXFS_ACL_VERSION &&
+                 acl.group!=RIXFS_ACL_NONE && process_in_group(process_current(),acl.group)){
+            bits=acl.group_perm & RIXFS_ACL_PERM_MASK;
+            bits&=acl.mask & RIXFS_ACL_PERM_MASK;
+        }else if(process_in_group(process_current(),node->gid)){
+            bits=(node->mode>>3)&7u;
+        }else{
+            bits=node->mode&7u;
+        }
+    }
     return (bits&access)==access?0:RIX_VFS_ERR_PERMISSION;
 }
 
@@ -155,7 +175,7 @@ if(!fs)return -3;
 }
 int vfs_readdir(uint64_t pid,int fd,uint64_t*offset,rix_vfs_dirent_t*out,char*name,size_t cap){size_t ps;if(pid_slot(pid,&ps)||fd<0||fd>=RIX_VFS_FD_MAX||!fds[ps][fd].used||!offset||!out||!name)return -1;if(fds[ps][fd].type!=RIX_VFS_DIR)return -2;rixfs_dirent_disk_t e;int r=rixfs_readdir(vfs_root_fs(),fds[ps][fd].inode,offset,&e,name,cap);if(r)return r;out->inode=e.inode;out->type=e.type;return 0;}
 int vfs_stat(const char*path,rix_vnode_t*out){if(!out)return -1;rix_vfs_path_t p;int rc=vfs_lookup(path,&p);if(rc)return rc;*out=*p.node;return 0;}
-int vfs_chmod(const char*path,uint32_t mode){if(!path||(mode&~07777u))return -1;rix_vfs_path_t p;int lookup_rc=vfs_lookup(path,&p);if(lookup_rc)return lookup_rc;if(!p.node)return -2;pid_t pid=process_current();if(process_uid(pid)!=0&&process_uid(pid)!=p.node->uid)return RIX_VFS_ERR_PERMISSION;
+int vfs_chmod(const char*path,uint32_t mode){if(!path||(mode&~07777u))return -1;rix_vfs_path_t p;int lookup_rc=vfs_lookup(path,&p);if(lookup_rc)return lookup_rc;if(!p.node)return -2;pid_t pid=process_current();if(process_uid(pid)==0&&!process_has_capability(pid,RIX_CAP_DAC_OVERRIDE))return RIX_VFS_ERR_PERMISSION;if(process_uid(pid)!=0&&process_uid(pid)!=p.node->uid)return RIX_VFS_ERR_PERMISSION;
 rixfs_t*fs=vfs_root_fs();if(!fs)return -4;rixfs_inode_disk_t in;if(rixfs_read_inode(fs,p.node->inode,&in))return -5;in.mode=(in.mode&RIXFS_IFMT)|(mode&07777u);return rixfs_write_inode(fs,in.inode,&in);}
 int vfs_mkdir(const char*path,uint32_t mode,uint32_t uid,uint32_t gid){char parent[RIX_VFS_PATH_MAX],name[RIX_VFS_NAME_MAX+1];if(split_parent(path,parent,sizeof(parent),name,sizeof(name)))return -1;rix_vfs_path_t p;    int parent_rc=vfs_lookup(parent,&p);if(parent_rc==RIX_VFS_ERR_PERMISSION)return RIX_VFS_ERR_PERMISSION;if(parent_rc||p.node->type!=RIX_VFS_DIR)return -2;int parent_permission=permission_allowed(p.node,VFS_ACCESS_WRITE|VFS_ACCESS_EXEC);if(parent_permission!=0)return parent_permission;uint64_t ino;return rixfs_mkdir(vfs_root_fs(),p.node->inode,name,mode,uid,gid,&ino);
 }
@@ -164,4 +184,41 @@ int vfs_unlink(const char*path){char parent[RIX_VFS_PATH_MAX],name[RIX_VFS_NAME_
 int vfs_link(const char*old_path,const char*new_path){char parent[RIX_VFS_PATH_MAX],name[RIX_VFS_NAME_MAX+1];if(!old_path||!new_path||split_parent(new_path,parent,sizeof(parent),name,sizeof(name)))return-1;rix_vfs_path_t source,destination;if(vfs_lookup(old_path,&source)||!source.node)return-2;rix_vnode_t source_node=*source.node;if(source_node.type!=RIX_VFS_FILE)return-3;    int parent_rc=vfs_lookup(parent,&destination);if(parent_rc==RIX_VFS_ERR_PERMISSION)return RIX_VFS_ERR_PERMISSION;if(parent_rc||destination.node->type!=RIX_VFS_DIR)return-4;int parent_permission=permission_allowed(destination.node,VFS_ACCESS_WRITE|VFS_ACCESS_EXEC);if(parent_permission!=0)return parent_permission;return rixfs_link(vfs_root_fs(),source_node.inode,destination.node->inode,name,RIXFS_DIR_TYPE_FILE);
 }
 int vfs_rmdir(const char*path){char parent[RIX_VFS_PATH_MAX],name[RIX_VFS_NAME_MAX+1];if(split_parent(path,parent,sizeof(parent),name,sizeof(name)))return -1;rix_vfs_path_t p;    int parent_rc=vfs_lookup(parent,&p);if(parent_rc==RIX_VFS_ERR_PERMISSION)return RIX_VFS_ERR_PERMISSION;if(parent_rc||p.node->type!=RIX_VFS_DIR)return -2;int parent_permission=permission_allowed(p.node,VFS_ACCESS_WRITE|VFS_ACCESS_EXEC);if(parent_permission!=0)return parent_permission;return rixfs_rmdir(vfs_root_fs(),p.node->inode,name);
+}
+
+
+static int acl_mutation_allowed(const rix_vnode_t *node) {
+    if (!node) return -1;
+    pid_t pid = process_current();
+    uint32_t uid = process_uid(pid);
+    if(uid==0u)return process_has_capability(pid,RIX_CAP_ACL_ADMIN)?0:RIX_VFS_ERR_PERMISSION;
+    return uid == node->uid ? 0 : RIX_VFS_ERR_PERMISSION;
+}
+
+int vfs_get_acl(const char *path, rixfs_acl_t *out) {
+    if (!path || !out) return -1;
+    rix_vfs_path_t p;
+    int rc = vfs_lookup(path, &p);
+    if (rc) return rc;
+    return rixfs_get_acl(vfs_root_fs(), p.node->inode, out);
+}
+
+int vfs_set_acl(const char *path, const rixfs_acl_t *acl) {
+    if (!path || !acl) return -1;
+    rix_vfs_path_t p;
+    int rc = vfs_lookup(path, &p);
+    if (rc) return rc;
+    rc = acl_mutation_allowed(p.node);
+    if (rc) return rc;
+    return rixfs_set_acl(vfs_root_fs(), p.node->inode, acl);
+}
+
+int vfs_clear_acl(const char *path) {
+    if (!path) return -1;
+    rix_vfs_path_t p;
+    int rc = vfs_lookup(path, &p);
+    if (rc) return rc;
+    rc = acl_mutation_allowed(p.node);
+    if (rc) return rc;
+    return rixfs_clear_acl(vfs_root_fs(), p.node->inode);
 }

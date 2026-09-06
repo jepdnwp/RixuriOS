@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "address_space.h"
+#include "capability.h"
 
 typedef uint64_t pid_t;
 typedef enum { RIX_PROC_UNUSED=0, RIX_PROC_RUNNING=1, RIX_PROC_SLEEPING=2, RIX_PROC_ZOMBIE=3 } rix_process_state_t;
@@ -14,7 +15,7 @@ typedef enum { RIX_PROC_UNUSED=0, RIX_PROC_RUNNING=1, RIX_PROC_SLEEPING=2, RIX_P
 #define RIX_PROCESS_CWD_MAX 256
 #define RIX_PROCESS_GROUP_MAX 8
 
-typedef struct { pid_t pid; pid_t parent; pid_t process_group; pid_t session; rix_process_state_t state; uint32_t uid; uint32_t gid; rix_address_space_t address_space; uint64_t kernel_stack; uint64_t kernel_stack_size; uint64_t exit_status; uint64_t fd_bitmap; uint64_t signal_pending; uint64_t signal_mask; char name[RIX_PROCESS_NAME_MAX]; char cwd[RIX_PROCESS_CWD_MAX]; } rix_process_t;
+typedef struct { pid_t pid; pid_t parent; pid_t process_group; pid_t session; rix_process_state_t state; uint32_t uid; uint32_t gid; uint64_t capabilities; rix_address_space_t address_space; uint64_t kernel_stack; uint64_t kernel_stack_size; uint64_t exit_status; uint64_t fd_bitmap; uint64_t signal_pending; uint64_t signal_mask; char name[RIX_PROCESS_NAME_MAX]; char cwd[RIX_PROCESS_CWD_MAX]; } rix_process_t;
 int process_init(void);
 pid_t process_current(void);
 rix_process_t *process_lookup(pid_t pid);
@@ -31,7 +32,12 @@ int process_set_state(pid_t pid,rix_process_state_t state);
 int process_exit(pid_t pid,uint64_t status);
 int process_wait(pid_t parent,pid_t wanted,uint64_t *status,pid_t *child_pid);
 int process_set_group(pid_t pid, pid_t process_group);
-int process_set_session(pid_t pid, pid_t session);
+int process_set_session(pid_t pid,pid_t session);
+int process_get_session(pid_t pid,pid_t *session);
+int process_is_session_leader(pid_t pid);
+int process_create_session(pid_t pid,pid_t *session);
+int process_logout_session(pid_t pid,uint64_t status);
+int process_leave_session(pid_t pid);
 int process_signal_group(pid_t process_group, unsigned signal);
 size_t process_count(void);
 int process_getcwd(pid_t pid, char *out, size_t capacity);
@@ -44,3 +50,6 @@ int process_in_group(pid_t pid,uint32_t gid);
 int process_getgroups(pid_t pid,uint32_t *groups,size_t capacity,size_t *count);
 int process_setgroups(pid_t pid,const uint32_t *groups,size_t count);
 int process_apply_exec_credentials(pid_t pid,uint32_t uid,uint32_t gid,int setuid_bit,int setgid_bit);
+int process_has_capability(pid_t pid,uint64_t capability);
+int process_get_capabilities(pid_t pid,uint64_t *out);
+int process_drop_capabilities(pid_t pid,uint64_t mask);
