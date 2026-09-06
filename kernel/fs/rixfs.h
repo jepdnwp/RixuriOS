@@ -8,7 +8,7 @@
 #define RIXFS_BLOCK_SECTOR 0u
 #define RIXFS_INODE_SIZE 128u
 #define RIXFS_NAME_MAX 255u
-#define RIXFS_DIRECT_EXTENTS 8u
+#define RIXFS_DIRECT_EXTENTS 4u
 
 typedef struct {
     uint64_t magic;
@@ -36,7 +36,7 @@ typedef struct {
     uint64_t generation;
     uint64_t extent_start[RIXFS_DIRECT_EXTENTS];
     uint64_t extent_length[RIXFS_DIRECT_EXTENTS];
-    uint8_t reserved[8];
+    uint8_t reserved[32];
 } __attribute__((packed)) rixfs_inode_disk_t;
 
 typedef struct {
