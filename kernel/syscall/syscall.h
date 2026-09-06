@@ -7,6 +7,8 @@
 #define RIX_SYS_PIPE 22
 #define RIX_SYS_DUP 32
 #define RIX_SYS_SPAWN 134
+#define RIX_SYS_FORK 57
+#define RIX_SYS_EXECVE 59
 #define RIX_SYS_STAT 4
 #define RIX_SYS_MKDIR 83
 #define RIX_SYS_UNLINK 87

@@ -16,6 +16,8 @@ pid_t process_current(void);
 rix_process_t *process_lookup(pid_t pid);
 int process_create(const char *name,pid_t parent,pid_t*out_pid);
 int process_create_user(const char *name,pid_t parent,const void *image,uint64_t image_size,pid_t*out_pid,uint64_t*out_entry,uint64_t*out_user_stack);
+int process_fork(pid_t parent,uint64_t user_rip,uint64_t user_rsp,pid_t *out_pid);
+int process_exec_user(pid_t pid,const void *image,uint64_t image_size,uint64_t *out_entry,uint64_t *out_user_stack);
 int process_activate(pid_t pid);
 int process_set_state(pid_t pid,rix_process_state_t state);
 int process_exit(pid_t pid,uint64_t status);

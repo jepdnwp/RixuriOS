@@ -3,6 +3,7 @@
 
 typedef struct { uint64_t pml4_phys; } rix_address_space_t;
 int address_space_create(rix_address_space_t *as);
+int address_space_clone(const rix_address_space_t *source, rix_address_space_t *destination);
 int address_space_map(rix_address_space_t *as,uint64_t va,uint64_t pa,uint64_t flags);
 int address_space_map_shared(rix_address_space_t *as,uint64_t va,uint64_t pa,uint64_t flags);
 int address_space_update_flags(rix_address_space_t *as,uint64_t va,uint64_t flags);

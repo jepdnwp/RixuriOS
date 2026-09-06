@@ -18,6 +18,26 @@ int process_init(void){for(size_t i=0;i<RIX_PROCESS_MAX;i++)clear_process(&table
 pid_t process_current(void){return current_pid;}rix_process_t*process_lookup(pid_t pid){for(size_t i=0;i<RIX_PROCESS_MAX;i++)if(table[i].state!=RIX_PROC_UNUSED&&table[i].pid==pid)return &table[i];return NULL;}size_t process_count(void){return live_count;}
 int process_create(const char*name,pid_t parent,pid_t*out_pid){if(!name||!name[0]||(parent&& !process_lookup(parent)))return -1;for(size_t i=1;i<RIX_PROCESS_MAX;i++)if(table[i].state==RIX_PROC_UNUSED){pid_t pid=next_pid++;if(!pid)pid=next_pid++;clear_process(&table[i]);table[i].pid=pid;table[i].parent=parent;rix_process_t*pp=parent?process_lookup(parent):NULL;table[i].process_group=pp?pp->process_group:pid;table[i].session=pp?pp->session:pid;table[i].state=RIX_PROC_SLEEPING;if(parent&&vfs_clone_fds(parent,pid)!=0){clear_process(&table[i]);return -1;}copy_name(table[i].name,name);live_count++;if(out_pid)*out_pid=pid;return 0;}return -1;}
 int process_create_user(const char*name,pid_t parent,const void*image,uint64_t image_size,pid_t*out_pid,uint64_t*out_entry,uint64_t*out_user_stack){if(!name||!name[0]||!image||!image_size||!out_pid||!out_entry||!out_user_stack||(parent&&!process_lookup(parent)))return -1;pid_t pid;if(process_create(name,parent,&pid)!=0)return -1;rix_process_t*p=process_lookup(pid);if(!p)return -1;if(address_space_create(&p->address_space)!=0)goto fail;for(uint64_t i=0;i<USER_STACK_PAGES;i++){uint64_t pa=pmm_alloc_page();if(!pa)goto fail;zero_page(pa);if(address_space_map(&p->address_space,USER_STACK_BASE+i*4096ULL,pa,RIXURI_PTE_WRITE|RIXURI_PTE_USER|RIXURI_PTE_NX)!=0){pmm_free_page(pa);goto fail;}}rix_elf_image_t elf;if(elf_load_image(image,image_size,&p->address_space,&elf)!=0)goto fail;uint64_t ks=pmm_alloc_page();if(!ks)goto fail;zero_page(ks);p->kernel_stack=ks;p->kernel_stack_size=KERNEL_STACK_SIZE;p->state=RIX_PROC_SLEEPING;*out_pid=pid;*out_entry=elf.entry;*out_user_stack=USER_STACK_TOP;return 0;fail:(void)vfs_close_all(pid);address_space_destroy(&p->address_space);if(p->kernel_stack)pmm_free_page(p->kernel_stack);clear_process(p);if(live_count)live_count--;return -1;}
+int process_fork(pid_t parent,uint64_t user_rip,uint64_t user_rsp,pid_t *out_pid){
+    if (!out_pid || !user_rip || !user_rsp) return -1;
+    rix_process_t *pp=process_lookup(parent);if(!pp||!pp->address_space.pml4_phys)return -1;
+    pid_t child;if(process_create("fork-child",parent,&child)!=0)return -1;
+    rix_process_t *cp=process_lookup(child);if(!cp)return -1;
+    if(address_space_clone(&pp->address_space,&cp->address_space)!=0)goto fail;
+    uint64_t ks=pmm_alloc_page();if(!ks)goto fail;
+    zero_page(ks);cp->kernel_stack=ks;cp->kernel_stack_size=KERNEL_STACK_SIZE;cp->state=RIX_PROC_SLEEPING;*out_pid=child;return 0;
+fail:
+    (void)vfs_close_all(child);address_space_destroy(&cp->address_space);clear_process(cp);if(live_count)live_count--;return -1;
+}
+int process_exec_user(pid_t pid,const void *image,uint64_t image_size,uint64_t *out_entry,uint64_t *out_user_stack){
+    if(!image||!image_size||!out_entry||!out_user_stack)return -1;
+    rix_process_t *p=process_lookup(pid);if(!p||!p->address_space.pml4_phys)return -1;
+    rix_address_space_t replacement={0};if(address_space_create(&replacement)!=0)return -1;
+    for(uint64_t i=0;i<USER_STACK_PAGES;i++){uint64_t pa=pmm_alloc_page();if(!pa)goto fail;zero_page(pa);if(address_space_map(&replacement,USER_STACK_BASE+i*4096ULL,pa,RIXURI_PTE_WRITE|RIXURI_PTE_USER|RIXURI_PTE_NX)!=0){pmm_free_page(pa);goto fail;}}
+    rix_elf_image_t elf;if(elf_load_image(image,image_size,&replacement,&elf)!=0)goto fail;
+    address_space_destroy(&p->address_space);p->address_space=replacement;*out_entry=elf.entry;*out_user_stack=USER_STACK_TOP;return 0;
+fail:address_space_destroy(&replacement);return -1;
+}
 int process_activate(pid_t pid){if(pid==0){current_pid=0;uint64_t cr3=vmm_kernel_pml4();__asm__ volatile("mov %0,%%cr3"::"r"(cr3):"memory");return 0;}rix_process_t*p=process_lookup(pid);if(!p||p->state==RIX_PROC_UNUSED||p->state==RIX_PROC_ZOMBIE||!p->address_space.pml4_phys||!p->kernel_stack)return -1;current_pid=pid;tss_set_rsp0(p->kernel_stack+p->kernel_stack_size);__asm__ volatile("mov %0,%%cr3"::"r"(p->address_space.pml4_phys):"memory");return 0;}
 int process_set_state(pid_t pid,rix_process_state_t state){rix_process_t*p=process_lookup(pid);if(!p||state==RIX_PROC_UNUSED)return -1;rix_process_state_t old=p->state;p->state=state;if(state==RIX_PROC_RUNNING&&process_activate(pid)!=0){p->state=old;return -1;}return 0;}
 int process_exit(pid_t pid,uint64_t status){rix_process_t*p=process_lookup(pid);if(!p||pid==0)return -1;p->exit_status=status;p->state=RIX_PROC_ZOMBIE;if(current_pid==pid)current_pid=0;return 0;}

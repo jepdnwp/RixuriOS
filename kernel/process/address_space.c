@@ -46,3 +46,41 @@ int address_space_unmap(rix_address_space_t *as,uint64_t va){if(!as||!as->pml4_p
 uint64_t address_space_translate(const rix_address_space_t *as,uint64_t va){uint64_t e=walk_pte(as,va);if(!(e&RIXURI_PTE_PRESENT))return 0;if(e&PTE_PS)return(e&PAGE_MASK)|(va&0x1fffffULL);return(e&PAGE_MASK)|(va&0xfffULL);}
 uint64_t address_space_query_flags(const rix_address_space_t *as,uint64_t va){uint64_t e=walk_pte(as,va);return e&(RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE|RIXURI_PTE_USER|RIXURI_PTE_NX|RIXURI_PTE_OWNED);}
 void address_space_destroy(rix_address_space_t *as){destroy_user_tables(as);}
+
+static int clone_user_level(const uint64_t *source, unsigned level, uint64_t base,
+                            rix_address_space_t *destination) {
+    uint64_t step = 1ULL << ((level - 1u) * 9u + 12u);
+    for (unsigned i = 0; i < TABLE_COUNT; ++i) {
+        uint64_t entry = source[i];
+        if (!(entry & RIXURI_PTE_PRESENT) || !(entry & RIXURI_PTE_USER)) continue;
+        uint64_t va = base + (uint64_t)i * step;
+        if (level > 1u) {
+            if (entry & PTE_PS) return -1;
+            if (clone_user_level(ptr(entry & PAGE_MASK), level - 1u, va, destination) != 0) return -1;
+            continue;
+        }
+        if (entry & PTE_PS) return -1;
+        uint64_t page = pmm_alloc_page();
+        if (!page) return -1;
+        uint8_t *src = (uint8_t *)(uintptr_t)(entry & PAGE_MASK);
+        uint8_t *dst = (uint8_t *)(uintptr_t)page;
+        for (size_t j = 0; j < 4096u; ++j) dst[j] = src[j];
+        uint64_t flags = entry & (RIXURI_PTE_PRESENT | RIXURI_PTE_WRITE |
+                                  RIXURI_PTE_USER | RIXURI_PTE_NX);
+        if (address_space_map(destination, va, page, flags) != 0) {
+            pmm_free_page(page);
+            return -1;
+        }
+    }
+    return 0;
+}
+
+int address_space_clone(const rix_address_space_t *source, rix_address_space_t *destination) {
+    if (!source || !source->pml4_phys || !destination) return -1;
+    if (address_space_create(destination) != 0) return -1;
+    if (clone_user_level(ptr(source->pml4_phys), 4u, 0, destination) != 0) {
+        address_space_destroy(destination);
+        return -1;
+    }
+    return 0;
+}

@@ -145,4 +145,5 @@ Phase 15 continuation: add device-manager policy around port-event attach/detach
 - Added a bounded callback-driven shell pipeline executor that validates command count, forwards redirection metadata to the runner and wires adjacent pipeline stages through explicit input/output channels.
 - The executor is host-tested for two-stage pipeline ordering.
 - Added a bounded `RIX_SYS_SPAWN` ABI and userspace `spawn()` wrapper. The kernel validates a user name, copies a maximum 4096-byte ELF image into kernel memory, creates a child address space, inherits descriptors and schedules a user task.
-- A true POSIX-style `fork()` address-space clone, `execve()` path lookup/argument environment and a filesystem-backed command runner remain open; the new spawn ABI is an explicit safe intermediate rather than a false completion claim.
+- Added a deep-copy address-space clone for user pages, a `fork()` syscall/libc wrapper with inherited FD state and a child user-entry path returning `rax=0`, plus a path-based `execve()` syscall/libc wrapper that atomically builds a replacement image and redirects the syscall return frame to the new ELF entry/RSP.
+- The current exec ABI validates and loads the executable path but does not yet copy POSIX argv/envp onto the new stack; command runner/PATH search remains a separate shell integration gate.
