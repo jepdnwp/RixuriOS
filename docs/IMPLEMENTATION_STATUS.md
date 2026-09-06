@@ -164,3 +164,13 @@ Phase 15 continuation: add device-manager policy around port-event attach/detach
 - Extended shell host regressions for conditional execution, builtin output, unknown-command handoff and the existing pipeline wiring.
 - `make test CROSS=`, userspace libc compilation, `make image CROSS=` and QEMU boot completed successfully. QEMU reached `RIXURI:KERNEL_READY` and `USER: init returned to kernel`.
 - Phase 18 remains `IMPLEMENTED / NOT YET VALIDATED`: PATH search, argv/envp stack construction in `execve`, FD-targeted redirection (`dup2`-style semantics), real external command execution and job control still require the next integration layer.
+
+## Latest continuation — Phase 18 exec and redirection foundation
+
+- Added target-FD descriptor duplication through `vfs_dup_to()` and `RIX_SYS_DUP2`; the userspace libc now exposes `dup2()`.
+- Stdio syscalls now use the TTY fallback only when fd 0, 1 or 2 is not occupied by a VFS descriptor. This permits a child process to redirect standard input/output/error to pipes or regular files with `dup2()`.
+- Extended `execve()` to boundedly copy user argv/envp vectors and strings, then build an argc/argv/envp-compatible initial user stack in the replacement address space. Argument count and string sizes are explicitly capped.
+- Added a callback-driven PATH resolver supporting direct paths, ordered PATH segments and empty-segment current-directory lookup.
+- Added host regressions for PATH resolution; all existing shell, TTY, HID and USB tests remain successful.
+- `make test CROSS=`, userspace libc compilation, `make image CROSS=` and QEMU boot completed successfully. QEMU reached `RIXURI:KERNEL_READY` and `USER: init returned to kernel`.
+- Phase 18 remains `IMPLEMENTED / NOT YET VALIDATED` for a complete interactive shell: the embedded init is still a banner-only process, and a full external command runner must still connect PATH resolution, fork, dup2, redirections, execve and wait into one userspace command loop.

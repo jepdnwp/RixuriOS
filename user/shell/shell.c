@@ -225,6 +225,40 @@ int rix_shell_parse_pipeline(rix_shell_tokens_t *tokens, rix_shell_pipeline_t *o
     return 0;
 }
 
+int rix_shell_resolve_path(const char *command, const char *path,
+                           rix_shell_path_exists_t exists, void *context,
+                           char *output, size_t capacity) {
+    if (!command || !command[0] || !exists || !output || capacity == 0u) return -1;
+    size_t command_length = text_length(command);
+    if (command_length == 0u || command_length >= RIX_SHELL_TOKEN_TEXT) return -1;
+    int has_slash = 0;
+    for (size_t i = 0; i < command_length; ++i) if (command[i] == '/') has_slash = 1;
+    if (has_slash) {
+        if (command_length >= capacity) return -3;
+        for (size_t i = 0; i < command_length; ++i) output[i] = command[i];
+        output[command_length] = 0;
+        return exists(output, context) ? 0 : -2;
+    }
+    if (!path) return -2;
+    const char *segment = path;
+    for (;;) {
+        size_t segment_length = 0;
+        while (segment[segment_length] && segment[segment_length] != ':') ++segment_length;
+        const char *prefix = segment_length ? segment : ".";
+        size_t prefix_length = segment_length ? segment_length : 1u;
+        if (prefix_length + 1u + command_length >= capacity) return -3;
+        size_t used = 0;
+        for (size_t i = 0; i < prefix_length; ++i) output[used++] = prefix[i];
+        output[used++] = '/';
+        for (size_t i = 0; i < command_length; ++i) output[used++] = command[i];
+        output[used] = 0;
+        if (exists(output, context) == 0) return 0;
+        if (!segment[segment_length]) break;
+        segment += segment_length + 1u;
+    }
+    return -2;
+}
+
 void rix_shell_history_init(rix_shell_history_t *history) {
     if (!history) return;
     history->count = 0;

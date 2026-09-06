@@ -6,6 +6,7 @@ int openat(int dirfd,const char*path,uint32_t flags,uint32_t mode){return(int)ri
 int close(int fd){return(int)rix_sys(3,fd,0,0);}
 int pipe(int fds[2]){return(int)rix_sys(22,(long)fds,0,0);}
 int dup(int old_fd){return(int)rix_sys(32,old_fd,0,0);}
+int dup2(int old_fd,int new_fd){return(int)rix_sys(33,old_fd,new_fd,0);}
 rix_pid_t spawn(const char *name,const void *image,size_t image_size){return(rix_pid_t)rix_sys(134,(long)name,(long)image,(long)image_size);}
 rix_pid_t fork(void){return(rix_pid_t)rix_sys(57,0,0,0);}
 rix_pid_t wait(rix_pid_t child,uint64_t*status){return(rix_pid_t)rix_sys(61,(long)child,(long)status,0);}

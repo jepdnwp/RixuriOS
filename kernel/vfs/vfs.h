@@ -27,6 +27,8 @@ int vfs_lookup_from(const rix_vfs_path_t *base,const char *path,rix_vfs_path_t *
 int vfs_open(uint64_t pid,const char *path,uint32_t flags,uint32_t mode,int *out_fd);
 int vfs_pipe(uint64_t pid,int *read_fd,int *write_fd);
 int vfs_dup(uint64_t pid,int old_fd,int *new_fd);
+int vfs_dup_to(uint64_t pid,int old_fd,int new_fd);
+int vfs_fd_is_open(uint64_t pid,int fd);
 int vfs_clone_fds(uint64_t parent_pid,uint64_t child_pid);
 int vfs_close_all(uint64_t pid);
 int vfs_close(uint64_t pid,int fd);

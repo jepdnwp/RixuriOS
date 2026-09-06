@@ -65,6 +65,10 @@ int rix_shell_complete(const char *prefix, const char *const *candidates,
 int rix_shell_expand_pathname(const char *pattern, const char *const *candidates,
                               size_t candidate_count, char *output, size_t capacity,
                               size_t *match_count);
+typedef int (*rix_shell_path_exists_t)(const char *path, void *context);
+int rix_shell_resolve_path(const char *command, const char *path,
+                           rix_shell_path_exists_t exists, void *context,
+                           char *output, size_t capacity);
 void rix_shell_history_init(rix_shell_history_t *history);
 int rix_shell_history_add(rix_shell_history_t *history, const char *line);
 int rix_shell_history_prev(rix_shell_history_t *history, char *output, size_t capacity);

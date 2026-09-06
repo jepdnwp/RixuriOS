@@ -8,6 +8,7 @@ int openat(int dirfd, const char *path, uint32_t flags, uint32_t mode);
 int close(int fd);
 int pipe(int fds[2]);
 int dup(int old_fd);
+int dup2(int old_fd, int new_fd);
 rix_pid_t spawn(const char *name, const void *image, size_t image_size);
 rix_pid_t fork(void);
 rix_pid_t wait(rix_pid_t child, uint64_t *status);

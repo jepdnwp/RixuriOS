@@ -70,7 +70,51 @@ int vfs_open(uint64_t pid,const char*path,uint32_t flags,uint32_t mode,int*out_f
     if(flags&RIX_VFS_O_TRUNC){if(!fds[ps][fd].writable||node.type!=RIX_VFS_FILE||rixfs_truncate(vfs_root_fs(),node.inode,0)){fds[ps][fd].used=0;return -11;}}*out_fd=fd;return 0;
 }
 int vfs_pipe(uint64_t pid,int *read_fd,int *write_fd){size_t ps;if(pid_slot(pid,&ps)||!read_fd||!write_fd)return -1;int r=-1,w=-1;for(int i=0;i<(int)RIX_VFS_FD_MAX;i++)if(!fds[ps][i].used){if(r<0)r=i;else{w=i;break;}}if(r<0||w<0)return -2;for(size_t i=0;i<VFS_PIPE_MAX;i++)if(!pipe_slots[i].used){pipe_init(&pipe_slots[i].pipe);pipe_slots[i].used=1u;pipe_slots[i].refs=2u;fds[ps][r]=(vfs_fd_t){1u,VFS_FD_PIPE_READ,0u,0u,0u,0u,&pipe_slots[i].pipe,0u};fds[ps][w]=(vfs_fd_t){1u,VFS_FD_PIPE_WRITE,1u,0u,0u,0u,&pipe_slots[i].pipe,1u};*read_fd=r;*write_fd=w;return 0;}return -3;}
-int vfs_dup(uint64_t pid,int old_fd,int *new_fd){size_t ps;if(pid_slot(pid,&ps)||old_fd<0||old_fd>=RIX_VFS_FD_MAX||!new_fd||!fds[ps][old_fd].used)return -1;int fd=-1;for(int i=0;i<(int)RIX_VFS_FD_MAX;i++)if(!fds[ps][i].used){fd=i;break;}if(fd<0)return -2;fds[ps][fd]=fds[ps][old_fd];if(fds[ps][fd].type==VFS_FD_PIPE_READ||fds[ps][fd].type==VFS_FD_PIPE_WRITE){for(size_t i=0;i<VFS_PIPE_MAX;i++)if(pipe_slots[i].used&&(&pipe_slots[i].pipe==fds[ps][fd].pipe)){if(pipe_slots[i].refs==UINT8_MAX){fds[ps][fd].used=0;return -3;}pipe_slots[i].refs++;break;}}*new_fd=fd;return 0;}
+static int retain_fd(const vfs_fd_t *source, vfs_fd_t *destination) {
+    if (!source || !destination || !source->used) return -1;
+    *destination = *source;
+    if (destination->type == VFS_FD_PIPE_READ || destination->type == VFS_FD_PIPE_WRITE) {
+        for (size_t i = 0; i < VFS_PIPE_MAX; ++i) {
+            if (pipe_slots[i].used && &pipe_slots[i].pipe == destination->pipe) {
+                if (pipe_slots[i].refs == UINT8_MAX) return -2;
+                pipe_slots[i].refs++;
+                return 0;
+            }
+        }
+        return -3;
+    }
+    return 0;
+}
+
+int vfs_dup(uint64_t pid, int old_fd, int *new_fd) {
+    size_t ps;
+    if (pid_slot(pid, &ps) || old_fd < 0 || old_fd >= RIX_VFS_FD_MAX ||
+        !new_fd || !fds[ps][old_fd].used) return -1;
+    int fd = -1;
+    for (int i = 0; i < (int)RIX_VFS_FD_MAX; ++i)
+        if (!fds[ps][i].used) { fd = i; break; }
+    if (fd < 0 || retain_fd(&fds[ps][old_fd], &fds[ps][fd]) != 0) return -2;
+    *new_fd = fd;
+    return 0;
+}
+
+int vfs_dup_to(uint64_t pid, int old_fd, int new_fd) {
+    size_t ps;
+    if (pid_slot(pid, &ps) || old_fd < 0 || old_fd >= RIX_VFS_FD_MAX ||
+        new_fd < 0 || new_fd >= RIX_VFS_FD_MAX || !fds[ps][old_fd].used) return -1;
+    if (old_fd == new_fd) return 0;
+    vfs_fd_t copy;
+    if (retain_fd(&fds[ps][old_fd], &copy) != 0) return -2;
+    if (fds[ps][new_fd].used && vfs_close(pid, new_fd) != 0) return -3;
+    fds[ps][new_fd] = copy;
+    return 0;
+}
+
+int vfs_fd_is_open(uint64_t pid, int fd) {
+    size_t ps;
+    if (pid_slot(pid, &ps) || fd < 0 || fd >= RIX_VFS_FD_MAX) return 0;
+    return fds[ps][fd].used ? 1 : 0;
+}
 int vfs_clone_fds(uint64_t parent_pid,uint64_t child_pid){size_t parent,child;if(pid_slot(parent_pid,&parent)||pid_slot(child_pid,&child)||parent_pid==child_pid)return -1;for(size_t i=0;i<RIX_VFS_FD_MAX;i++)if(fds[parent][i].used){if(fds[child][i].used)return -2;fds[child][i]=fds[parent][i];if(fds[child][i].type==VFS_FD_PIPE_READ||fds[child][i].type==VFS_FD_PIPE_WRITE){int found=0;for(size_t j=0;j<VFS_PIPE_MAX;j++)if(pipe_slots[j].used&&(&pipe_slots[j].pipe==fds[child][i].pipe)){if(pipe_slots[j].refs==UINT8_MAX)return -3;pipe_slots[j].refs++;found=1;break;}if(!found)return -4;}}return 0;}
 int vfs_close(uint64_t pid,int fd){size_t ps;if(pid_slot(pid,&ps)||fd<0||fd>=RIX_VFS_FD_MAX||!fds[ps][fd].used)return -1;if(fds[ps][fd].type==VFS_FD_PIPE_READ||fds[ps][fd].type==VFS_FD_PIPE_WRITE){rix_pipe_t *pipe=fds[ps][fd].pipe;for(size_t i=0;i<VFS_PIPE_MAX;i++)if(pipe_slots[i].used&&(&pipe_slots[i].pipe==pipe)){if(fds[ps][fd].pipe_write)pipe_close_write(pipe);else pipe_close_read(pipe);if(pipe_slots[i].refs)pipe_slots[i].refs--;if(!pipe_slots[i].refs)pipe_slots[i].used=0;break;}}fds[ps][fd].used=0;return 0;}
 int vfs_close_all(uint64_t pid){size_t ps;if(pid_slot(pid,&ps))return -1;for(int fd=0;fd<(int)RIX_VFS_FD_MAX;fd++)if(fds[ps][fd].used)(void)vfs_close(pid,fd);return 0;}

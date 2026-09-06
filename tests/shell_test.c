@@ -50,8 +50,23 @@ static int write_buffer(const void *data, size_t length, void *context) {
     return 0;
 }
 
+static int path_exists(const char *path, void *context) {
+    (void)context;
+    return strcmp(path, "/bin/echo") == 0 || strcmp(path, "./local") == 0 ? 0 : -1;
+}
+
 int main(void) {
     rix_shell_tokens_t tokens;
+    char resolved[64];
+    if (expect(rix_shell_resolve_path("echo", "/sbin:/bin", path_exists, NULL,
+                                      resolved, sizeof(resolved)) == 0 &&
+                strcmp(resolved, "/bin/echo") == 0 &&
+                rix_shell_resolve_path("local", ":/bin", path_exists, NULL,
+                                       resolved, sizeof(resolved)) == 0 &&
+                strcmp(resolved, "./local") == 0 &&
+                rix_shell_resolve_path("missing", "/bin", path_exists, NULL,
+                                       resolved, sizeof(resolved)) == -2,
+                "PATH resolution")) return 1;
     if (expect(rix_shell_lex("echo 'hello world' a\\ b # comment", &tokens) == 0 &&
                 tokens.count == 3 && strcmp(tokens.token[1].text, "hello world") == 0 &&
                 strcmp(tokens.token[2].text, "a b") == 0,
