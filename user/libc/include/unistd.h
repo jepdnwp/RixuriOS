@@ -4,5 +4,6 @@
 typedef int64_t rix_ssize_t;
 typedef uint64_t rix_pid_t;
 rix_ssize_t write(int fd,const void *buf,size_t count);
+int pipe(int fds[2]);
 rix_pid_t getpid(void);
 _Noreturn void _exit(int status);

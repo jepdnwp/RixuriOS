@@ -2,6 +2,7 @@
 #include "../fs/rixfs.h"
 #include "../fs/rixfs_dir.h"
 #include "../process/process.h"
+#include "../ipc/pipe.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -9,12 +10,17 @@
 
 typedef struct { rix_vnode_t node; } vfs_root_t;
 typedef struct { rixfs_t fs; char path[8]; uint8_t active; } vfs_mount_t;
-typedef struct { uint8_t used; uint8_t type; uint8_t writable; uint8_t append; uint64_t inode; uint64_t offset; } vfs_fd_t;
+typedef struct { uint8_t used; uint8_t type; uint8_t writable; uint8_t append; uint64_t inode; uint64_t offset; rix_pipe_t *pipe; uint8_t pipe_write; } vfs_fd_t;
+typedef struct { rix_pipe_t pipe; uint8_t used; uint8_t refs; } vfs_pipe_slot_t;
+#define VFS_FD_PIPE_READ 5u
+#define VFS_FD_PIPE_WRITE 6u
+#define VFS_PIPE_MAX 32u
 
 static vfs_root_t root;
 static vfs_mount_t mounts[VFS_MAX_MOUNTS];
 static rix_vnode_t path_node;
 static vfs_fd_t fds[RIX_PROCESS_MAX][RIX_VFS_FD_MAX];
+static vfs_pipe_slot_t pipe_slots[VFS_PIPE_MAX];
 
 static int append_component(char *out,size_t cap,size_t *len,const char *start,size_t n){
     if(!n)return 0;
@@ -63,13 +69,18 @@ int vfs_open(uint64_t pid,const char*path,uint32_t flags,uint32_t mode,int*out_f
     int fd=-1;for(size_t i=0;i<RIX_VFS_FD_MAX;i++)if(!fds[ps][i].used){fd=(int)i;break;}if(fd<0)return -10;fds[ps][fd].used=1;fds[ps][fd].type=(uint8_t)node.type;fds[ps][fd].writable=(uint8_t)((flags&(RIX_VFS_O_WRONLY|RIX_VFS_O_RDWR))!=0);fds[ps][fd].append=(uint8_t)((flags&RIX_VFS_O_APPEND)!=0);fds[ps][fd].inode=node.inode;fds[ps][fd].offset=0;
     if(flags&RIX_VFS_O_TRUNC){if(!fds[ps][fd].writable||node.type!=RIX_VFS_FILE||rixfs_truncate(vfs_root_fs(),node.inode,0)){fds[ps][fd].used=0;return -11;}}*out_fd=fd;return 0;
 }
-int vfs_close(uint64_t pid,int fd){size_t ps;if(pid_slot(pid,&ps)||fd<0||fd>=RIX_VFS_FD_MAX||!fds[ps][fd].used)return -1;fds[ps][fd].used=0;return 0;}
+int vfs_pipe(uint64_t pid,int *read_fd,int *write_fd){size_t ps;if(pid_slot(pid,&ps)||!read_fd||!write_fd)return -1;int r=-1,w=-1;for(int i=0;i<(int)RIX_VFS_FD_MAX;i++)if(!fds[ps][i].used){if(r<0)r=i;else{w=i;break;}}if(r<0||w<0)return -2;for(size_t i=0;i<VFS_PIPE_MAX;i++)if(!pipe_slots[i].used){pipe_init(&pipe_slots[i].pipe);pipe_slots[i].used=1u;pipe_slots[i].refs=2u;fds[ps][r]=(vfs_fd_t){1u,VFS_FD_PIPE_READ,0u,0u,0u,0u,&pipe_slots[i].pipe,0u};fds[ps][w]=(vfs_fd_t){1u,VFS_FD_PIPE_WRITE,1u,0u,0u,0u,&pipe_slots[i].pipe,1u};*read_fd=r;*write_fd=w;return 0;}return -3;}
+int vfs_close(uint64_t pid,int fd){size_t ps;if(pid_slot(pid,&ps)||fd<0||fd>=RIX_VFS_FD_MAX||!fds[ps][fd].used)return -1;if(fds[ps][fd].type==VFS_FD_PIPE_READ||fds[ps][fd].type==VFS_FD_PIPE_WRITE){rix_pipe_t *pipe=fds[ps][fd].pipe;for(size_t i=0;i<VFS_PIPE_MAX;i++)if(pipe_slots[i].used&&(&pipe_slots[i].pipe==pipe)){if(fds[ps][fd].pipe_write)pipe_close_write(pipe);else pipe_close_read(pipe);if(pipe_slots[i].refs)pipe_slots[i].refs--;if(!pipe_slots[i].refs)pipe_slots[i].used=0;break;}}fds[ps][fd].used=0;return 0;}
 int vfs_read(uint64_t pid,int fd,void*buffer,size_t size,size_t*out_read){
-    size_t ps;if(pid_slot(pid,&ps)||fd<0||fd>=RIX_VFS_FD_MAX||!fds[ps][fd].used||(!buffer&&size)||!out_read)return -1;if(fds[ps][fd].type!=RIX_VFS_FILE)return -2;rixfs_t*fs=vfs_root_fs();if(!fs)return -3;rixfs_inode_disk_t in;if(rixfs_read_inode(fs,fds[ps][fd].inode,&in))return -4;
+    size_t ps;if(pid_slot(pid,&ps)||fd<0||fd>=RIX_VFS_FD_MAX||!fds[ps][fd].used||(!buffer&&size)||!out_read)return -1;if(fds[ps][fd].type==VFS_FD_PIPE_READ)return pipe_read(fds[ps][fd].pipe,buffer,size,out_read);if(fds[ps][fd].type!=RIX_VFS_FILE)return -2;rixfs_t*fs=vfs_root_fs();
+if(!fs)return -3;
+    rixfs_inode_disk_t in;if(rixfs_read_inode(fs,fds[ps][fd].inode,&in))return -4;
     if(fds[ps][fd].offset>=in.size){*out_read=0;return 0;}uint64_t remain=in.size-fds[ps][fd].offset;if((uint64_t)size>remain)size=(size_t)remain;if(rixfs_read(fs,in.inode,fds[ps][fd].offset,buffer,size))return -5;fds[ps][fd].offset+=size;*out_read=size;return 0;
 }
 int vfs_write(uint64_t pid,int fd,const void*buffer,size_t size,size_t*out_written){
-    size_t ps;if(pid_slot(pid,&ps)||fd<0||fd>=RIX_VFS_FD_MAX||!fds[ps][fd].used||(!buffer&&size)||!out_written)return -1;if(!fds[ps][fd].writable||fds[ps][fd].type!=RIX_VFS_FILE)return -2;rixfs_t*fs=vfs_root_fs();if(!fs)return -3;rixfs_inode_disk_t in;if(rixfs_read_inode(fs,fds[ps][fd].inode,&in))return -4;uint64_t off=fds[ps][fd].append?in.size:fds[ps][fd].offset;if(off>UINT64_MAX-(uint64_t)size)return -5;if(off+(uint64_t)size>in.size&&rixfs_truncate(fs,in.inode,off+(uint64_t)size))return -6;if(size&&rixfs_write(fs,in.inode,off,buffer,size))return -7;fds[ps][fd].offset=off+size;*out_written=size;return 0;
+    size_t ps;if(pid_slot(pid,&ps)||fd<0||fd>=RIX_VFS_FD_MAX||!fds[ps][fd].used||(!buffer&&size)||!out_written)return -1;if(fds[ps][fd].type==VFS_FD_PIPE_WRITE)return pipe_write(fds[ps][fd].pipe,buffer,size,out_written);if(!fds[ps][fd].writable||fds[ps][fd].type!=RIX_VFS_FILE)return -2;rixfs_t*fs=vfs_root_fs();
+if(!fs)return -3;
+    rixfs_inode_disk_t in;if(rixfs_read_inode(fs,fds[ps][fd].inode,&in))return -4;uint64_t off=fds[ps][fd].append?in.size:fds[ps][fd].offset;if(off>UINT64_MAX-(uint64_t)size)return -5;if(off+(uint64_t)size>in.size&&rixfs_truncate(fs,in.inode,off+(uint64_t)size))return -6;if(size&&rixfs_write(fs,in.inode,off,buffer,size))return -7;fds[ps][fd].offset=off+size;*out_written=size;return 0;
 }
 int vfs_readdir(uint64_t pid,int fd,uint64_t*offset,rix_vfs_dirent_t*out,char*name,size_t cap){size_t ps;if(pid_slot(pid,&ps)||fd<0||fd>=RIX_VFS_FD_MAX||!fds[ps][fd].used||!offset||!out||!name)return -1;if(fds[ps][fd].type!=RIX_VFS_DIR)return -2;rixfs_dirent_disk_t e;int r=rixfs_readdir(vfs_root_fs(),fds[ps][fd].inode,offset,&e,name,cap);if(r)return r;out->inode=e.inode;out->type=e.type;return 0;}
 int vfs_stat(const char*path,rix_vnode_t*out){if(!out)return -1;rix_vfs_path_t p;if(vfs_lookup(path,&p))return -2;*out=*p.node;return 0;}

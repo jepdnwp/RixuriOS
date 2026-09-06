@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include "../storage/block.h"
 #include "../fs/rixfs_dir.h"
+#include "../ipc/pipe.h"
 #define RIX_VFS_PATH_MAX 4096
 #define RIX_VFS_NAME_MAX 255
 #define RIX_VFS_FD_MAX 64
@@ -24,6 +25,7 @@ int vfs_root(rix_vfs_path_t *out);
 int vfs_lookup(const char *path,rix_vfs_path_t *out);
 int vfs_lookup_from(const rix_vfs_path_t *base,const char *path,rix_vfs_path_t *out);
 int vfs_open(uint64_t pid,const char *path,uint32_t flags,uint32_t mode,int *out_fd);
+int vfs_pipe(uint64_t pid,int *read_fd,int *write_fd);
 int vfs_close(uint64_t pid,int fd);
 int vfs_read(uint64_t pid,int fd,void *buffer,size_t size,size_t *out_read);
 int vfs_write(uint64_t pid,int fd,const void *buffer,size_t size,size_t *out_written);
