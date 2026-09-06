@@ -51,3 +51,6 @@ int rix_shell_parse_pipeline(rix_shell_tokens_t *tokens, rix_shell_pipeline_t *o
 typedef const char *(*rix_shell_variable_lookup_t)(const char *name, void *context);
 int rix_shell_expand_word(const char *input, char *output, size_t capacity,
                           rix_shell_variable_lookup_t lookup, void *context);
+int rix_shell_complete(const char *prefix, const char *const *candidates,
+                       size_t candidate_count, char *output, size_t capacity,
+                       size_t *match_count);

@@ -37,6 +37,17 @@ int main(void) {
                                      sizeof(expanded), lookup, NULL) == 0 &&
                 strcmp(expanded, "hi-rix-42-$USER-$N") == 0,
                 "variable expansion and quoting")) return 1;
+    static const char *const commands[] = {"cat", "caller", "cd", "echo"};
+    size_t matches = 0;
+    if (expect(rix_shell_complete("call", commands, 4, expanded, sizeof(expanded),
+                                  &matches) == 0 && matches == 1 &&
+                strcmp(expanded, "caller") == 0, "single autocomplete match")) return 1;
+    if (expect(rix_shell_complete("ca", commands, 4, expanded, sizeof(expanded),
+                                  &matches) == 0 && matches == 2 &&
+                strcmp(expanded, "ca") == 0, "common autocomplete prefix")) return 1;
+    if (expect(rix_shell_complete("z", commands, 4, expanded, sizeof(expanded),
+                                  &matches) == 0 && matches == 0 && expanded[0] == 0,
+                "no autocomplete match")) return 1;
     puts("shell parser tests: PASS");
     return 0;
 }

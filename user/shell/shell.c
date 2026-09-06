@@ -77,6 +77,41 @@ int rix_shell_expand_word(const char *input, char *output, size_t capacity,
     return 0;
 }
 
+int rix_shell_complete(const char *prefix, const char *const *candidates,
+                       size_t candidate_count, char *output, size_t capacity,
+                       size_t *match_count) {
+    if (!prefix || !output || capacity == 0u || (!candidates && candidate_count)) return -1;
+    size_t prefix_length = text_length(prefix);
+    if (prefix_length >= RIX_SHELL_TOKEN_TEXT) return -2;
+    size_t matches = 0;
+    size_t common_length = 0;
+    const char *first = NULL;
+    for (size_t i = 0; i < candidate_count; ++i) {
+        const char *candidate = candidates[i];
+        if (!candidate || text_length(candidate) < prefix_length) continue;
+        size_t candidate_length = text_length(candidate);
+        int matches_prefix = 1;
+        for (size_t j = 0; j < prefix_length; ++j)
+            if (candidate[j] != prefix[j]) matches_prefix = 0;
+        if (!matches_prefix) continue;
+        if (!matches++) {
+            first = candidate;
+            common_length = candidate_length;
+        } else {
+            while (common_length > prefix_length &&
+                   (common_length > candidate_length ||
+                    first[common_length - 1u] != candidate[common_length - 1u]))
+                --common_length;
+        }
+    }
+    if (match_count) *match_count = matches;
+    if (!matches) { output[0] = 0; return 0; }
+    if (common_length >= capacity) return -3;
+    for (size_t i = 0; i < common_length; ++i) output[i] = first[i];
+    output[common_length] = 0;
+    return 0;
+}
+
 int rix_shell_lex(const char *input, rix_shell_tokens_t *out) {
     if (!input || !out) return -1;
     out->count = 0;
