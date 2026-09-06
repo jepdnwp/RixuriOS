@@ -1,12 +1,13 @@
 #include "address_space.h"
 #include "../mm/pmm.h"
 #include "../mm/vmm.h"
+#include "../mm/ptmap.h"
 #include <stdint.h>
 
 #define PAGE_MASK 0x000FFFFFFFFFF000ULL
 #define PTE_PS (1ULL << 7)
 #define TABLE_COUNT 512U
-static uint64_t *ptr(uint64_t p){return(uint64_t *)vmm_phys_ptr(p);}
+static uint64_t *ptr(uint64_t p){return(uint64_t *)pt_kmap(p);}
 static int user_va(uint64_t va){return va>=0x1000ULL&&va<(1ULL<<47)&&!(va&0xfffULL);}
 
 static uint64_t walk_pte(const rix_address_space_t *as,uint64_t va){
