@@ -587,9 +587,9 @@ int rix_shell_run_builtin(const rix_shell_command_t *command,
     return 0;
 }
 
-int rix_shell_execute_pipeline(const rix_shell_pipeline_t *pipeline,
-                               rix_shell_pipeline_runner_t runner, void *context,
-                               int *status) {
+int rix_shell_execute_pipeline_indexed(const rix_shell_pipeline_t *pipeline,
+                                       rix_shell_indexed_pipeline_runner_t runner,
+                                       void *context, int *status) {
     if (!pipeline || !runner || !status || pipeline->command_count == 0 ||
         pipeline->command_count > RIX_SHELL_MAX_COMMANDS) return -1;
     int last_status = 0;
@@ -615,7 +615,7 @@ int rix_shell_execute_pipeline(const rix_shell_pipeline_t *pipeline,
             *status = -2;
             return -2;
         }
-        int rc = runner(&pipeline->command[i], input_fd, output_fd, context);
+        int rc = runner(&pipeline->command[i], i, input_fd, output_fd, context);
         if (rc < 0) {
             *status = rc;
             return rc;
@@ -624,4 +624,24 @@ int rix_shell_execute_pipeline(const rix_shell_pipeline_t *pipeline,
     }
     *status = last_status;
     return 0;
+}
+
+typedef struct {
+    rix_shell_pipeline_runner_t runner;
+    void *context;
+} legacy_pipeline_context_t;
+
+static int legacy_pipeline_runner(const rix_shell_command_t *command, size_t command_index,
+                                  int input_fd, int output_fd, void *context) {
+    (void)command_index;
+    legacy_pipeline_context_t *legacy = context;
+    return legacy->runner(command, input_fd, output_fd, legacy->context);
+}
+
+int rix_shell_execute_pipeline(const rix_shell_pipeline_t *pipeline,
+                               rix_shell_pipeline_runner_t runner, void *context,
+                               int *status) {
+    if (!runner) return -1;
+    legacy_pipeline_context_t legacy = {runner, context};
+    return rix_shell_execute_pipeline_indexed(pipeline, legacy_pipeline_runner, &legacy, status);
 }

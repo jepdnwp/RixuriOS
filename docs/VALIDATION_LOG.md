@@ -82,3 +82,20 @@ Advanced expansion is now host-tested: arithmetic precedence/parentheses, divide
 The linker was hardened during the Phase 0–17 audit. Explicit PHDRS now produce separate `R-X`, `R--` and `RW-` load segments plus a read-only `GNU_STACK`; `readelf -l build/kernel.elf` confirms no `RWE` segment. USB, HID and TTY host tests and the UEFI/QEMU boot smoke test continue to pass after this change.
 
 Review of the composite-device path found and corrected a context-construction defect: each Configure Endpoint operation now updates the input Slot Context's Context Entries field to the highest configured DCI and sets Add Slot Context alongside the endpoint bit. This is required by xHCI when adding endpoints beyond the initial EP0 context; the fix is strict-build validated but still awaits controller-backed execution.
+
+
+## 2026-09-06 — Phase 18 real shell runner foundation
+
+The banner-only embedded init image was replaced with a freestanding C shell entrypoint and linked together with the bounded shell frontend and bootstrap libc wrappers. The implementation composes real `fork`, `pipe`, `dup2`, `openat`, `execve` and `wait` calls; applies `<`, `>` and `>>` redirections in child processes; resolves external commands through the VFS-backed PATH resolver; runs the existing bounded builtins; and preserves conditional execution semantics through the indexed pipeline callback API.
+
+Kernel-side integration work in this increment corrected three prerequisites for that composition. Pipe read/write endpoint references now survive `dup` and `fork` until the last endpoint closes. The active VMM PML4 is updated whenever a process is activated, so uaccess validation checks the current user mapping. TTY and pipe reads yield while no data is available, while `wait` yields until a requested child becomes a zombie and distinguishes the no-child case. The initial user stack was expanded from eight to 32 pages for the C shell's bounded local state.
+
+The following commands completed successfully from a clean object state:
+
+```text
+make clean CROSS=
+make test CROSS=
+make image CROSS=
+```
+
+The host suite reported `hid report tests: PASS`, `tty tests: PASS` and `shell parser tests: PASS`; the shell test now also covers indexed pipeline callback propagation. The UEFI/QEMU smoke run reached `RIXURI:KERNEL_READY`, printed `RixuriOS shell ready` and the `rixuri$ ` prompt, and emitted no CPU exception. QEMU still reported zero NVMe and xHCI controllers, and no disposable RixFS command image or real keyboard input path was available in this run. Therefore this is build/boot/prompt evidence only; it does not claim hardware-backed interactive input or external-command execution completion.

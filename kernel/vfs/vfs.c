@@ -77,11 +77,14 @@ static int retain_fd(const vfs_fd_t *source, vfs_fd_t *destination) {
         for (size_t i = 0; i < VFS_PIPE_MAX; ++i) {
             if (pipe_slots[i].used && &pipe_slots[i].pipe == destination->pipe) {
                 if (pipe_slots[i].refs == UINT8_MAX) return -2;
+                int rc = destination->pipe_write ? pipe_retain_write(destination->pipe) :
+                                                     pipe_retain_read(destination->pipe);
+                if (rc != 0) return -3;
                 pipe_slots[i].refs++;
                 return 0;
             }
         }
-        return -3;
+        return -4;
     }
     return 0;
 }
@@ -115,7 +118,7 @@ int vfs_fd_is_open(uint64_t pid, int fd) {
     if (pid_slot(pid, &ps) || fd < 0 || fd >= RIX_VFS_FD_MAX) return 0;
     return fds[ps][fd].used ? 1 : 0;
 }
-int vfs_clone_fds(uint64_t parent_pid,uint64_t child_pid){size_t parent,child;if(pid_slot(parent_pid,&parent)||pid_slot(child_pid,&child)||parent_pid==child_pid)return -1;for(size_t i=0;i<RIX_VFS_FD_MAX;i++)if(fds[parent][i].used){if(fds[child][i].used)return -2;fds[child][i]=fds[parent][i];if(fds[child][i].type==VFS_FD_PIPE_READ||fds[child][i].type==VFS_FD_PIPE_WRITE){int found=0;for(size_t j=0;j<VFS_PIPE_MAX;j++)if(pipe_slots[j].used&&(&pipe_slots[j].pipe==fds[child][i].pipe)){if(pipe_slots[j].refs==UINT8_MAX)return -3;pipe_slots[j].refs++;found=1;break;}if(!found)return -4;}}return 0;}
+int vfs_clone_fds(uint64_t parent_pid,uint64_t child_pid){size_t parent,child;if(pid_slot(parent_pid,&parent)||pid_slot(child_pid,&child)||parent_pid==child_pid)return -1;for(size_t i=0;i<RIX_VFS_FD_MAX;i++)if(fds[parent][i].used){if(fds[child][i].used)return -2;fds[child][i]=fds[parent][i];if(fds[child][i].type==VFS_FD_PIPE_READ||fds[child][i].type==VFS_FD_PIPE_WRITE){int found=0;for(size_t j=0;j<VFS_PIPE_MAX;j++)if(pipe_slots[j].used&&(&pipe_slots[j].pipe==fds[child][i].pipe)){if(pipe_slots[j].refs==UINT8_MAX)return -3;int rc=fds[child][i].pipe_write?pipe_retain_write(fds[child][i].pipe):pipe_retain_read(fds[child][i].pipe);if(rc!=0)return -4;pipe_slots[j].refs++;found=1;break;}if(!found)return -5;}}return 0;}
 int vfs_close(uint64_t pid,int fd){size_t ps;if(pid_slot(pid,&ps)||fd<0||fd>=RIX_VFS_FD_MAX||!fds[ps][fd].used)return -1;if(fds[ps][fd].type==VFS_FD_PIPE_READ||fds[ps][fd].type==VFS_FD_PIPE_WRITE){rix_pipe_t *pipe=fds[ps][fd].pipe;for(size_t i=0;i<VFS_PIPE_MAX;i++)if(pipe_slots[i].used&&(&pipe_slots[i].pipe==pipe)){if(fds[ps][fd].pipe_write)pipe_close_write(pipe);else pipe_close_read(pipe);if(pipe_slots[i].refs)pipe_slots[i].refs--;if(!pipe_slots[i].refs)pipe_slots[i].used=0;break;}}fds[ps][fd].used=0;return 0;}
 int vfs_close_all(uint64_t pid){size_t ps;if(pid_slot(pid,&ps))return -1;for(int fd=0;fd<(int)RIX_VFS_FD_MAX;fd++)if(fds[ps][fd].used)(void)vfs_close(pid,fd);return 0;}
 int vfs_read(uint64_t pid,int fd,void*buffer,size_t size,size_t*out_read){

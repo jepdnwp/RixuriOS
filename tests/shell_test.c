@@ -33,6 +33,18 @@ static int run_pipeline(const rix_shell_command_t *command, int input_fd, int ou
     return 0;
 }
 
+static int indexed_calls;
+static size_t indexed_indices[4];
+static int run_indexed_pipeline(const rix_shell_command_t *command, size_t command_index,
+                                int input_fd, int output_fd, void *context) {
+    (void)input_fd;
+    (void)output_fd;
+    (void)context;
+    if (!command || command->argc != 1 || indexed_calls >= 4) return -1;
+    indexed_indices[indexed_calls++] = command_index;
+    return 0;
+}
+
 static int run_status_pipeline(const rix_shell_command_t *command, int input_fd, int output_fd, void *context) {
     (void)input_fd;
     (void)output_fd;
@@ -88,6 +100,11 @@ int main(void) {
                 pipeline_calls == 2 && pipeline_inputs[0] == 0 && pipeline_outputs[0] == 1 &&
                 pipeline_inputs[1] == 1 && pipeline_outputs[1] == 1 && exec_status == 0,
                 "pipeline executor wiring")) return 1;
+    if (expect((indexed_calls = 0, rix_shell_execute_pipeline_indexed(&pipeline,
+                                                                      run_indexed_pipeline,
+                                                                      NULL, &exec_status) == 0) &&
+                indexed_calls == 2 && indexed_indices[0] == 0 && indexed_indices[1] == 1,
+                "indexed pipeline callback")) return 1;
     char builtin_output[64] = {0};
     int handled = 0;
     if (expect(rix_shell_lex("echo hello world", &tokens) == 0 &&

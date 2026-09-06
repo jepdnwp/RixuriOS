@@ -16,10 +16,15 @@ OBJ := kernel/boot.o kernel/main.o kernel/serial.o kernel/user_init_blob.o \
 all: build/kernel.elf
 build:
 	mkdir -p build
-build/user_init.o: user/init.S | build
-	$(CC) $(CFLAGS) -c $< -o $@
-build/user_init.elf: build/user_init.o user/init.ld | build
-	$(LD) -nostdlib -z max-page-size=0x1000 -T user/init.ld -o $@ build/user_init.o
+USER_INIT_CFLAGS := $(CFLAGS) -mcmodel=large -Iuser/shell -Iuser/libc/include
+build/user_init.o: user/init.c user/shell/shell.h user/libc/include/unistd.h | build
+	$(CC) $(USER_INIT_CFLAGS) -c $< -o $@
+build/user_shell.o: user/shell/shell.c user/shell/shell.h | build
+	$(CC) $(USER_INIT_CFLAGS) -c $< -o $@
+build/user_unistd.o: user/libc/src/unistd.c user/libc/include/unistd.h | build
+	$(CC) $(USER_INIT_CFLAGS) -c $< -o $@
+build/user_init.elf: build/user_init.o build/user_shell.o build/user_unistd.o user/init.ld | build
+	$(LD) -nostdlib -z max-page-size=0x1000 -T user/init.ld -o $@ build/user_init.o build/user_shell.o build/user_unistd.o
 	$(READELF) -h $@ >/dev/null
 	$(READELF) -l $@ >/dev/null
 kernel/user_init_blob.o: build/user_init.elf | build

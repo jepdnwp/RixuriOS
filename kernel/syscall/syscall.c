@@ -23,7 +23,31 @@ void syscall_dispatch(rix_syscall_frame_t*frame){
  if(!frame)return;
  int64_t result=-(int64_t)RIX_ENOSYS;pid_t self=process_current();
  switch(frame->rax){
- case RIX_SYS_READ:{uint64_t fd=frame->rdi,dst=frame->rsi,len=frame->rdx;if(len>RIX_MAX_IO){result=-RIX_EINVAL;break;}if(fd==0&&!vfs_fd_is_open(self,(int)fd)){uint8_t b[RIX_IO_CHUNK];size_t n=(size_t)(len>RIX_IO_CHUNK?RIX_IO_CHUNK:len),got=0;if(tty_read(0,b,n,&got)!=0){result=-RIX_EINVAL;break;}if(got&&copy_to_user(dst,b,got)!=0){result=-RIX_EFAULT;break;}result=(int64_t)got;break;}if(fd<=2&&!vfs_fd_is_open(self,(int)fd)){result=-RIX_EINVAL;break;}uint8_t b[RIX_IO_CHUNK];size_t done=0;while(done<len){size_t n=(size_t)(len-done);if(n>RIX_IO_CHUNK)n=RIX_IO_CHUNK;size_t got=0;if(vfs_read(self,(int)fd,b,n,&got)!=0){result=done?((int64_t)done):-(int64_t)RIX_EINVAL;break;}if(got&&copy_to_user(dst+done,b,got)!=0){result=done?((int64_t)done):-(int64_t)RIX_EFAULT;break;}done+=got;if(got<n)break;}if(done==len||len==0)result=(int64_t)done;break;}
+ case RIX_SYS_READ:{
+  uint64_t fd=frame->rdi,dst=frame->rsi,len=frame->rdx;
+  if(len>RIX_MAX_IO){result=-RIX_EINVAL;break;}
+  if(!len){result=0;break;}
+  if(fd==0&&!vfs_fd_is_open(self,(int)fd)){
+   uint8_t b[RIX_IO_CHUNK];size_t n=(size_t)(len>RIX_IO_CHUNK?RIX_IO_CHUNK:len),got=0;
+   for(;;){int rc=tty_read(0,b,n,&got);if(rc==0)break;if(rc==-3){scheduler_yield();continue;}result=-RIX_EINVAL;break;}
+   if(result==-RIX_EINVAL)break;
+   if(got&&copy_to_user(dst,b,got)!=0){result=-RIX_EFAULT;break;}
+   result=(int64_t)got;break;
+  }
+  if(fd<=2&&!vfs_fd_is_open(self,(int)fd)){result=-RIX_EINVAL;break;}
+  uint8_t b[RIX_IO_CHUNK];size_t done=0;
+  while(done<len){
+   size_t n=(size_t)(len-done);if(n>RIX_IO_CHUNK)n=RIX_IO_CHUNK;size_t got=0;
+   int rc=vfs_read(self,(int)fd,b,n,&got);
+   if(rc==-3&&got==0){scheduler_yield();continue;}
+   if(rc==-2&&got==0){result=(int64_t)done;break;}
+   if(rc!=0&&!(rc==-3&&got)){result=done?((int64_t)done):-(int64_t)RIX_EINVAL;break;}
+   if(got&&copy_to_user(dst+done,b,got)!=0){result=done?((int64_t)done):-(int64_t)RIX_EFAULT;break;}
+   done+=got;if(got<n)break;
+  }
+  if(done==len||len==0||done>0)result=(int64_t)done;
+  break;
+ }
  case RIX_SYS_WRITE:{uint64_t fd=frame->rdi,src=frame->rsi,len=frame->rdx;if(len>RIX_MAX_IO){result=-RIX_EINVAL;break;}if((fd==1||fd==2)&&!vfs_fd_is_open(self,(int)fd)){uint8_t b[RIX_IO_CHUNK];uint64_t done=0;while(done<len){size_t n=(size_t)(len-done);if(n>RIX_IO_CHUNK)n=RIX_IO_CHUNK;if(copy_from_user(b,src+done,n)!=0){result=done?((int64_t)done):-(int64_t)RIX_EFAULT;break;}size_t wrote=0;if(tty_output(0,b,n,&wrote)!=0){result=done?((int64_t)done):-(int64_t)RIX_EINVAL;break;}serial_write_n((const char*)b,wrote);done+=wrote;}if(done==len)result=(int64_t)done;break;}if(fd==0&&!vfs_fd_is_open(self,(int)fd)){result=-RIX_EINVAL;break;}uint8_t b[RIX_IO_CHUNK];size_t done=0;while(done<len){size_t n=(size_t)(len-done);if(n>RIX_IO_CHUNK)n=RIX_IO_CHUNK;if(copy_from_user(b,src+done,n)!=0){result=done?((int64_t)done):-(int64_t)RIX_EFAULT;break;}size_t wrote=0;if(vfs_write(self,(int)fd,b,n,&wrote)!=0){result=done?((int64_t)done):-(int64_t)RIX_EINVAL;break;}done+=wrote;if(wrote<n)break;}if(done==len||len==0)result=(int64_t)done;break;}
  case RIX_SYS_DUP:{int new_fd;if(vfs_dup(self,(int)frame->rdi,&new_fd)!=0){result=-RIX_EINVAL;break;}result=new_fd;break;}
  case RIX_SYS_DUP2:if(vfs_dup_to(self,(int)frame->rdi,(int)frame->rsi)!=0)result=-RIX_EINVAL;else result=frame->rsi;break;
@@ -35,7 +59,13 @@ void syscall_dispatch(rix_syscall_frame_t*frame){
  case RIX_SYS_CLOSE:if(vfs_close(self,(int)frame->rdi)!=0)result=-RIX_EINVAL;else result=0;break;
  case RIX_SYS_STAT:{char path[RIX_VFS_PATH_MAX];if(user_string(frame->rdi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}rix_vnode_t st;if(vfs_stat(path,&st)||copy_to_user(frame->rsi,&st,sizeof(st))!=0)result=-RIX_EINVAL;else result=0;break;}
  case RIX_SYS_EXIT:if(process_exit(self,frame->rdi)!=0)result=-RIX_EINVAL;else scheduler_exit_current();break;
- case RIX_SYS_WAIT:{pid_t wanted=(pid_t)frame->rdi;uint64_t status=0;pid_t child=0;int rc=process_wait(self,wanted,&status,&child);if(rc<0){result=-RIX_EINVAL;break;}if(rc>0){result=0;break;}if(copy_to_user(frame->rsi,&status,sizeof(status))!=0){result=-RIX_EFAULT;break;}result=(int64_t)child;break;}
+ case RIX_SYS_WAIT:{
+  pid_t wanted=(pid_t)frame->rdi;uint64_t status=0;pid_t child=0;int rc;
+  for(;;){rc=process_wait(self,wanted,&status,&child);if(rc==1){scheduler_yield();continue;}break;}
+  if(rc==2||rc<0){result=-RIX_EINVAL;break;}
+  if(copy_to_user(frame->rsi,&status,sizeof(status))!=0){result=-RIX_EFAULT;break;}
+  result=(int64_t)child;break;
+ }
  case RIX_SYS_KILL:if(process_signal_send((pid_t)frame->rdi,(unsigned)frame->rsi)!=0)result=-RIX_ESRCH;else result=0;break;
  case RIX_SYS_SIGMASK:if(process_signal_mask(self,frame->rdi)!=0)result=-RIX_EINVAL;else result=0;break;
  case RIX_SYS_SIGPENDING:{uint64_t pending;if(process_signal_pending(self,&pending)!=0||copy_to_user(frame->rdi,&pending,sizeof(pending))!=0)result=-RIX_EFAULT;else result=0;break;}

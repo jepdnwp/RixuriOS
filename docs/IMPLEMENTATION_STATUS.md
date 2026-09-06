@@ -174,3 +174,19 @@ Phase 15 continuation: add device-manager policy around port-event attach/detach
 - Added host regressions for PATH resolution; all existing shell, TTY, HID and USB tests remain successful.
 - `make test CROSS=`, userspace libc compilation, `make image CROSS=` and QEMU boot completed successfully. QEMU reached `RIXURI:KERNEL_READY` and `USER: init returned to kernel`.
 - Phase 18 remains `IMPLEMENTED / NOT YET VALIDATED` for a complete interactive shell: the embedded init is still a banner-only process, and a full external command runner must still connect PATH resolution, fork, dup2, redirections, execve and wait into one userspace command loop.
+
+
+## Latest continuation — Phase 18 real command-runner foundation
+
+- Replaced the banner-only embedded init image with a freestanding C userspace shell entrypoint. It now reads canonical TTY lines, lexes/parses the bounded shell AST, stores history, prints a prompt, dispatches builtins and reports syntax/execution failures.
+- Connected the real execution path across `fork`, `pipe`, `dup2`, `openat`, `execve` and `wait`. Pipeline stages are created with real pipe endpoints, redirections are applied in the child, PATH resolution uses the VFS through `openat`, and the parent waits for every stage while preserving the final status.
+- Added an indexed pipeline callback API while preserving the legacy callback API. Host coverage now verifies both staged fd wiring and command-index propagation.
+- Added the userspace `read` wrapper and made TTY/pipe reads yield until data or EOF. `wait` now distinguishes no-child, pending-child and reaped-child states and yields while a requested child is running.
+- Corrected pipe endpoint lifetime accounting across `dup` and `fork`; closing one duplicate no longer closes the shared channel before the last reader/writer is gone.
+- Corrected VMM active-PML4 tracking so uaccess validation observes the current user address space rather than the kernel page table.
+- Increased the initial user stack mapping from 8 to 32 pages to cover the C shell's bounded history, parser and pipeline state without a stack fault.
+- The shell remains `IMPLEMENTED / NOT YET VALIDATED` for a complete hardware-backed interactive command session. The current QEMU profile exposes no xHCI controller or mounted command filesystem, so external binary execution, real keyboard-to-TTY input, and physical pipe/redirection evidence remain open.
+
+## Next phase
+
+Phase 18 qualification: provide a controller-backed or otherwise documented real input path, populate a disposable RixFS test image with known user binaries, exercise simple external commands, redirection, multi-stage pipelines, conditional execution and failure paths, then preserve raw serial/input/output evidence. Do not mark Phase 18 COMPLETE from the current banner/prompt smoke test alone.

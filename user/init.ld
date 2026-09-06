@@ -1,5 +1,7 @@
 ENTRY(_start)
 
+ENTRY(_start)
+
 SECTIONS
 {
     . = 0x0000008000000000;

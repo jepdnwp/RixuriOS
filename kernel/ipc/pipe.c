@@ -5,6 +5,20 @@ void pipe_init(rix_pipe_t *pipe) {
     ipc_channel_init(&pipe->channel);
     pipe->read_open = 1u;
     pipe->write_open = 1u;
+    pipe->read_refs = 1u;
+    pipe->write_refs = 1u;
+}
+
+int pipe_retain_read(rix_pipe_t *pipe) {
+    if (!pipe || !pipe->read_open || pipe->read_refs == UINT8_MAX) return -1;
+    ++pipe->read_refs;
+    return 0;
+}
+
+int pipe_retain_write(rix_pipe_t *pipe) {
+    if (!pipe || !pipe->write_open || pipe->write_refs == UINT8_MAX) return -1;
+    ++pipe->write_refs;
+    return 0;
 }
 
 int pipe_read(rix_pipe_t *pipe, void *buffer, size_t capacity, size_t *readn) {
@@ -20,13 +34,21 @@ int pipe_write(rix_pipe_t *pipe, const void *buffer, size_t length, size_t *writ
 }
 
 int pipe_close_read(rix_pipe_t *pipe) {
-    if (!pipe || !pipe->read_open) return -1;
-    pipe->read_open = 0u;
-    return ipc_close(&pipe->channel);
+    if (!pipe || !pipe->read_open || !pipe->read_refs) return -1;
+    --pipe->read_refs;
+    if (!pipe->read_refs) {
+        pipe->read_open = 0u;
+        return ipc_close(&pipe->channel);
+    }
+    return 0;
 }
 
 int pipe_close_write(rix_pipe_t *pipe) {
-    if (!pipe || !pipe->write_open) return -1;
-    pipe->write_open = 0u;
-    return ipc_close(&pipe->channel);
+    if (!pipe || !pipe->write_open || !pipe->write_refs) return -1;
+    --pipe->write_refs;
+    if (!pipe->write_refs) {
+        pipe->write_open = 0u;
+        return ipc_close(&pipe->channel);
+    }
+    return 0;
 }

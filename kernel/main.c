@@ -24,7 +24,6 @@
 #include "tty/tty.h"
 #include "time/rtc.h"
 #include "time/time.h"
-static void halt_forever(void){for(;;)__asm__ volatile("hlt");}
 #define RIX_XHCI_CONFIG_CAPACITY 4096u
 static uint8_t xhci_configuration[RIX_XHCI_CONFIG_CAPACITY];
 static uint8_t xhci_hid_report[2048];
@@ -145,5 +144,5 @@ void kernel_main(const rixuri_boot_info_t *boot){
  int io_ready=0;if(acpi_ioapic_count()&&ioapic_init()==0){if(ioapic_route_irq(0,32,(uint8_t)lapic_id())!=0)panic("failed to route PIT IRQ");ioapic_unmask_irq(0);pic_disable();io_ready=1;}
  if(io_ready){idt_enable();serial_write("IRQ: PIT routed to vector 32; interrupts enabled\r\n");}else serial_write("IRQ: no usable IOAPIC; interrupts remain disabled\r\n");
  serial_write("xHCI: hotplug worker task=");serial_write_dec(xhci_worker_task);serial_write("\r\n");
- serial_write("Core services: timer/scheduler/process/syscall/PCI/NVMe/xHCI/HID/block/VFS/time initialized\r\n");serial_write("LAPIC: initialized, id=");serial_write_dec(lapic_id());serial_write("\r\n");serial_write("RIXURI:KERNEL_READY\r\n");scheduler_yield();serial_write("USER: init returned to kernel\r\n");halt_forever();
+ serial_write("Core services: timer/scheduler/process/syscall/PCI/NVMe/xHCI/HID/block/VFS/time initialized\r\n");serial_write("LAPIC: initialized, id=");serial_write_dec(lapic_id());serial_write("\r\n");serial_write("RIXURI:KERNEL_READY\r\n");scheduler_yield();serial_write("USER: init returned to kernel\r\n");for(;;)scheduler_yield();
 }

@@ -1,0 +1,233 @@
+#include "shell.h"
+#include "unistd.h"
+#include <stddef.h>
+#include <stdint.h>
+
+#define RIX_AT_FDCWD (-100)
+#define RIX_VFS_O_WRONLY 1u
+#define RIX_VFS_O_CREAT 4u
+#define RIX_VFS_O_TRUNC 8u
+#define RIX_VFS_O_APPEND 16u
+#define RIX_SHELL_MODE 0644u
+#define RIX_INIT_LINE_CAP 256u
+#define RIX_INIT_PATH_CAP 128u
+#define RIX_INIT_PIDS_CAP RIX_SHELL_MAX_COMMANDS
+
+static size_t text_length(const char *text) {
+    size_t length = 0;
+    if (!text) return 0;
+    while (text[length]) ++length;
+    return length;
+}
+
+static int write_all(int fd, const void *buffer, size_t length) {
+    const uint8_t *bytes = buffer;
+    size_t written = 0;
+    while (written < length) {
+        rix_ssize_t count = write(fd, bytes + written, length - written);
+        if (count <= 0) return -1;
+        written += (size_t)count;
+    }
+    return 0;
+}
+
+static int write_text(int fd, const char *text) {
+    return write_all(fd, text, text_length(text));
+}
+
+static int fd_writer(const void *data, size_t length, void *context) {
+    if (!context) return -1;
+    return write_all(*(const int *)context, data, length);
+}
+
+static int path_exists(const char *path, void *context) {
+    (void)context;
+    int fd = openat(RIX_AT_FDCWD, path, 0u, 0u);
+    if (fd < 0) return -1;
+    return close(fd);
+}
+
+static int apply_redirections(const rix_shell_command_t *command) {
+    if (!command) return -1;
+    for (size_t i = 0; i < command->redir_count; ++i) {
+        const rix_shell_redir_t *redir = &command->redir[i];
+        uint32_t flags = 0u;
+        int target = 0;
+        if (redir->type == RIX_SHELL_REDIR_READ) {
+            target = 0;
+        } else if (redir->type == RIX_SHELL_REDIR_APPEND) {
+            flags = RIX_VFS_O_WRONLY | RIX_VFS_O_CREAT | RIX_VFS_O_APPEND;
+            target = 1;
+        } else if (redir->type == RIX_SHELL_REDIR_WRITE) {
+            flags = RIX_VFS_O_WRONLY | RIX_VFS_O_CREAT | RIX_VFS_O_TRUNC;
+            target = 1;
+        } else {
+            return -1;
+        }
+        int fd = openat(RIX_AT_FDCWD, redir->path, flags, RIX_SHELL_MODE);
+        if (fd < 0 || dup2(fd, target) < 0) {
+            if (fd >= 0) (void)close(fd);
+            return -1;
+        }
+        if (close(fd) < 0) return -1;
+    }
+    return 0;
+}
+
+typedef struct {
+    int input_fd;
+    rix_pid_t pid[RIX_INIT_PIDS_CAP];
+    size_t pid_count;
+} rix_shell_execution_t;
+
+static void reset_execution(rix_shell_execution_t *execution) {
+    execution->input_fd = -1;
+    execution->pid_count = 0;
+}
+
+static int wait_for_execution(rix_shell_execution_t *execution, int *status) {
+    int final_status = 1;
+    if (!execution || !status) return -1;
+    for (size_t i = 0; i < execution->pid_count; ++i) {
+        uint64_t child_status = 0;
+        rix_pid_t child = wait(execution->pid[i], &child_status);
+        if (child != execution->pid[i]) return -1;
+        final_status = (int)child_status;
+    }
+    reset_execution(execution);
+    *status = final_status;
+    return 0;
+}
+
+static void child_error(const char *message, int status) {
+    (void)write_text(2, message);
+    _exit(status);
+}
+
+static int run_external_child(const rix_shell_command_t *command) {
+    static char *const empty_environment[] = { (char *)0 };
+    char path[RIX_INIT_PATH_CAP];
+    int handled = 0;
+    int status = 2;
+    int output_fd = 1;
+    if (rix_shell_run_builtin(command, fd_writer, &output_fd, &handled, &status) != 0)
+        child_error("rixuri: builtin failed\n", 125);
+    if (handled) _exit(status);
+    if (rix_shell_resolve_path(command->argv[0], "/bin:/usr/bin:/sbin:/usr/sbin",
+                               path_exists, NULL, path, sizeof(path)) != 0) {
+        (void)write_text(2, "rixuri: command not found: ");
+        (void)write_text(2, command->argv[0]);
+        (void)write_text(2, "\n");
+        _exit(127);
+    }
+    (void)execve(path, command->argv, empty_environment);
+    (void)write_text(2, "rixuri: exec failed: ");
+    (void)write_text(2, path);
+    (void)write_text(2, "\n");
+    _exit(126);
+}
+
+static int run_pipeline_command(const rix_shell_command_t *command, size_t command_index,
+                                int input_fd, int output_fd, void *context) {
+    rix_shell_execution_t *execution = context;
+    int next_pipe[2] = {-1, -1};
+    int child_input;
+    if (!execution || !command || !command->argc || command_index >= RIX_INIT_PIDS_CAP) return -1;
+    if (input_fd == 0) reset_execution(execution);
+    child_input = input_fd == 0 ? -1 : execution->input_fd;
+    if (input_fd != 0 && child_input < 0) return -1;
+    if (output_fd != 1 && pipe(next_pipe) != 0) return -1;
+
+    rix_pid_t child = fork();
+    if (child == (rix_pid_t)-1) {
+        if (next_pipe[0] >= 0) (void)close(next_pipe[0]);
+        if (next_pipe[1] >= 0) (void)close(next_pipe[1]);
+        if (child_input >= 0) (void)close(child_input);
+        return -1;
+    }
+    if (child == 0) {
+        if (child_input >= 0) {
+            if (dup2(child_input, 0) < 0) child_error("rixuri: stdin setup failed\n", 125);
+            (void)close(child_input);
+        }
+        if (next_pipe[1] >= 0) {
+            if (dup2(next_pipe[1], 1) < 0) child_error("rixuri: stdout setup failed\n", 125);
+            (void)close(next_pipe[1]);
+        }
+        if (next_pipe[0] >= 0) (void)close(next_pipe[0]);
+        if (apply_redirections(command) != 0) child_error("rixuri: redirection failed\n", 125);
+        run_external_child(command);
+    }
+
+    if (child_input >= 0) (void)close(child_input);
+    if (next_pipe[1] >= 0) (void)close(next_pipe[1]);
+    execution->input_fd = next_pipe[0];
+    if (execution->pid_count >= RIX_INIT_PIDS_CAP) {
+        if (next_pipe[0] >= 0) (void)close(next_pipe[0]);
+        return -1;
+    }
+    execution->pid[execution->pid_count++] = child;
+    if (output_fd == 1) {
+        int status = 1;
+        if (wait_for_execution(execution, &status) != 0) return -1;
+        return status;
+    }
+    return 0;
+}
+
+static int run_command(const rix_shell_pipeline_t *pipeline, int *status) {
+    rix_shell_execution_t execution;
+    reset_execution(&execution);
+    return rix_shell_execute_pipeline_indexed(pipeline, run_pipeline_command,
+                                              &execution, status);
+}
+
+static int shell_read_line(char *line, size_t capacity) {
+    size_t used = 0;
+    if (!line || capacity < 2u) return -1;
+    for (;;) {
+        rix_ssize_t count = read(0, line + used, capacity - used - 1u);
+        if (count <= 0) return -1;
+        used += (size_t)count;
+        if (used && line[used - 1u] == '\n') {
+            line[used - 1u] = 0;
+            if (used > 1u && line[used - 2u] == '\r') line[used - 2u] = 0;
+            return 0;
+        }
+        if (used + 1u >= capacity) return -1;
+    }
+}
+
+static int shell_execute_line(const char *line, rix_shell_history_t *history) {
+    rix_shell_tokens_t tokens;
+    rix_shell_pipeline_t pipeline;
+    int status = 2;
+    if (rix_shell_lex(line, &tokens) != 0 || tokens.count == 0) return 0;
+    if (rix_shell_parse_pipeline(&tokens, &pipeline) != 0) {
+        (void)write_text(2, "rixuri: syntax error\n");
+        return 2;
+    }
+    if (history) (void)rix_shell_history_add(history, line);
+    if (pipeline.background) {
+        (void)write_text(2, "rixuri: background jobs are not available\n");
+        return 2;
+    }
+    if (run_command(&pipeline, &status) != 0) {
+        (void)write_text(2, "rixuri: command execution failed\n");
+        return 125;
+    }
+    return status;
+}
+
+void _start(void) {
+    char line[RIX_INIT_LINE_CAP];
+    rix_shell_history_t history;
+    rix_shell_history_init(&history);
+    (void)write_text(1, "RixuriOS shell ready\r\n");
+    for (;;) {
+        (void)write_text(1, "rixuri$ ");
+        if (shell_read_line(line, sizeof(line)) != 0) break;
+        (void)shell_execute_line(line, &history);
+    }
+    _exit(0);
+}
