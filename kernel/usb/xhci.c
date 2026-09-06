@@ -441,13 +441,22 @@ int xhci_poll_port_status_change(size_t controller, uint8_t *port, uint8_t *conn
 
 int xhci_service_hotplug(size_t controller, rix_xhci_device_t *device, uint8_t *connected) {
     if (controller >= count || !device || !connected) return -1;
+    device->slot_id = 0;
+    device->port = 0;
+    device->speed = 0;
+    device->state = RIX_XHCI_DEVICE_DETACHED;
     uint8_t port = 0;
     uint8_t is_connected = 0;
     int rc = xhci_poll_port_status_change(controller, &port, &is_connected);
     if (rc <= 0) return rc;
     *connected = is_connected;
     if (is_connected) {
-        return xhci_device_attach(controller, port, device);
+        int attach_rc = xhci_device_attach(controller, port, device);
+        if (attach_rc != 0) {
+            device->port = port;
+            device->state = RIX_XHCI_DEVICE_ERROR;
+        }
+        return attach_rc;
     }
     for (uint16_t slot_id = 1; slot_id <= controllers[controller].max_slots; ++slot_id) {
         xhci_slot_runtime_t *slot = &runtimes[controller].slots[slot_id];
@@ -455,17 +464,17 @@ int xhci_service_hotplug(size_t controller, rix_xhci_device_t *device, uint8_t *
             device->slot_id = (uint8_t)slot_id;
             device->port = port;
             device->speed = slot->speed;
-            device->state = 0;
-            return xhci_device_detach(controller, (uint8_t)slot_id);
+            int detach_rc = xhci_device_detach(controller, (uint8_t)slot_id);
+            device->state = detach_rc == 0 ? RIX_XHCI_DEVICE_DETACHED : RIX_XHCI_DEVICE_ERROR;
+            return detach_rc;
         }
     }
     device->slot_id = 0;
     device->port = port;
     device->speed = 0;
-    device->state = 0;
+        device->state = RIX_XHCI_DEVICE_DETACHED;
     return 0;
 }
-
 static int wait_command(const rix_xhci_controller_t *c, xhci_runtime_t *rt,
                         uint64_t command_phys, uint8_t *out_slot) {
     volatile xhci_trb_t *events = (volatile xhci_trb_t *)(uintptr_t)c->event_ring_phys;

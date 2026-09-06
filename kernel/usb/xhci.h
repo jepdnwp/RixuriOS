@@ -23,7 +23,9 @@ typedef struct {
     uint8_t max_burst;
 } rix_xhci_endpoint_config_t;
 
+#define RIX_XHCI_DEVICE_DETACHED 0u
 #define RIX_XHCI_DEVICE_ADDRESSED 2u
+#define RIX_XHCI_DEVICE_ERROR 0xffu
 
 int xhci_init(void);
 size_t xhci_controller_count(void);

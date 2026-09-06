@@ -88,3 +88,9 @@ Phase 15 continuation: add device-manager policy around port-event attach/detach
 - Corrected kernel task bootstrap stack initialization so the saved context-switch stack pointer remains inside the task-owned stack allocation instead of being offset one pointer slot beyond its aligned top.
 - Changed PIT IRQ handling to account timer ticks without directly performing a context switch from an interrupt-entry frame; voluntary yields remain the supported transition path until a dedicated IRQ-return scheduler path is implemented.
 - Re-enabled the cooperative xHCI hotplug worker after the scheduler fix. QEMU now reaches `RIXURI:KERNEL_READY` and returns from the embedded user init without an exception.
+
+## Latest continuation — hotplug device state safety
+
+- Added explicit detached, addressed and error states to the xHCI device result model.
+- `xhci_service_hotplug()` now clears output fields before polling, preserves the affected port on attach failure, and reports detach failure instead of incorrectly claiming a clean detach.
+- Strict build, USB/HID/TTY/shell host tests and QEMU boot remain successful; real controller-backed hotplug evidence is still unavailable in the current QEMU profile.
