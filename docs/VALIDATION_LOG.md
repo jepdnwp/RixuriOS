@@ -63,4 +63,6 @@ Phase 16 report-protocol work now includes report-ID framing helpers for keyboar
 
 Phase 17 TTY work now has host evidence (`tty tests: PASS`) for canonical reads waiting on newline, raw reads returning immediately, echo flowing through a separate output queue, and foreground process-group state. PTY master/slave objects, signal generation, ANSI/VT parsing, session ownership and shell integration remain open; no full Phase 17 completion claim is made.
 
+The linker was hardened during the Phase 0–17 audit. Explicit PHDRS now produce separate `R-X`, `R--` and `RW-` load segments plus a read-only `GNU_STACK`; `readelf -l build/kernel.elf` confirms no `RWE` segment. USB, HID and TTY host tests and the UEFI/QEMU boot smoke test continue to pass after this change.
+
 Review of the composite-device path found and corrected a context-construction defect: each Configure Endpoint operation now updates the input Slot Context's Context Entries field to the highest configured DCI and sets Add Slot Context alongside the endpoint bit. This is required by xHCI when adding endpoints beyond the initial EP0 context; the fix is strict-build validated but still awaits controller-backed execution.
