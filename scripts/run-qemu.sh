@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ESP="$ROOT/build/uefi/esp"
+ESP="${RIXURI_ESP:-$ROOT/build/uefi/esp}"
 RIXFS_IMAGE="${RIXURI_RIXFS_IMAGE:-$ROOT/build/rixfs.img}"
 OVMF_CODE="${OVMF_CODE:-}"
 

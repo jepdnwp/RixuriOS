@@ -225,7 +225,7 @@ Phase 18 qualification: provide a controller-backed or otherwise documented real
 
 ### Evidence boundary
 
-The tested external-command, argv/envp, redirection, pipeline and conditional paths are now `IMPLEMENTED / QEMU-VALIDATED` for the observed scenarios. Phase 18 is not marked COMPLETE: append redirection, multi-stage pipeline depth, background jobs and reaping, `waitpid(WNOHANG)`, foreground process-group signal delivery, Ctrl-C/Ctrl-Z/Ctrl-\\ behavior, malformed-user-pointer runtime tests, and the requested `sleep` utility still require dedicated evidence. xHCI/HID keyboard qualification remains blocked because this QEMU topology reports zero xHCI controllers; the tested input path is the documented serial-to-TTY worker path.
+The tested external-command, argv/envp, redirection, pipeline, conditional, and selected foreground-control-signal paths are now `IMPLEMENTED / QEMU-VALIDATED` for the observed scenarios. Phase 18 is not marked COMPLETE: append redirection, multi-stage pipeline depth, background jobs and reaping, `waitpid(WNOHANG)`, stopped-job semantics, signal-specific exit-status reporting, and malformed-user-pointer runtime tests still require broader evidence. xHCI/HID keyboard qualification remains blocked because this QEMU topology reports zero xHCI controllers; the tested input path is the documented serial-to-TTY worker path.
 
 ## Latest continuation — Phase A core file utilities — 2026-09-06
 
@@ -234,3 +234,9 @@ The tested external-command, argv/envp, redirection, pipeline and conditional pa
 - Corrected directory append behavior so newly created empty directories use their preallocated sector, and removed directory-entry sectors are reused instead of allocating indefinitely. This also makes repeated create/remove and overwrite-redirection operations work on the disposable image.
 - Added strict/QEMU harnesses for the basic cp/mv/rm/rmdir flow and cp/mv edge cases. Real QEMU passed empty-file copy/move, overwrite, multi-sector executable copy/readback, empty-directory removal, and non-empty-directory rejection.
 - The observed Phase A scenarios are `QEMU-VALIDATED`; this does not claim recursive removal, atomic rename semantics, crash-consistency qualification, or physical-device behavior.
+
+## Latest continuation — Phase C foreground control signals — 2026-09-06
+
+- The real QEMU serial harness now waits for embedded init completion and isolates every run with private RixFS and UEFI ESP/NVRAM copies.
+- A blocking `/bin/cat` was interrupted with raw Ctrl-C, Ctrl-Z, and Ctrl-\\ bytes in separate QEMU runs; each run returned to the shell prompt without a CPU exception, page fault, or panic.
+- The observed result is limited to interruption and prompt recovery. No stopped-job notification, signal-specific exit status, or complete POSIX job-control policy is claimed.

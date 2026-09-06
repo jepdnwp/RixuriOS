@@ -276,3 +276,18 @@ qemu file utilities test: PASS
 ```
 
 The edge-case QEMU harness also passed empty-file copy/move, overwrite, and multi-sector executable copy/readback scenarios. Its observed markers were `overwrite-pass`, `mv-overwrite-pass`, `multi-sector-pass`, and `qemu cp/mv edge tests: PASS`. No `cp`/`mv` read or write failure was observed. The harness logs are `build/qemu-file-utils.log` and `build/qemu-cp-mv-edge.log`; no CPU exception or kernel panic was emitted. This closes the observed Phase A `rmdir` path and the requested cp/mv edge cases, but does not claim broader filesystem durability, crash recovery, or hardware qualification beyond the QEMU NVMe-backed disposable image.
+
+## 2026-09-06 — Phase C foreground control-signal runtime evidence
+
+The signal harness was corrected to wait for `USER: init returned to kernel` before sending input and to give every scenario a private RixFS image and UEFI ESP/NVRAM directory. This prevents one QEMU run’s journal or firmware state from becoming input to the next run.
+
+Each scenario started a blocking `/bin/cat`, sent the specified raw serial control byte, and observed the shell prompt return without an exception, page fault, or panic. The observed results were:
+
+```text
+ctrl-c: shell prompt returned after control signal; command_failure_message=no
+ctrl-z: shell prompt returned after control signal; command_failure_message=no
+ctrl-backslash: shell prompt returned after control signal; command_failure_message=no
+qemu foreground signal tests: PASS
+```
+
+These are runtime observations that the blocking foreground command was interrupted sufficiently for the shell to regain its prompt. No stopped-job notification, signal-specific exit-status display, or full POSIX job-control semantics was observed; those remain outside this evidence boundary. Raw logs are `build/qemu-signal-ctrl-c.log`, `build/qemu-signal-ctrl-z.log`, and `build/qemu-signal-ctrl-backslash.log`.
