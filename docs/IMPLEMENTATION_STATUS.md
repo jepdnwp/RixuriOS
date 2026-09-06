@@ -47,6 +47,7 @@ The current source tree has now passed a clean strict build and a real UEFI-to-k
 - Added non-control endpoint support: interrupt and bulk endpoint context construction, Configure Endpoint command submission, per-DCI endpoint transfer-ring lifecycle, doorbell routing and transfer-event polling with residual-length accounting.
 - Generalized the non-control endpoint path to support both interrupt and bulk endpoint types with shared ring submission/completion logic and separate public transfer wrappers.
 - Generalized each slot to retain independent endpoint runtime state for all non-control DCIs, allowing composite devices to configure and use multiple interrupt/bulk endpoints concurrently; transfer wrappers now take the endpoint address explicitly.
+- Corrected Configure Endpoint input contexts to update Slot Context Context Entries and include Add Slot Context, which is required when extending an addressed slot with higher-DCI composite endpoints.
 - Connected the existing boot keyboard/mouse report parsers to interrupt-IN transfers through `hid_xhci_keyboard_poll()` and `hid_xhci_mouse_poll()` adapters.
 - Added a bounds-checked HID short/long-item report descriptor parser that identifies keyboard/mouse usages, report IDs and aggregate input size, with malformed/truncated host tests.
 - Added `xhci_get_hid_report_descriptor()` for the USB class-specific interface `GET_DESCRIPTOR` request (`0x81`, descriptor type `0x22`), connecting enumeration metadata to the HID report parser.

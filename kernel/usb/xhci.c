@@ -67,6 +67,7 @@
 #define XHCI_INPUT_ADD_SLOT (1u << 1)
 #define XHCI_INPUT_ADD_EP0 (1u << 2)
 #define XHCI_SLOT_CONTEXT_ENTRIES (1u << 27)
+#define XHCI_SLOT_CONTEXT_ENTRIES_MASK (0x1Fu << 27)
 #define XHCI_EP0_TYPE_CONTROL 4u
 #define XHCI_EP0_CERR 3u
 #define XHCI_EP_INTERRUPT_IN 7u
@@ -779,9 +780,14 @@ int xhci_configure_endpoint(size_t controller, uint8_t slot_id,
         XHCI_TRB_TC | XHCI_TRB_CYCLE;
     uint32_t context_size = (c->hcc_params1 & XHCI_HCC_CSZ) != 0u ? 64u : 32u;
     volatile uint32_t *input = (volatile uint32_t *)(uintptr_t)slot->input_context_phys;
+    volatile uint32_t *slot_context = (volatile uint32_t *)
+        (uintptr_t)(slot->input_context_phys + context_size);
     volatile uint32_t *endpoint = (volatile uint32_t *)
         (uintptr_t)(slot->input_context_phys + (uint64_t)context_size * (endpoint_id + 1u));
-    input[1] = 1u << (endpoint_id + 1u);
+    uint8_t context_entries = endpoint_id > 1u ? endpoint_id : 1u;
+    slot_context[0] = (slot_context[0] & ~XHCI_SLOT_CONTEXT_ENTRIES_MASK) |
+                      ((uint32_t)context_entries << 27);
+    input[1] = XHCI_INPUT_ADD_SLOT | (1u << (endpoint_id + 1u));
     endpoint[0] = (uint32_t)config->interval << 16;
     uint8_t endpoint_type = transfer_type == RIX_USB_EP_INTERRUPT
         ? (direction ? XHCI_EP_INTERRUPT_IN : XHCI_EP_INTERRUPT_OUT)
