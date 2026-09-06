@@ -8,7 +8,7 @@ CFLAGS := -std=c17 -ffreestanding -fno-stack-protector -fno-pie -mno-red-zone -m
 LDFLAGS := -nostdlib -z max-page-size=0x1000 -T linker/kernel.ld
 OBJ := kernel/boot.o kernel/main.o kernel/serial.o kernel/user_init_blob.o \
  kernel/arch/x86_64/cpu.o kernel/arch/x86_64/gdt.o kernel/arch/x86_64/idt.o kernel/arch/x86_64/interrupts.o kernel/arch/x86_64/irq.o kernel/arch/x86_64/apic.o kernel/arch/x86_64/acpi.o kernel/arch/x86_64/ioapic.o kernel/arch/x86_64/pic.o kernel/arch/x86_64/pit.o kernel/arch/x86_64/user_entry.o \
- kernel/pci/pci.o kernel/pci/dma.o kernel/pci/iommu.o kernel/pci/msix.o kernel/sched/scheduler.o kernel/sched/switch.o kernel/process/process.o kernel/process/signal.o kernel/process/address_space.o kernel/syscall/syscall.o kernel/vfs/vfs.o kernel/fs/rixfs.o kernel/fs/rixfs_ops.o kernel/fs/rixfs_dir.o kernel/elf/elf.o kernel/elf/loader.o \
+ kernel/pci/pci.o kernel/pci/dma.o kernel/pci/iommu.o kernel/pci/msix.o kernel/sched/scheduler.o kernel/sched/switch.o kernel/process/process.o kernel/process/signal.o kernel/process/address_space.o kernel/syscall/syscall.o kernel/vfs/vfs.o kernel/vfs/vfs_file.o kernel/fs/rixfs.o kernel/fs/rixfs_ops.o kernel/fs/rixfs_dir.o kernel/elf/elf.o kernel/elf/loader.o \
  kernel/mm/pmm.o kernel/mm/vmm.o kernel/mm/uaccess.o kernel/mm/heap.o kernel/sync/lock.o kernel/sync/waitqueue.o kernel/ipc/channel.o kernel/ipc/shared_memory.o kernel/tty/tty.o \
  kernel/storage/block.o kernel/storage/block_cache.o kernel/storage/nvme.o kernel/usb/xhci.o
 .PHONY: all clean check image run qemu build-run test user-init
