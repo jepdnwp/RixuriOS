@@ -62,6 +62,9 @@ int rix_shell_expand_word(const char *input, char *output, size_t capacity,
 int rix_shell_complete(const char *prefix, const char *const *candidates,
                        size_t candidate_count, char *output, size_t capacity,
                        size_t *match_count);
+int rix_shell_expand_pathname(const char *pattern, const char *const *candidates,
+                              size_t candidate_count, char *output, size_t capacity,
+                              size_t *match_count);
 void rix_shell_history_init(rix_shell_history_t *history);
 int rix_shell_history_add(rix_shell_history_t *history, const char *line);
 int rix_shell_history_prev(rix_shell_history_t *history, char *output, size_t capacity);

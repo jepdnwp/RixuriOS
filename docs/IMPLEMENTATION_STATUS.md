@@ -126,3 +126,9 @@ Phase 15 continuation: add device-manager policy around port-event attach/detach
 - Reads from stdout/stderr and writes to stdin now return an explicit error instead of silently succeeding.
 - Existing VFS-backed descriptors remain unchanged; canonical/raw TTY behavior, echo, screen state and foreground signal policy are reused by the syscall boundary.
 - Phase 17 shell pipeline/redirection execution and physical interactive console evidence remain open.
+
+## Latest continuation — Phase 18 pathname expansion
+
+- Added bounded wildcard pathname expansion over caller-provided candidate names, including `*`, `?`, no-match preservation and output-capacity checks.
+- Added shell regression coverage for wildcard matches and no-match behavior.
+- Phase 17/18 source and host-test work remains clean, but neither phase is marked COMPLETE: Phase 17 still lacks real pipe/process execution integration, while Phase 18 still lacks PATH search, exec, builtins, pipelines, redirections and real program composition.

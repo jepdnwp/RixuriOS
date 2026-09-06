@@ -55,6 +55,14 @@ int main(void) {
     if (expect(rix_shell_complete("z", commands, 4, expanded, sizeof(expanded),
                                   &matches) == 0 && matches == 0 && expanded[0] == 0,
                 "no autocomplete match")) return 1;
+    static const char *const paths[] = {"src/main.c", "src/tty.c", "README.md", "src/test.c"};
+    if (expect(rix_shell_expand_pathname("src/*.c", paths, 4, expanded,
+                                         sizeof(expanded), &matches) == 0 && matches == 3 &&
+                strcmp(expanded, "src/main.c src/tty.c src/test.c") == 0,
+                "pathname wildcard expansion")) return 1;
+    if (expect(rix_shell_expand_pathname("bin/?", paths, 4, expanded,
+                                         sizeof(expanded), &matches) == 0 && matches == 0 &&
+                strcmp(expanded, "bin/?") == 0, "pathname no-match preservation")) return 1;
     rix_shell_history_t history;
     rix_shell_history_init(&history);
     if (expect(rix_shell_history_add(&history, "one") == 0 &&

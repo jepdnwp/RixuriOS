@@ -469,3 +469,47 @@ int rix_shell_command_substitute(const char *input, char *output, size_t capacit
     output[out] = 0;
     return 0;
 }
+
+static int pathname_match(const char *pattern, const char *candidate) {
+    if (!pattern || !candidate) return 0;
+    if (*pattern == 0) return *candidate == 0;
+    if (*pattern == '*') {
+        while (*pattern == '*') ++pattern;
+        if (*pattern == 0) return 1;
+        while (*candidate) {
+            if (pathname_match(pattern, candidate)) return 1;
+            ++candidate;
+        }
+        return pathname_match(pattern, candidate);
+    }
+    if (*pattern == '?' || *pattern == *candidate)
+        return pathname_match(pattern + 1u, candidate + (*candidate != 0));
+    return 0;
+}
+
+int rix_shell_expand_pathname(const char *pattern, const char *const *candidates,
+                              size_t candidate_count, char *output, size_t capacity,
+                              size_t *match_count) {
+    if (match_count) *match_count = 0;
+    if (!pattern || !candidates || !output || capacity == 0u) return -1;
+    size_t used = 0;
+    size_t matches = 0;
+    for (size_t i = 0; i < candidate_count; ++i) {
+        const char *candidate = candidates[i];
+        if (!candidate || !pathname_match(pattern, candidate)) continue;
+        size_t length = text_length(candidate);
+        if (used + length + (matches ? 1u : 0u) >= capacity) return -2;
+        if (matches) output[used++] = ' ';
+        for (size_t j = 0; j < length; ++j) output[used++] = candidate[j];
+        ++matches;
+    }
+    if (!matches) {
+        size_t length = text_length(pattern);
+        if (length >= capacity) return -2;
+        for (size_t i = 0; i < length; ++i) output[i] = pattern[i];
+        used = length;
+    }
+    output[used] = 0;
+    if (match_count) *match_count = matches;
+    return 0;
+}
