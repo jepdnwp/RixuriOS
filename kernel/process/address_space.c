@@ -1,4 +1,5 @@
 #include "address_space.h"
+#include "kernel.h"
 #include "../mm/pmm.h"
 #include "../mm/vmm.h"
 #include <stdint.h>
@@ -22,7 +23,7 @@ static void destroy_user_tables(rix_address_space_t *as){if(!as||!as->pml4_phys)
 int address_space_create(rix_address_space_t *as){
  if(!as)return -1;
  as->pml4_phys=0;uint64_t pml4=pmm_alloc_page();if(!pml4)return -1;uint64_t*t=ptr(pml4);for(unsigned i=0;i<TABLE_COUNT;i++)t[i]=0;as->pml4_phys=pml4;
- uint64_t kp=vmm_kernel_pml4(),active=vmm_current_pml4();int switched=active!=kp;if(switched)vmm_switch_pml4(kp);
+ uint64_t kp=vmm_kernel_pml4(),active=vmm_current_pml4();if(active!=kp){serial_write("AS template active=");serial_write_hex(active);serial_write(" kernel=");serial_write_hex(kp);serial_write(" translate=");serial_write_hex(vmm_translate(kp+0x800ULL));serial_write("\r\n");}int switched=active!=kp;if(switched)vmm_switch_pml4(kp);
  uint64_t*kt=ptr(kp);for(unsigned i=256;i<512;i++)t[i]=kt[i];
  if(!(kt[0]&RIXURI_PTE_PRESENT))goto fail;
  uint64_t src_pdpt=kt[0]&PAGE_MASK;uint64_t new_pdpt=pmm_alloc_page();if(!new_pdpt)goto fail;

@@ -28,7 +28,7 @@ int process_fork(pid_t parent,uint64_t user_rip,uint64_t user_rsp,pid_t *out_pid
     pid_t child;if(process_create("fork-child",parent,&child)!=0)return -1;
     rix_process_t *cp=process_lookup(child);if(!cp)return -1;
     if(address_space_clone(&pp->address_space,&cp->address_space)!=0)goto fail;
-    serial_write("PROC fork child=");serial_write_dec(child);serial_write(" pml4=");serial_write_hex(cp->address_space.pml4_phys);serial_write("\r\n");
+    serial_write("PROC fork child=");serial_write_dec(child);serial_write(" pml4=");serial_write_hex(cp->address_space.pml4_phys);serial_write(" rip_pa=");serial_write_hex(address_space_translate(&cp->address_space,user_rip));serial_write(" rip_flags=");serial_write_hex(address_space_query_flags(&cp->address_space,user_rip));serial_write("\r\n");
     uint64_t ks=pmm_alloc_page();if(!ks)goto fail;
     zero_page(ks);cp->kernel_stack=ks;cp->kernel_stack_size=KERNEL_STACK_SIZE;cp->state=RIX_PROC_SLEEPING;*out_pid=child;return 0;
 fail:
