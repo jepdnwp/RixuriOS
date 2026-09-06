@@ -46,3 +46,5 @@ The enumeration layer now performs the standard two-stage configuration fetch: i
 The xHCI layer now also creates an initial interrupt endpoint context, submits Configure Endpoint, maintains a dedicated endpoint ring, rings the slot doorbell with the endpoint DCI, and polls interrupt transfer events. The path is strict-build and generic-QEMU regression validated, but no live endpoint completion is claimed until a controller-backed target is available.
 
 The same endpoint-ring submission and completion path now supports bulk endpoints through `xhci_bulk_transfer()`, while `xhci_interrupt_transfer()` remains available for interrupt-IN/OUT endpoints. Endpoint type selection is encoded in the Configure Endpoint context and validated at transfer time. No hardware completion is claimed because the current QEMU topology exposes zero xHCI controllers.
+
+The current implementation keeps one non-control endpoint ring per slot as an explicit incremental boundary. A subsequent step must maintain multiple endpoint contexts/rings simultaneously before a composite HID device or a device with separate bulk and interrupt interfaces can be claimed as integrated.

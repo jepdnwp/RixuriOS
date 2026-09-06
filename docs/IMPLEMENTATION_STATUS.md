@@ -47,8 +47,8 @@ The current source tree has now passed a clean strict build and a real UEFI-to-k
 - Added initial non-control endpoint support: interrupt endpoint context construction, Configure Endpoint command submission, endpoint transfer-ring lifecycle, doorbell routing and interrupt transfer-event polling with residual-length accounting.
 - Generalized the non-control endpoint path to support both interrupt and bulk endpoint types with shared ring submission/completion logic and separate public transfer wrappers.
 
-This remains `IMPLEMENTED / NOT YET VALIDATED`. The control-transfer path is source/build validated but not hardware-exercised: QEMU reported zero xHCI controllers. Descriptor enumeration, bulk/interrupt transfer rings, HID transfer delivery, hotplug event processing, hardware evidence and the historical completion-code-11 regression still remain open.
+This remains `IMPLEMENTED / NOT YET VALIDATED`. The control-transfer and endpoint paths are source/build validated but not hardware-exercised: QEMU reported zero xHCI controllers. The current runtime intentionally supports one configured non-control endpoint ring per slot; multi-endpoint context lifecycle, HID transfer delivery, hotplug event processing, hardware evidence and the historical completion-code-11 regression remain open.
 
 ## Next phase
 
-Phase 15 continuation: exercise enumeration, interrupt and bulk transfers on a controller-backed target, then connect HID report delivery, disconnect/hotplug handling, and hardware-backed negative-path tests.
+Phase 15 continuation: generalize endpoint contexts to multiple configured endpoints per slot, then connect HID report delivery, exercise enumeration/interrupt/bulk transfers on a controller-backed target, handle disconnect/hotplug, and add hardware-backed negative-path tests.
