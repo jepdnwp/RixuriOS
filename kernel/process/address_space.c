@@ -33,7 +33,7 @@ int address_space_create(rix_address_space_t *as){
   if(e&PTE_PS){dp[i]=e;built=i+1;continue;}
   uint64_t new_pd=pmm_alloc_page();
   if(!new_pd){for(unsigned j=0;j<built;j++)if(dp[j]&RIXURI_PTE_PRESENT&&!(dp[j]&PTE_PS))free_pd(dp[j]&PAGE_MASK);pmm_free_page(new_pdpt);t[0]=0;pmm_free_page(as->pml4_phys);as->pml4_phys=0;return -1;}
-  uint64_t*dst=ptr(new_pd);uint64_t*src=ptr(e&PAGE_MASK);for(unsigned j=0;j<TABLE_COUNT;j++)dst[j]=src[j];dp[i]=new_pd|RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE;built=i+1;
+  uint64_t*dst=ptr(new_pd);uint64_t*src=ptr(e&PAGE_MASK);for(unsigned j=0;j<TABLE_COUNT;j++)dst[j]=src[j]&~RIXURI_PTE_OWNED;dp[i]=new_pd|RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE;built=i+1;
  }
  return 0;
 }
