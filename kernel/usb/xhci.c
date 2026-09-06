@@ -42,6 +42,7 @@
 #define XHCI_TRB_DATA_STAGE 3u
 #define XHCI_TRB_STATUS_STAGE 4u
 #define XHCI_TRB_TRANSFER_EVENT 32u
+#define XHCI_TRB_CONFIGURE_ENDPOINT 12u
 #define XHCI_TRB_ENABLE_SLOT 9u
 #define XHCI_TRB_DISABLE_SLOT 10u
 #define XHCI_TRB_ADDRESS_DEVICE 11u
@@ -67,6 +68,8 @@
 #define XHCI_SLOT_CONTEXT_ENTRIES (1u << 27)
 #define XHCI_EP0_TYPE_CONTROL 4u
 #define XHCI_EP0_CERR 3u
+#define XHCI_EP_INTERRUPT_IN 7u
+#define XHCI_EP_INTERRUPT_OUT 3u
 
 /* A TRB is always 16-byte aligned and is written in little-endian fields. */
 typedef struct {
@@ -92,6 +95,10 @@ typedef struct {
     uint64_t ep0_ring_phys;
     uint16_t ep0_enqueue;
     uint8_t ep0_cycle;
+    uint64_t endpoint_ring_phys;
+    uint8_t endpoint_id;
+    uint8_t endpoint_cycle;
+    uint16_t endpoint_enqueue;
 } xhci_slot_runtime_t;
 
 typedef struct {
@@ -442,9 +449,14 @@ static void release_slot_context(const rix_xhci_controller_t *c, uint8_t slot_id
     }
     if (slot->input_context_phys) pmm_free_page(slot->input_context_phys);
     if (slot->ep0_ring_phys) pmm_free_page(slot->ep0_ring_phys);
+    if (slot->endpoint_ring_phys) pmm_free_page(slot->endpoint_ring_phys);
     slot->device_context_phys = 0;
     slot->input_context_phys = 0;
     slot->ep0_ring_phys = 0;
+    slot->endpoint_ring_phys = 0;
+    slot->endpoint_id = 0;
+    slot->endpoint_cycle = 0;
+    slot->endpoint_enqueue = 0;
     slot->allocated = 0;
     slot->addressed = 0;
     slot->port = 0;
@@ -558,7 +570,8 @@ static uint64_t ep0_emit(const rix_xhci_controller_t *c, xhci_slot_runtime_t *sl
 }
 
 static int wait_transfer(const rix_xhci_controller_t *c, xhci_runtime_t *rt,
-                         uint64_t last_trb, uint8_t slot_id, uint16_t requested,
+                         uint64_t last_trb, uint8_t slot_id, uint8_t expected_endpoint,
+                         uint16_t requested,
                          uint16_t *actual) {
     volatile xhci_trb_t *events = (volatile xhci_trb_t *)(uintptr_t)c->event_ring_phys;
     for (uint32_t i = 0; i < XHCI_POLL_LIMIT; ++i) {
@@ -573,7 +586,7 @@ static int wait_transfer(const rix_xhci_controller_t *c, xhci_runtime_t *rt,
         uint32_t residual = event->status & 0x00ffffffu;
         acknowledge_event(c, rt);
         if (type != XHCI_TRB_TRANSFER_EVENT || parameter != last_trb ||
-            event_slot != slot_id || endpoint != 1u) continue;
+            event_slot != slot_id || endpoint != expected_endpoint) continue;
         if (actual) *actual = residual >= requested ? 0u : (uint16_t)(requested - residual);
         return completion == XHCI_COMPLETION_SUCCESS ? 0 :
                (completion != 0u ? -(int)completion : -90);
@@ -616,7 +629,7 @@ int xhci_control_transfer(size_t controller, uint8_t slot_id,
     volatile uint8_t *base = (volatile uint8_t *)(uintptr_t)c->bar0;
     uint32_t db_off = *(volatile uint32_t *)(base + XHCI_DBOFF) & ~0x3u;
     *(volatile uint32_t *)(base + db_off + (uint32_t)slot_id * 4u) = 1u;
-    return wait_transfer(c, &runtimes[controller], status_trb, slot_id,
+    return wait_transfer(c, &runtimes[controller], status_trb, slot_id, 1u,
                          setup->length, actual_length);
 }
 
@@ -664,6 +677,89 @@ int xhci_enumerate_device(size_t controller, uint8_t slot_id,
                                            endpoint_capacity, interface_count,
                                            endpoint_count) != 0) return -6;
     return 0;
+}
+
+int xhci_configure_endpoint(size_t controller, uint8_t slot_id,
+                            const rix_xhci_endpoint_config_t *config) {
+    if (!config || controller >= count || slot_id == 0u ||
+        slot_id > controllers[controller].max_slots ||
+        (config->attributes & RIX_USB_EP_TRANSFER_MASK) != RIX_USB_EP_INTERRUPT ||
+        config->max_packet_size == 0u || config->interval == 0u) return -1;
+    uint8_t endpoint_number = config->endpoint_address & 0x0fu;
+    if (endpoint_number == 0u || (config->endpoint_address & 0x70u) != 0u) return -2;
+    if (endpoint_number >= 15u) return -2;
+    xhci_slot_runtime_t *slot = &runtimes[controller].slots[slot_id];
+    const rix_xhci_controller_t *c = &controllers[controller];
+    if (!c->running || !slot->allocated || !slot->addressed || slot->endpoint_ring_phys) return -3;
+    uint64_t ring_phys = dma_page(c);
+    if (!ring_phys) return -4;
+    zero_page(ring_phys);
+    volatile xhci_trb_t *ring = (volatile xhci_trb_t *)(uintptr_t)ring_phys;
+    ring[XHCI_CMD_RING_TRBS - 1u].parameter_lo = (uint32_t)ring_phys;
+    ring[XHCI_CMD_RING_TRBS - 1u].parameter_hi = (uint32_t)(ring_phys >> 32);
+    ring[XHCI_CMD_RING_TRBS - 1u].control = (XHCI_TRB_LINK << XHCI_TRB_TYPE_SHIFT) |
+        XHCI_TRB_TC | XHCI_TRB_CYCLE;
+    uint8_t direction = (config->endpoint_address & 0x80u) != 0u;
+    uint8_t endpoint_id = (uint8_t)(endpoint_number * 2u + direction);
+    uint32_t context_size = (c->hcc_params1 & XHCI_HCC_CSZ) != 0u ? 64u : 32u;
+    volatile uint32_t *input = (volatile uint32_t *)(uintptr_t)slot->input_context_phys;
+    volatile uint32_t *endpoint = (volatile uint32_t *)
+        (uintptr_t)(slot->input_context_phys + (uint64_t)context_size * (endpoint_id + 1u));
+    input[1] = 1u << (endpoint_id + 1u);
+    endpoint[0] = (uint32_t)config->interval << 16;
+    endpoint[1] = (3u << 1) |
+                  ((direction ? XHCI_EP_INTERRUPT_IN : XHCI_EP_INTERRUPT_OUT) << 3) |
+                  ((uint32_t)config->max_burst << 8) |
+                  ((uint32_t)config->max_packet_size << 16);
+    endpoint[2] = (uint32_t)ring_phys;
+    endpoint[3] = (uint32_t)(ring_phys >> 32) | XHCI_TRB_CYCLE;
+    __asm__ volatile("mfence" ::: "memory");
+    int rc = submit_command(controller, slot->input_context_phys,
+                            (XHCI_TRB_CONFIGURE_ENDPOINT << XHCI_TRB_TYPE_SHIFT) |
+                            ((uint32_t)slot_id << XHCI_TRB_SLOT_SHIFT), NULL);
+    if (rc != 0) {
+        pmm_free_page(ring_phys);
+        return rc;
+    }
+    slot->endpoint_ring_phys = ring_phys;
+    slot->endpoint_id = endpoint_id;
+    slot->endpoint_cycle = 1u;
+    slot->endpoint_enqueue = 0;
+    return 0;
+}
+
+int xhci_interrupt_transfer(size_t controller, uint8_t slot_id, void *buffer,
+                            uint16_t length, uint16_t *actual_length) {
+    if (actual_length) *actual_length = 0;
+    if (!buffer || length == 0u || controller >= count || slot_id == 0u ||
+        slot_id > controllers[controller].max_slots) return -1;
+    xhci_slot_runtime_t *slot = &runtimes[controller].slots[slot_id];
+    const rix_xhci_controller_t *c = &controllers[controller];
+    if (!c->running || !slot->endpoint_ring_phys || slot->endpoint_id == 0u) return -2;
+    if (slot->endpoint_enqueue >= XHCI_CMD_RING_TRBS - 1u) {
+        volatile xhci_trb_t *link = (volatile xhci_trb_t *)(uintptr_t)slot->endpoint_ring_phys;
+        link[XHCI_CMD_RING_TRBS - 1u].parameter_lo = (uint32_t)slot->endpoint_ring_phys;
+        link[XHCI_CMD_RING_TRBS - 1u].parameter_hi = (uint32_t)(slot->endpoint_ring_phys >> 32);
+        link[XHCI_CMD_RING_TRBS - 1u].status = 0;
+        link[XHCI_CMD_RING_TRBS - 1u].control = (XHCI_TRB_LINK << XHCI_TRB_TYPE_SHIFT) |
+            XHCI_TRB_TC | (slot->endpoint_cycle ? XHCI_TRB_CYCLE : 0u);
+        slot->endpoint_enqueue = 0;
+        slot->endpoint_cycle ^= 1u;
+    }
+    uint16_t index = slot->endpoint_enqueue++;
+    uint64_t trb_phys = slot->endpoint_ring_phys + (uint64_t)index * sizeof(xhci_trb_t);
+    volatile xhci_trb_t *trb = &((volatile xhci_trb_t *)(uintptr_t)slot->endpoint_ring_phys)[index];
+    trb->parameter_lo = (uint32_t)(uintptr_t)buffer;
+    trb->parameter_hi = (uint32_t)((uint64_t)(uintptr_t)buffer >> 32);
+    trb->status = length;
+    trb->control = (XHCI_TRB_NORMAL << XHCI_TRB_TYPE_SHIFT) | XHCI_TRB_IOC |
+                   (slot->endpoint_cycle ? XHCI_TRB_CYCLE : 0u);
+    __asm__ volatile("mfence" ::: "memory");
+    volatile uint8_t *base = (volatile uint8_t *)(uintptr_t)c->bar0;
+    uint32_t db_off = *(volatile uint32_t *)(base + XHCI_DBOFF) & ~0x3u;
+    *(volatile uint32_t *)(base + db_off + (uint32_t)slot_id * 4u) = slot->endpoint_id;
+    return wait_transfer(c, &runtimes[controller], trb_phys, slot_id,
+                         slot->endpoint_id, length, actual_length);
 }
 
 int xhci_device_attach(size_t controller, uint8_t port, rix_xhci_device_t *out) {

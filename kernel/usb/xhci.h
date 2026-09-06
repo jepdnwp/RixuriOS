@@ -15,6 +15,13 @@ typedef struct {
 typedef struct { uint8_t connected, enabled, speed, reset_complete; } rix_xhci_port_status_t;
 typedef struct { uint8_t slot_id, port, speed, state; } rix_xhci_device_t;
 typedef struct { uint8_t request_type, request; uint16_t value, index, length; } rix_usb_setup_packet_t;
+typedef struct {
+    uint8_t endpoint_address;
+    uint8_t attributes;
+    uint16_t max_packet_size;
+    uint8_t interval;
+    uint8_t max_burst;
+} rix_xhci_endpoint_config_t;
 
 #define RIX_XHCI_DEVICE_ADDRESSED 2u
 
@@ -41,3 +48,7 @@ int xhci_enumerate_device(size_t controller, uint8_t slot,
                           rix_usb_interface_info_t *interfaces, size_t interface_capacity,
                           rix_usb_endpoint_info_t *endpoints, size_t endpoint_capacity,
                           size_t *interface_count, size_t *endpoint_count);
+int xhci_configure_endpoint(size_t controller, uint8_t slot,
+                            const rix_xhci_endpoint_config_t *config);
+int xhci_interrupt_transfer(size_t controller, uint8_t slot, void *buffer,
+                            uint16_t length, uint16_t *actual_length);
