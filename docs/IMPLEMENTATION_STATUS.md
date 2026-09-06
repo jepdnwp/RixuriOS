@@ -101,3 +101,9 @@ Phase 15 continuation: add device-manager policy around port-event attach/detach
 - Added automatic configuration of parsed interrupt and bulk endpoints; control and isochronous endpoints are explicitly left outside this policy until their dedicated paths are qualified.
 - Enumeration or endpoint-configuration failure now triggers device cleanup through slot detach rather than leaving an addressed but unmanaged device.
 - QEMU has no xHCI controller, so the new path is build-validated but not hardware-exercised.
+
+## Latest continuation — Phase 16 report-protocol polling
+
+- Added report-ID aware xHCI interrupt-IN polling wrappers for keyboard and mouse devices.
+- The wrappers preserve transfer errors and actual-length reporting, then route reports through the existing report-ID validation and rollover-safe parsers.
+- Phase 15 remains `IMPLEMENTED / NOT YET VALIDATED` because real xHCI controller evidence and the completion-code-11 regression gate are still open; Phase 16 source work has now resumed without claiming hardware completion.

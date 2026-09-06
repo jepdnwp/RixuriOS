@@ -46,3 +46,13 @@ int hid_xhci_keyboard_poll(size_t controller, uint8_t slot, uint8_t endpoint_add
 int hid_xhci_mouse_poll(size_t controller, uint8_t slot, uint8_t endpoint_address,
                         uint8_t *report, uint16_t report_capacity,
                         rix_hid_mouse_report_t *out, uint16_t *actual_length);
+/* Report-ID aware interrupt-IN polling for HID report-protocol devices. */
+int hid_xhci_keyboard_poll_protocol(size_t controller, uint8_t slot,
+                                    uint8_t endpoint_address, unsigned tty_id,
+                                    uint8_t report_id, uint8_t *report,
+                                    uint16_t report_capacity, uint16_t *actual_length);
+int hid_xhci_mouse_poll_protocol(size_t controller, uint8_t slot,
+                                 uint8_t endpoint_address, uint8_t report_id,
+                                 uint8_t *report, uint16_t report_capacity,
+                                 rix_hid_mouse_report_t *out,
+                                 uint16_t *actual_length);

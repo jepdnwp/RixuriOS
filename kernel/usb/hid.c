@@ -213,4 +213,31 @@ int hid_xhci_mouse_poll(size_t controller, uint8_t slot, uint8_t endpoint_addres
     if (received > UINT8_MAX) return -2;
     return hid_mouse_report(report, (uint8_t)received, out);
 }
+
+int hid_xhci_keyboard_poll_protocol(size_t controller, uint8_t slot,
+                                    uint8_t endpoint_address, unsigned tty_id,
+                                    uint8_t report_id, uint8_t *report,
+                                    uint16_t report_capacity, uint16_t *actual_length) {
+    if (!report || report_capacity == 0u) return -1;
+    uint16_t received = 0;
+    int rc = xhci_interrupt_transfer(controller, slot, endpoint_address, report,
+                                      report_capacity, &received);
+    if (actual_length) *actual_length = received;
+    if (rc != 0) return rc;
+    return hid_keyboard_report_protocol(tty_id, report, received, report_id);
+}
+
+int hid_xhci_mouse_poll_protocol(size_t controller, uint8_t slot,
+                                 uint8_t endpoint_address, uint8_t report_id,
+                                 uint8_t *report, uint16_t report_capacity,
+                                 rix_hid_mouse_report_t *out,
+                                 uint16_t *actual_length) {
+    if (!report || !out || report_capacity == 0u) return -1;
+    uint16_t received = 0;
+    int rc = xhci_interrupt_transfer(controller, slot, endpoint_address, report,
+                                      report_capacity, &received);
+    if (actual_length) *actual_length = received;
+    if (rc != 0) return rc;
+    return hid_mouse_report_protocol(report, received, report_id, out);
+}
 #endif
