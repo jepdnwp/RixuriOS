@@ -434,3 +434,8 @@ python3 scripts/qemu_phase19_extended_test.py
 The complete run also preserved the explicit xargs continuation regression. Real QEMU showed NVMe boot and RixFS mount, `/cwd19` cwd changes, relative file creation, failed `cd` without cwd mutation, `seq`/`tee` pipeline output, `basename`, `dirname`, realtime `date`, root identity output, non-empty `rmdir` failure, cleanup, and prompt recovery. No `PAGE FAULT`, `CPU exception`, `PANIC`, timeout or prompt loss was observed.
 
 Phase 19 remains **IMPLEMENTED / QEMU-VALIDATED** for the expanded practical utility and shell-integration scope. Remaining intentional limitations are documented bounded semantics, root-only credentials, unsupported advanced options, no physical-hardware evidence in this task, and the deferred `df`, `free`, `dmesg`, `mount`, and `umount` APIs.
+
+
+## Phase 20 transition — 2026-09-07
+
+Phase 20, **Users, Groups, Credentials and Security Model**, is now **IN PROGRESS / DESIGN BASELINE RECORDED**. The current kernel has UID/GID fields and RixFS owner/mode metadata, but permission enforcement, credential transitions, supplementary groups, and environment sanitization are not yet complete. The implementation contract and evidence gates are recorded in [`docs/PHASE20_SECURITY_DESIGN.md`](PHASE20_SECURITY_DESIGN.md). The requested colored `username@computer-name ~(directory) :` prompt is intentionally deferred until Phase 20 is complete so prompt presentation cannot be mistaken for the security identity source of truth.
