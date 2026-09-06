@@ -45,6 +45,9 @@ int xhci_control_transfer(size_t controller, uint8_t slot,
 int xhci_get_descriptor(size_t controller, uint8_t slot, uint8_t descriptor_type,
                         uint8_t descriptor_index, uint16_t language_id,
                         void *buffer, uint16_t length, uint16_t *actual_length);
+int xhci_get_hid_report_descriptor(size_t controller, uint8_t slot,
+                                   uint8_t interface_number, void *buffer,
+                                   uint16_t length, uint16_t *actual_length);
 int xhci_enumerate_device(size_t controller, uint8_t slot,
                           rix_usb_device_descriptor_t *device,
                           uint8_t *configuration, uint16_t configuration_capacity,

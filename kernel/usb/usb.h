@@ -6,6 +6,8 @@
 #define RIX_USB_DESC_CONFIGURATION 2u
 #define RIX_USB_DESC_INTERFACE 4u
 #define RIX_USB_DESC_ENDPOINT 5u
+#define RIX_USB_DESC_HID 0x21u
+#define RIX_USB_DESC_HID_REPORT 0x22u
 #define RIX_USB_EP_TRANSFER_MASK 0x03u
 #define RIX_USB_EP_CONTROL 0u
 #define RIX_USB_EP_ISOCHRONOUS 1u
@@ -43,6 +45,10 @@ typedef struct {
     uint8_t subclass;
     uint8_t protocol;
     uint8_t endpoint_count;
+    uint8_t hid_descriptor_present;
+    uint8_t hid_country_code;
+    uint16_t hid_version;
+    uint16_t hid_report_descriptor_length;
 } rix_usb_interface_info_t;
 
 typedef struct {

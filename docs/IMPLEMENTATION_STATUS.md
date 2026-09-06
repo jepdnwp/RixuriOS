@@ -49,6 +49,7 @@ The current source tree has now passed a clean strict build and a real UEFI-to-k
 - Generalized each slot to retain independent endpoint runtime state for all non-control DCIs, allowing composite devices to configure and use multiple interrupt/bulk endpoints concurrently; transfer wrappers now take the endpoint address explicitly.
 - Connected the existing boot keyboard/mouse report parsers to interrupt-IN transfers through `hid_xhci_keyboard_poll()` and `hid_xhci_mouse_poll()` adapters.
 - Added a bounds-checked HID short/long-item report descriptor parser that identifies keyboard/mouse usages, report IDs and aggregate input size, with malformed/truncated host tests.
+- Added `xhci_get_hid_report_descriptor()` for the USB class-specific interface `GET_DESCRIPTOR` request (`0x81`, descriptor type `0x22`), connecting enumeration metadata to the HID report parser.
 - Added `xhci_poll_port_status_change()` for cycle-aware, non-destructive event-ring peeking that consumes only Port Status Change Events and reports the current connection state.
 
 This remains `IMPLEMENTED / NOT YET VALIDATED`. The control-transfer, multi-endpoint, HID adapter and port-event paths are source/build validated but not hardware-exercised: QEMU reported zero xHCI controllers. Device-manager policy for automatic attach/enumeration after a port event, hardware evidence and the historical completion-code-11 regression remain open.

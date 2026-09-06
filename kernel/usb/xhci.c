@@ -707,6 +707,20 @@ int xhci_get_descriptor(size_t controller, uint8_t slot_id, uint8_t descriptor_t
     return xhci_control_transfer(controller, slot_id, &setup, buffer, actual_length);
 }
 
+int xhci_get_hid_report_descriptor(size_t controller, uint8_t slot_id,
+                                   uint8_t interface_number, void *buffer,
+                                   uint16_t length, uint16_t *actual_length) {
+    if (interface_number >= 32u || length == 0u || !buffer) return -1;
+    rix_usb_setup_packet_t setup = {
+        .request_type = 0x81u,
+        .request = 6u,
+        .value = (uint16_t)((uint16_t)RIX_USB_DESC_HID_REPORT << 8),
+        .index = interface_number,
+        .length = length
+    };
+    return xhci_control_transfer(controller, slot_id, &setup, buffer, actual_length);
+}
+
 int xhci_enumerate_device(size_t controller, uint8_t slot_id,
                           rix_usb_device_descriptor_t *device,
                           uint8_t *configuration, uint16_t configuration_capacity,

@@ -45,6 +45,9 @@ static int scan_configuration(const uint8_t *data, size_t total_length,
             if (descriptor_length < 9u) return -2;
             interface_count++;
             have_interface = 1;
+        } else if (descriptor[1] == RIX_USB_DESC_HID) {
+            if (descriptor_length < 9u || !have_interface || descriptor[5] == 0u ||
+                descriptor[6] != RIX_USB_DESC_HID_REPORT) return -3;
         } else if (descriptor[1] == RIX_USB_DESC_ENDPOINT) {
             if (descriptor_length < 7u || !have_interface ||
                 (descriptor[2] & 0x70u) != 0u) return -3;
@@ -100,7 +103,19 @@ int usb_parse_configuration_descriptor(const uint8_t *data, size_t length,
             interface->class_code = descriptor[5];
             interface->subclass = descriptor[6];
             interface->protocol = descriptor[7];
+            interface->hid_descriptor_present = 0;
+            interface->hid_country_code = 0;
+            interface->hid_version = 0;
+            interface->hid_report_descriptor_length = 0;
             current_interface = actual_interfaces++;
+        } else if (descriptor[1] == RIX_USB_DESC_HID) {
+            rix_usb_interface_info_t *interface = &interfaces[current_interface];
+            if (!interface->hid_descriptor_present) {
+                interface->hid_descriptor_present = 1;
+                interface->hid_version = le16(descriptor + 2u);
+                interface->hid_country_code = descriptor[4];
+                interface->hid_report_descriptor_length = le16(descriptor + 7u);
+            }
         } else if (descriptor[1] == RIX_USB_DESC_ENDPOINT) {
             rix_usb_endpoint_info_t *endpoint = &endpoints[actual_endpoints++];
             endpoint->address = descriptor[2];
