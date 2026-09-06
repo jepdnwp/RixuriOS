@@ -49,7 +49,7 @@ void syscall_dispatch(rix_syscall_frame_t*frame){
    if(rc==-2&&got==0){result=(int64_t)done;break;}
    if(rc!=0&&!(rc==-3&&got)){result=done?((int64_t)done):-(int64_t)RIX_EINVAL;break;}
    if(got&&copy_to_user(dst+done,b,got)!=0){result=done?((int64_t)done):-(int64_t)RIX_EFAULT;break;}
-   done+=got;if(got<n)break;
+   done+=got;if(got<n){result=(int64_t)done;break;}
   }
   if(done==len||len==0||done>0)result=(int64_t)done;
   break;
@@ -63,6 +63,7 @@ void syscall_dispatch(rix_syscall_frame_t*frame){
  case RIX_SYS_PIPE:{int fds[2];if(vfs_pipe(self,&fds[0],&fds[1])!=0){result=-RIX_EINVAL;break;}if(copy_to_user(frame->rdi,fds,sizeof(fds))!=0){(void)vfs_close(self,fds[0]);(void)vfs_close(self,fds[1]);result=-RIX_EFAULT;break;}result=0;break;}
  case RIX_SYS_OPENAT:{char path[RIX_VFS_PATH_MAX];if(user_string(frame->rsi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}int fd;if(vfs_open(self,path,(uint32_t)frame->rdx,(uint32_t)frame->r10,&fd)!=0)result=-RIX_EINVAL;else result=fd;break;}
  case RIX_SYS_MKDIR:{char path[RIX_VFS_PATH_MAX];if(user_string(frame->rdi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}result=vfs_mkdir(path,(uint32_t)frame->rsi,0,0)==0?0:-RIX_EINVAL;break;}
+ case RIX_SYS_RMDIR:{char path[RIX_VFS_PATH_MAX];if(user_string(frame->rdi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}result=vfs_rmdir(path)==0?0:-RIX_EINVAL;break;}
  case RIX_SYS_UNLINK:{char path[RIX_VFS_PATH_MAX];if(user_string(frame->rdi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}result=vfs_unlink(path)==0?0:-RIX_EINVAL;break;}
  case RIX_SYS_GETDENTS:{if(frame->rdx==0||frame->rdx>16u){result=-RIX_EINVAL;break;}uint64_t offset=0;size_t count=0;for(size_t i=0;i<(size_t)frame->rdx;i++){rix_vfs_dirent_t entry;char name[RIX_VFS_NAME_MAX+1];int rc=vfs_readdir(self,(int)frame->rdi,&offset,&entry,name,sizeof(name));if(rc!=0)break;struct {uint64_t inode;uint8_t type;char name[RIX_VFS_NAME_MAX+1];} user_entry={entry.inode,entry.type,{0}};size_t n=0;while(n<RIX_VFS_NAME_MAX&&name[n]){user_entry.name[n]=name[n];++n;}if(copy_to_user(frame->rsi+count*sizeof(user_entry),&user_entry,sizeof(user_entry))!=0){result=-RIX_EFAULT;break;}++count;}if(result!=-RIX_EFAULT){if(copy_to_user(frame->r10,&count,sizeof(count))!=0)result=-RIX_EFAULT;else result=(int64_t)count;}break;}
  case RIX_SYS_CLOSE:if(vfs_close(self,(int)frame->rdi)!=0)result=-RIX_EINVAL;else result=0;break;

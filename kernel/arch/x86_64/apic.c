@@ -10,6 +10,7 @@
 #define APIC_REG_SVR 0x0F0
 #define APIC_SVR_ENABLE (1u << 8)
 #define PTE_FLAGS (RIXURI_PTE_PRESENT | RIXURI_PTE_WRITE | RIXURI_PTE_NX)
+#define LAPIC_VIRTUAL_BASE 0xFFFF8000FEE00000ULL
 
 static volatile uint32_t *lapic_mmio;
 
@@ -30,8 +31,8 @@ int lapic_init(void) {
     if (!(base_msr & APIC_ENABLE)) {
         x86_wrmsr(IA32_APIC_BASE_MSR, base_msr | APIC_ENABLE);
     }
-    if (vmm_map_page(base, base, PTE_FLAGS) != 0) return -1;
-    lapic_mmio = (volatile uint32_t *)(uintptr_t)base;
+    if (vmm_map_page(LAPIC_VIRTUAL_BASE, base, PTE_FLAGS) != 0) return -1;
+    lapic_mmio = (volatile uint32_t *)(uintptr_t)LAPIC_VIRTUAL_BASE;
     lapic_write(APIC_REG_SVR, APIC_SVR_ENABLE | RIXURI_LAPIC_SPURIOUS_VECTOR);
     lapic_eoi();
     return 0;

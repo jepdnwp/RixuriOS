@@ -38,3 +38,4 @@ int vfs_readdir(uint64_t pid,int fd,uint64_t *offset,rix_vfs_dirent_t *out,char 
 int vfs_stat(const char *path,rix_vnode_t *out);
 int vfs_mkdir(const char *path,uint32_t mode,uint32_t uid,uint32_t gid);
 int vfs_unlink(const char *path);
+int vfs_rmdir(const char *path);

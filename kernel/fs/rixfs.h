@@ -28,6 +28,7 @@ int rixfs_truncate(rixfs_t *fs,uint64_t inode,uint64_t new_size);
 int rixfs_create(rixfs_t *fs,uint64_t dir_inode,const char *name,uint32_t mode,uint32_t uid,uint32_t gid,uint64_t *out_inode);
 int rixfs_mkdir(rixfs_t *fs,uint64_t dir_inode,const char *name,uint32_t mode,uint32_t uid,uint32_t gid,uint64_t *out_inode);
 int rixfs_unlink(rixfs_t *fs,uint64_t dir_inode,const char *name);
+int rixfs_rmdir(rixfs_t *fs,uint64_t dir_inode,const char *name);
 int rixfs_sync(rixfs_t *fs);
 int rixfs_fsck(rix_block_device_t *device,uint64_t *checked_inodes,uint64_t *referenced_sectors);
 void rixfs_unmount(rixfs_t *fs);

@@ -12,6 +12,7 @@
 #define RIX_SYS_EXECVE 59
 #define RIX_SYS_STAT 4
 #define RIX_SYS_MKDIR 83
+#define RIX_SYS_RMDIR 84
 #define RIX_SYS_UNLINK 87
 #define RIX_SYS_GETDENTS 78
 #define RIX_SYS_POLL 7
