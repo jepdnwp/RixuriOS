@@ -221,3 +221,5 @@ after-bg
 ```
 
 The result is evidence that `/bin/sleep 0 &` completed and was collected through the shell’s `waitpid(..., WNOHANG)` polling path.
+
+The new `/usr/bin/proc-test` reached `proc:pipe-after` but hung before `proc:fork-after` when forking with both pipe descriptors open. This is a real fork-after-pipe regression, not a PASS: the blocked-reader/writer stress path is therefore still open and the diagnostic utility is retained to reproduce it.
