@@ -30,3 +30,7 @@ USER: init returned to kernel
 This closes the current generic **CP1 BUILD** and **CP3 BOOT** evidence for the kernel/UEFI and embedded ring-3 smoke path. It does not close hardware checkpoints. In particular, QEMU exposed zero NVMe and xHCI controllers in this run, so no NVMe I/O, xHCI completion, HID transfer, hotplug, or physical-device behavior is claimed. The bounded timeout is expected because the kernel remains alive after returning from the one-shot embedded init process.
 
 The generated artifacts are `build/kernel.elf`, `build/uefi/esp.img`, and `build/qemu-serial.log`. They are build outputs and are intentionally not source-controlled unless a release process later defines artifact retention.
+
+## 2026-09-06 — USB descriptor parser foundation
+
+The next Phase 15 increment adds a freestanding USB descriptor parser for device and configuration descriptors. It validates descriptor lengths, total configuration bounds, interface/endpoint ordering, endpoint-address reserved bits, caller capacities, and malformed/truncated inputs. The parser is compiled into the kernel and exercised independently through `make test CROSS=` with positive and negative host-side cases. This is parser evidence only; no USB controller or HID transfer completion is claimed.
