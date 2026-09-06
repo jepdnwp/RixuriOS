@@ -75,3 +75,10 @@ This remains `IMPLEMENTED / NOT YET VALIDATED`. The control-transfer, multi-endp
 ## Next phase
 
 Phase 15 continuation: add device-manager policy around port-event attach/detach, exercise enumeration/interrupt/bulk/HID transfers on a controller-backed target, and add hardware-backed negative-path tests. Phase 16 HID report protocol work follows hardware qualification.
+
+## Latest continuation — Phase 15 hotplug policy integration
+
+- Connected the existing `xhci_service_hotplug()` attach/detach policy to the kernel startup path through a bounded per-controller hotplug probe.
+- The probe consumes pending Port Status Change Events and records attach/detach controller, port and slot diagnostics without fabricating device enumeration evidence.
+- A continuously scheduled worker was intentionally not introduced because the current cooperative scheduler’s runtime worker/user transition still requires a separate regression fix; QEMU remains clean with the bounded startup probe.
+- Runtime controller-backed enumeration, endpoint configuration, HID polling and negative-path hardware evidence remain open.
