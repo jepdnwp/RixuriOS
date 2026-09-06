@@ -347,3 +347,8 @@ An isolated second-fork regression reproduced the failure without xargs or child
 ## Fork/address-space redesign
 
 The implementation design for removing physical identity-mapping assumptions from `fork` and address-space construction is recorded in [`FORK_ADDRESS_SPACE_DESIGN.md`](FORK_ADDRESS_SPACE_DESIGN.md). It defines the kernel mapping window, ownership metadata, transactional clone rollback, CR3 sequencing, kernel-stack policy and QEMU acceptance gates. This is design-only until the phased implementation passes the listed harness cases.
+
+
+## Fork/address-space redesign Phase A — in progress
+
+A strict-build-safe `vmm_phys_ptr()` boundary was added and address-space table access now goes through it. This is an API/validation seam, not yet the permanent mapping window described by the design; it still uses the existing identity-mapped physical region. QEMU fork/xargs acceptance remains open until the real mapped window replaces that fallback.

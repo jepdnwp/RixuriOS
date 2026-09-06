@@ -1188,3 +1188,6 @@ Add a standalone QEMU case where the second-fork child executes only `_exit(7)`.
 ### Fork/address-space redesign
 
 Implement the phased design in [`docs/FORK_ADDRESS_SPACE_DESIGN.md`](FORK_ADDRESS_SPACE_DESIGN.md): first introduce a permanent kernel page-table mapping window, then ownership journals and transactional clone rollback, followed by kernel-stack/scratch-storage hardening and the minimal fork-return regression. Only after those gates pass should xargs be re-enabled as the final pipeline acceptance test.
+
+
+Phase A has started with a checked `vmm_phys_ptr()` access boundary. The next implementation step is to back this boundary with a permanent mapped kernel window; the current identity fallback is deliberately not considered a fork/xargs fix.
