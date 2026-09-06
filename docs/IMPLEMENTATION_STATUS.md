@@ -240,3 +240,9 @@ The tested external-command, argv/envp, redirection, pipeline, conditional, and 
 - The real QEMU serial harness now waits for embedded init completion and isolates every run with private RixFS and UEFI ESP/NVRAM copies.
 - A blocking `/bin/cat` was interrupted with raw Ctrl-C, Ctrl-Z, and Ctrl-\\ bytes in separate QEMU runs; each run returned to the shell prompt without a CPU exception, page fault, or panic.
 - The observed result is limited to interruption and prompt recovery. No stopped-job notification, signal-specific exit status, or complete POSIX job-control policy is claimed.
+
+## Latest continuation — Phase D pipe/fork/reap stress — 2026-09-06
+
+- Added `/usr/bin/pipe-stress` and an isolated QEMU harness. Eight standalone rounds of blocked-reader pipe activity, payload readback, fork, `waitpid(WNOHANG)`, and reap passed with no fault marker.
+- The current evidence is `QEMU-VALIDATED` for the standalone 512-byte blocked-reader/reap scenario only.
+- Full-pipe writer backpressure is not implemented: a >4096-byte two-write attempt stalled, so the tentative VFS retry change was reverted. Running `proc-test` immediately before `pipe-stress` also exposed an invalid-opcode exception at `rip=0xb0000`; broader task/page-table reuse qualification therefore remains open.

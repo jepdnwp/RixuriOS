@@ -291,3 +291,17 @@ qemu foreground signal tests: PASS
 ```
 
 These are runtime observations that the blocking foreground command was interrupted sufficiently for the shell to regain its prompt. No stopped-job notification, signal-specific exit-status display, or full POSIX job-control semantics was observed; those remain outside this evidence boundary. Raw logs are `build/qemu-signal-ctrl-c.log`, `build/qemu-signal-ctrl-z.log`, and `build/qemu-signal-ctrl-backslash.log`.
+
+## 2026-09-06 — Phase D repeated pipe/fork/reap stress
+
+Added `/usr/bin/pipe-stress`, which performs eight consecutive pipe/fork/read/write/close/reap rounds. Each round deliberately reads before the writer has necessarily run, exercising the existing blocked-reader scheduler path; it also performs a child `waitpid(WNOHANG)` probe followed by reap. The strict host suite and image build passed, and an isolated real-QEMU run produced:
+
+```text
+pipe-stress:begin
+pipe-stress:blocked-reader-pass
+pipe-stress:fork-reap-pass
+pipe-stress:PASS
+qemu pipe stress test: PASS
+```
+
+The stress utility uses a 512-byte payload because the current pipe implementation does not yet provide a blocking full-pipe writer contract. A separate attempt to send more than the 4096-byte channel capacity stalled before the PASS marker; the proposed VFS retry/yield change was reverted and is not part of the implementation. In addition, running the existing `proc-test` first and then launching `pipe-stress` produced `CPU exception vector=6 ... rip=0x00000000000b0000` before the stress PASS marker. Therefore Phase D is **partially validated only**: standalone repeated blocked-reader and reap behavior passed, while blocked-writer backpressure and cross-test page-table/task reuse remain open blockers.
