@@ -45,6 +45,11 @@ int main(void) {
     if (expect(tty_set_canonical(0, 1) == 0 && tty_input(0, 3) == 0 &&
                 seen_group == 42 && seen_signal == 2,
                 "CTRL-C sends SIGINT to foreground group")) return 1;
+    if (expect(tty_set_session(0, 42, 1) == 0, "set controlling session")) return 1;
+    uint32_t session = 0;
+    int controlling = 0;
+    if (expect(tty_get_session(0, &session, &controlling) == 0 && session == 42 &&
+                controlling, "get controlling session")) return 1;
     if (expect(tty_set_dimensions(0, 24, 80) == 0 &&
                 tty_output(0, "\x1b[5;10H", 7, &written) == 0 && written == 7,
                 "ANSI cursor sequence")) return 1;

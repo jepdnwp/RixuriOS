@@ -162,6 +162,8 @@ void tty_init(void) {
         vt_clear_screen(t);
         t->canonical = 1;
         t->echo = 1;
+        t->controlling = 0;
+        t->session = 0;
         t->foreground_pgrp = 0;
     }
     for (unsigned i = 0; i < RIX_PTY_COUNT; ++i) ptys[i].opened = 0;
@@ -293,6 +295,23 @@ int tty_get_foreground_pgrp(unsigned id, uint32_t *pgrp) {
     return 0;
 }
 
+int tty_set_session(unsigned id, uint32_t session, int controlling) {
+    rix_tty_t *t = tty_valid(id);
+    if (!t || (controlling && session == 0u)) return -1;
+    t->session = session;
+    t->controlling = controlling ? 1u : 0u;
+    if (!t->controlling) t->foreground_pgrp = 0;
+    return 0;
+}
+
+int tty_get_session(unsigned id, uint32_t *session, int *controlling) {
+    rix_tty_t *t = tty_valid(id);
+    if (!t || !session || !controlling) return -1;
+    *session = t->session;
+    *controlling = t->controlling != 0u;
+    return 0;
+}
+
 int tty_set_dimensions(unsigned id, uint16_t rows, uint16_t columns) {
     rix_tty_t *t = tty_valid(id);
     if (!t || rows == 0u || columns == 0u || rows > RIX_TTY_MAX_ROWS ||
@@ -378,6 +397,8 @@ int tty_pty_open(unsigned *pty_id) {
         vt_clear_screen(&ptys[i].slave);
         ptys[i].slave.canonical = 1;
         ptys[i].slave.echo = 1;
+        ptys[i].slave.controlling = 0;
+        ptys[i].slave.session = 0;
         ptys[i].slave.foreground_pgrp = 0;
         ptys[i].master_output_head = 0;
         ptys[i].master_output_tail = 0;

@@ -30,6 +30,8 @@ typedef struct {
     uint8_t screen[RIX_TTY_MAX_ROWS * RIX_TTY_MAX_COLUMNS];
     uint8_t canonical;
     uint8_t echo;
+    uint8_t controlling;
+    uint32_t session;
     uint32_t foreground_pgrp;
 } rix_tty_t;
 
@@ -43,6 +45,8 @@ int tty_set_canonical(unsigned id, int enabled);
 int tty_set_echo(unsigned id, int enabled);
 int tty_set_foreground_pgrp(unsigned id, uint32_t pgrp);
 int tty_get_foreground_pgrp(unsigned id, uint32_t *pgrp);
+int tty_set_session(unsigned id, uint32_t session, int controlling);
+int tty_get_session(unsigned id, uint32_t *session, int *controlling);
 typedef int (*tty_signal_hook_t)(uint32_t process_group, unsigned signal);
 void tty_set_signal_hook(tty_signal_hook_t hook);
 int tty_set_dimensions(unsigned id, uint16_t rows, uint16_t columns);
