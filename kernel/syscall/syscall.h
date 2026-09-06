@@ -5,6 +5,9 @@
 #define RIX_SYS_OPENAT 2
 #define RIX_SYS_CLOSE 3
 #define RIX_SYS_STAT 4
+#define RIX_SYS_MKDIR 83
+#define RIX_SYS_UNLINK 87
+#define RIX_SYS_GETDENTS 78
 #define RIX_SYS_POLL 7
 #define RIX_SYS_MMAP 9
 #define RIX_SYS_MPROTECT 10
