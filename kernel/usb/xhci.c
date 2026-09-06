@@ -634,6 +634,38 @@ int xhci_get_descriptor(size_t controller, uint8_t slot_id, uint8_t descriptor_t
     return xhci_control_transfer(controller, slot_id, &setup, buffer, actual_length);
 }
 
+int xhci_enumerate_device(size_t controller, uint8_t slot_id,
+                          rix_usb_device_descriptor_t *device,
+                          uint8_t *configuration, uint16_t configuration_capacity,
+                          rix_usb_configuration_info_t *configuration_info,
+                          rix_usb_interface_info_t *interfaces, size_t interface_capacity,
+                          rix_usb_endpoint_info_t *endpoints, size_t endpoint_capacity,
+                          size_t *interface_count, size_t *endpoint_count) {
+    if (!device || !configuration || !configuration_info || configuration_capacity < 9u ||
+        !interface_count || !endpoint_count) return -1;
+    uint8_t device_bytes[18];
+    uint16_t actual = 0;
+    int rc = xhci_get_descriptor(controller, slot_id, RIX_USB_DESC_DEVICE, 0, 0,
+                                  device_bytes, sizeof(device_bytes), &actual);
+    if (rc != 0 || actual < sizeof(device_bytes) ||
+        usb_parse_device_descriptor(device_bytes, actual, device) != 0) return -2;
+
+    rc = xhci_get_descriptor(controller, slot_id, RIX_USB_DESC_CONFIGURATION, 0, 0,
+                              configuration, 9u, &actual);
+    if (rc != 0 || actual < 9u || configuration[1] != RIX_USB_DESC_CONFIGURATION) return -3;
+    uint16_t total_length = (uint16_t)configuration[2] |
+                            ((uint16_t)configuration[3] << 8);
+    if (total_length < 9u || total_length > configuration_capacity) return -4;
+    rc = xhci_get_descriptor(controller, slot_id, RIX_USB_DESC_CONFIGURATION, 0, 0,
+                              configuration, total_length, &actual);
+    if (rc != 0 || actual < total_length) return -5;
+    if (usb_parse_configuration_descriptor(configuration, actual, configuration_info,
+                                           interfaces, interface_capacity, endpoints,
+                                           endpoint_capacity, interface_count,
+                                           endpoint_count) != 0) return -6;
+    return 0;
+}
+
 int xhci_device_attach(size_t controller, uint8_t port, rix_xhci_device_t *out) {
     if (!out || controller >= count) return -1;
     rix_xhci_port_status_t status;

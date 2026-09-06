@@ -1,6 +1,7 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
+#include "usb.h"
 
 typedef struct {
     uint8_t bus, device, function;
@@ -33,3 +34,10 @@ int xhci_control_transfer(size_t controller, uint8_t slot,
 int xhci_get_descriptor(size_t controller, uint8_t slot, uint8_t descriptor_type,
                         uint8_t descriptor_index, uint16_t language_id,
                         void *buffer, uint16_t length, uint16_t *actual_length);
+int xhci_enumerate_device(size_t controller, uint8_t slot,
+                          rix_usb_device_descriptor_t *device,
+                          uint8_t *configuration, uint16_t configuration_capacity,
+                          rix_usb_configuration_info_t *configuration_info,
+                          rix_usb_interface_info_t *interfaces, size_t interface_capacity,
+                          rix_usb_endpoint_info_t *endpoints, size_t endpoint_capacity,
+                          size_t *interface_count, size_t *endpoint_count);
