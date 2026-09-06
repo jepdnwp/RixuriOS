@@ -4,13 +4,12 @@
 
 #define HID_MOD_LCTRL 0x01u
 #define HID_MOD_LSHIFT 0x02u
-#define HID_MOD_LALT 0x04u
 #define HID_MOD_RCTRL 0x10u
 #define HID_MOD_RSHIFT 0x20u
-#define HID_MOD_RALT 0x40u
 
 static uint8_t modifiers;
 static uint8_t previous[6];
+static uint8_t caps_lock;
 
 static int contains(const uint8_t *keys, uint8_t code) {
     for (size_t i = 0; i < 6; ++i) if (keys[i] == code) return 1;
@@ -52,15 +51,17 @@ static uint8_t key_ascii(uint8_t code, int shift, int caps) {
 static int emit_key(unsigned tty_id, uint8_t code) {
     int shift = (modifiers & (HID_MOD_LSHIFT | HID_MOD_RSHIFT)) != 0u;
     int ctrl = (modifiers & (HID_MOD_LCTRL | HID_MOD_RCTRL)) != 0u;
-    int caps = (modifiers & 0x40u) != 0u;
-    if (code == 0x39u) return 0;
+    if (code == 0x39u) {
+        caps_lock ^= 1u;
+        return 0;
+    }
     if (code >= 0x4Fu && code <= 0x52u) {
         static const char *const seq[] = {"\x1b[C", "\x1b[D", "\x1b[B", "\x1b[A"};
         unsigned i = (unsigned)(code - 0x4Fu);
         for (const char *p = seq[i]; *p; ++p) if (tty_input(tty_id, (uint8_t)*p) != 0) return -2;
         return 0;
     }
-    uint8_t c = key_ascii(code, shift, caps);
+    uint8_t c = key_ascii(code, shift, caps_lock != 0u);
     if (!c) return 0;
     if (ctrl && c >= 'a' && c <= 'z') c = (uint8_t)(c - 'a' + 1u);
     return tty_input(tty_id, c);
@@ -68,13 +69,13 @@ static int emit_key(unsigned tty_id, uint8_t code) {
 
 void hid_init(void) {
     modifiers = 0;
+    caps_lock = 0;
     for (size_t i = 0; i < 6; ++i) previous[i] = 0;
 }
 
 int hid_keyboard_report(unsigned tty_id, const uint8_t *report, uint8_t length) {
     if (!report || length < RIX_HID_BOOT_KEYBOARD_REPORT) return -1;
-    if (report[2] == 0x01u || report[3] == 0x01u || report[4] == 0x01u ||
-        report[5] == 0x01u || report[6] == 0x01u || report[7] == 0x01u) return -2;
+    for (size_t i = 0; i < 6; ++i) if (report[2u + i] >= 0x01u && report[2u + i] <= 0x03u) return -2;
     modifiers = report[0];
     for (size_t i = 0; i < 6; ++i) {
         uint8_t code = report[2u + i];
