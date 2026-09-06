@@ -26,4 +26,5 @@ rix_pid_t waitpid(rix_pid_t child, uint64_t *status, uint32_t options);
 int nanosleep(const rix_timespec_t *request, rix_timespec_t *remaining);
 int execve(const char *path, char *const argv[], char *const envp[]);
 rix_pid_t getpid(void);
+int kill(rix_pid_t pid, uint32_t signal);
 _Noreturn void _exit(int status);

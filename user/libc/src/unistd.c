@@ -21,4 +21,5 @@ rix_pid_t waitpid(rix_pid_t child,uint64_t*status,uint32_t options){return(rix_p
 int nanosleep(const rix_timespec_t *request, rix_timespec_t *remaining){return(int)rix_sys(35,(long)request,(long)remaining,0);}
 int execve(const char *path,char *const argv[],char *const envp[]){return(int)rix_sys(59,(long)path,(long)argv,(long)envp);}
 rix_pid_t getpid(void){return(rix_pid_t)rix_sys(39,0,0,0);}
+int kill(rix_pid_t pid,uint32_t signal){return(int)rix_sys(62,(long)pid,(long)signal,0);}
 _Noreturn void _exit(int status){(void)rix_sys(60,status,0,0);for(;;)__asm__ volatile("hlt");}

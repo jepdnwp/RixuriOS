@@ -86,6 +86,7 @@ void syscall_dispatch(rix_syscall_frame_t*frame){
   result=(int64_t)child;break;
  }
  case RIX_SYS_KILL:if(process_signal_send((pid_t)frame->rdi,(unsigned)frame->rsi)!=0)result=-RIX_ESRCH;else result=0;break;
+ case RIX_SYS_GETPID:result=(int64_t)self;break;
  case RIX_SYS_SIGMASK:if(process_signal_mask(self,frame->rdi)!=0)result=-RIX_EINVAL;else result=0;break;
  case RIX_SYS_SIGPENDING:{uint64_t pending;if(process_signal_pending(self,&pending)!=0||copy_to_user(frame->rdi,&pending,sizeof(pending))!=0)result=-RIX_EFAULT;else result=0;break;}
  case RIX_SYS_NANOSLEEP:{rix_timespec_t request;if(copy_from_user(&request,frame->rdi,sizeof(request))!=0||request.nsec>=1000000000ULL){result=-RIX_EINVAL;break;}if(request.sec>UINT64_MAX/1000000000ULL||request.sec*1000000000ULL>UINT64_MAX-request.nsec){result=-RIX_EINVAL;break;}uint64_t duration=request.sec*1000000000ULL+request.nsec;uint64_t start=time_monotonic_ns();if(duration>UINT64_MAX-start){result=-RIX_EINVAL;break;}uint64_t deadline=start+duration;while(time_monotonic_ns()<deadline){if(syscall_interrupted(self)){result=-RIX_EINTR;break;}scheduler_yield();}if(result!=-(int64_t)RIX_EINTR)result=0;break;}

@@ -430,3 +430,24 @@ qemu environment utilities test: PASS
 ```
 
 The output confirms the current embedded environment, basic formatting, root working-directory model, fixed PATH lookup, and missing-command handling. Full POSIX environment mutation and formatting semantics are not claimed.
+
+## 2026-09-06 — Phase 19 process/system utilities
+
+Added `/usr/bin/kill`, `/usr/bin/ps`, `/usr/bin/uname`, and `/usr/bin/du`, and fixed the missing kernel `getpid` dispatcher case. Real QEMU output included:
+
+```text
+/usr/bin/ps
+PID
+2
+/usr/bin/uname
+RixuriOS
+/usr/bin/du /bin/echo
+20\t/bin/echo
+/usr/bin/du /missing
+du: failed
+/usr/bin/kill 99999
+kill: failed
+qemu process utilities test: PASS
+```
+
+The PID is a real QEMU process result after the dispatcher fix. Full process listing and recursive disk accounting are not claimed.

@@ -300,3 +300,15 @@ The tested external-command, argv/envp, redirection, pipeline, conditional, and 
 - Hardware validation: NOT TESTED; disposable QEMU NVMe image only.
 - Remaining limitations: `env` assignment/command mode, full printf formatting, dynamic cwd, and PATH parsing from environment are unsupported; `which` uses the fixed RixuriOS standard directories.
 - Status: IMPLEMENTED / QEMU-VALIDATED for the observed bounded scenarios.
+
+### 2026-09-06 — Phase 19 process/system utilities: `kill`, `ps`, `uname`, `du`
+
+- Problem: Phase 19 process and basic system utility grubunun kullanıcı programları eksikti; ayrıca libc’de `kill()` vardı ancak `getpid()` syscall dispatch edilmediği için hata kodu PID gibi görünüyordu.
+- Root cause: Eksik utility kaynakları ve kernel syscall dispatcher’da eksik `RIX_SYS_GETPID` case’i.
+- Changed: Added `/usr/bin/kill`, `/usr/bin/ps`, `/usr/bin/uname`, and bounded stat-based `/usr/bin/du`; exposed libc `kill()` and fixed kernel `getpid` dispatch.
+- Files: `kernel/syscall/syscall.c`, `user/libc/include/unistd.h`, `user/libc/src/unistd.c`, `user/programs/kill.c`, `user/programs/ps.c`, `user/programs/uname.c`, `user/programs/du.c`, `scripts/qemu_process_utils_test.py`, `Makefile`.
+- Tests: `make CROSS=x86_64-linux-gnu- test image` passed with strict warnings; host USB/HID/TTY/shell/pipe tests passed.
+- QEMU validation: PASS for PID output, uname output, file-size du output, missing-path errors, invalid PID kill error, shell prompt recovery, and no exception/panic marker.
+- Hardware validation: NOT TESTED; disposable QEMU NVMe image only.
+- Remaining limitations: `ps` lists only the current process, `du` is non-recursive and reports 512-byte blocks, `uname` has no options, and process enumeration/resource statistics are unsupported.
+- Status: IMPLEMENTED / QEMU-VALIDATED for the observed bounded scenarios.
