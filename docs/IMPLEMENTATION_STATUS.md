@@ -312,3 +312,20 @@ The tested external-command, argv/envp, redirection, pipeline, conditional, and 
 - Hardware validation: NOT TESTED; disposable QEMU NVMe image only.
 - Remaining limitations: `ps` lists only the current process, `du` is non-recursive and reports 512-byte blocks, `uname` has no options, and process enumeration/resource statistics are unsupported.
 - Status: IMPLEMENTED / QEMU-VALIDATED for the observed bounded scenarios.
+
+
+## Latest continuation — Phase 19 coreutils increment (2026-09-06)
+
+- Added `/usr/bin/find`, `/usr/bin/xargs`, `/usr/bin/sed` and `/bin/test` sources over the existing `stat`, `getdents`, `read`, `write`, `fork`, `execve` and `wait` libc/syscall surface.
+- Added all four ELF targets to the strict userspace build and disposable RixFS image. The userspace compilation completed with `-Wall -Wextra -Werror`; full UEFI image packaging also completed after installing the environment-only build dependencies.
+- `find` is bounded and recursively traverses real VFS directories, with optional basename filtering and failure propagation. `sed` implements bounded basic `s/old/new/` and `g` substitution for stdin or one file. `test` implements bounded string/unary and integer comparison forms with 0/1/2 status semantics. `xargs` implements bounded whitespace tokenization and one batch `fork`/`execve`/`wait` invocation.
+- The real QEMU boot path passed through NVMe discovery, RixFS mount, `RIXURI:KERNEL_READY`, shell startup and prompt. A dedicated QEMU Phase 19 harness was added for utility and pipeline scenarios.
+- The harness reached the `xargs` pipeline but the prompt closed before completion; this is recorded as a runtime failure, not a PASS. The xargs implementation remains `IMPLEMENTED / NOT YET VALIDATED` pending scheduler/pipe/exec diagnosis. No success is fabricated.
+- `df`, `free`, `dmesg`, `mount` and `umount` remain intentionally unimplemented. The current kernel exposes no stable filesystem free-space/statfs ABI, memory-accounting snapshot ABI, bounded kernel-log reader, or mount namespace/device-management ABI sufficient to implement them honestly.
+
+## Next kernel API design required before system utilities
+
+- Add `statfs`/filesystem-accounting with total, used, free, reserved and block-size fields plus mount identity.
+- Add a read-only kernel log ring with cursor, sequence, severity and loss indication; expose it through a privilege-checked `dmesg` syscall or device.
+- Add memory accounting snapshot fields for physical/free/reserved/cache pages and a versioned `sysinfo`-style syscall for `free`.
+- Add versioned mount/umount syscalls with source, target, filesystem type, flags, ownership, namespace and rollback semantics; unknown/corrupt media must fail without formatting.

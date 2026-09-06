@@ -451,3 +451,14 @@ qemu process utilities test: PASS
 ```
 
 The PID is a real QEMU process result after the dispatcher fix. Full process listing and recursive disk accounting are not claimed.
+
+
+## 2026-09-06 — Phase 19 find/xargs/sed/test strict build and QEMU evidence
+
+The four new userspace programs were compiled through the repository’s freestanding target with `x86_64-linux-gnu-gcc`, `-std=c17 -ffreestanding -fno-stack-protector -fno-pie -mno-red-zone -m64 -Wall -Wextra -Werror -O2`, linked as static ELF images, and passed ELF header/program-header checks. The RixFS image builder included `/usr/bin/find`, `/usr/bin/xargs`, `/usr/bin/sed` and `/bin/test`. UEFI packaging completed and produced `build/uefi/esp.img`; the environment required MinGW, `dosfstools` and `mtools`, which are build dependencies rather than repository changes.
+
+A real QEMU run reached NVMe controller discovery, `VFS: mount nvme0n1 rc=0`, `RIXURI:KERNEL_READY`, `RixuriOS shell ready` and the interactive prompt. The dedicated harness is `scripts/qemu_phase19_utils_test.py` and stores its serial capture in `build/qemu-phase19-utils.log`. The initial commands exercised file creation/append, recursive find, sed in a pipeline, xargs in a pipeline, test with `&&`, `||` and sequential execution, and grep of transformed output.
+
+The harness did not pass. It consistently reached `/bin/echo one two | /usr/bin/xargs /bin/echo` and then lost the shell prompt before completion, with no `CPU exception` or `PANIC` marker in the serial capture. This is a real runtime failure in the xargs pipeline path, not a validation success. The implementation was changed once from per-token child execution to a bounded single-batch child to remove an obvious pipe/wait deadlock, but the same QEMU failure remained. xargs therefore remains `IMPLEMENTED / NOT YET VALIDATED`; a scheduler/pipe/exec runtime diagnosis is required before claiming Phase 19 completion.
+
+The five requested system utilities were not implemented with fake success. Existing headers contain no honest kernel API for filesystem capacity (`statfs`), memory accounting (`sysinfo`), kernel log streaming, or versioned mount namespace operations. Those syscall/data-model requirements are documented in `docs/IMPLEMENTATION_STATUS.md` and the next-step section of `docs/ROADMAP.md`.

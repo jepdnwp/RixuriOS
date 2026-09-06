@@ -1163,3 +1163,10 @@ A feature is complete only when its evidence demonstrates:
 `correct implementation + real execution + integration + failure handling + regression coverage + security review + measured behavior + documentation`.
 
 The detailed checkpoint ledger belongs in `docs/CHECKPOINTS.md`; implementation procedures belong in `docs/IMPLEMENTATION_PLAYBOOK.md`.
+
+
+### Phase 19 continuation — 2026-09-06
+
+The next increment added `/usr/bin/find`, `/usr/bin/xargs`, `/usr/bin/sed` and `/bin/test` over the existing libc and syscall ABI. All four have strict freestanding ELF builds and RixFS image entries. `find` uses recursive `stat`/`getdents`; `sed` uses bounded basic substitution; `test` returns defined 0/1/2 results for its supported forms; and `xargs` uses bounded tokenization plus real fork/exec/wait. A real QEMU boot reached the mounted NVMe/RixFS shell, but the dedicated utility harness lost the prompt at the xargs pipeline. The correct status is therefore `IMPLEMENTED / NOT YET VALIDATED`, not COMPLETE.
+
+`df`, `free`, `dmesg`, `mount` and `umount` are explicitly deferred. The next kernel design step is a versioned `statfs`/mount-accounting ABI, a privilege-checked kernel-log ring reader, a `sysinfo`-style memory snapshot, and mount namespace/device operations with ownership, rollback, and corrupt-media failure semantics. No utility may report fabricated values until those APIs and their negative/QEMU tests exist.
