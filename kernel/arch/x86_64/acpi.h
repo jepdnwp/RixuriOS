@@ -10,6 +10,8 @@ typedef struct { uint8_t id; uint8_t enabled; uint8_t x2apic; uint32_t apic_id; 
 typedef struct { uint8_t id; uint32_t address; uint32_t gsi_base; } acpi_ioapic_info_t;
 typedef struct { uint64_t base; uint16_t segment; uint8_t start_bus; uint8_t end_bus; } acpi_mcfg_info_t;
 
+typedef struct { uint16_t pm1a_control; uint16_t pm1b_control; uint16_t sleep_type_a; uint16_t sleep_type_b; uint8_t available; } acpi_power_info_t;
+
 int acpi_init(uint64_t rsdp_phys);
 size_t acpi_cpu_count(void);
 size_t acpi_ioapic_count(void);
@@ -18,3 +20,4 @@ const acpi_ioapic_info_t *acpi_ioapic(size_t index);
 uint32_t acpi_irq_gsi(uint8_t irq, uint16_t *flags);
 size_t acpi_mcfg_count(void);
 const acpi_mcfg_info_t *acpi_mcfg(size_t index);
+int acpi_power_info(acpi_power_info_t *out);
