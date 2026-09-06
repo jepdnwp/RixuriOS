@@ -4,6 +4,9 @@ static long rix_sys4(long n,long a,long b,long c,long d){long r;register long r1
 rix_ssize_t read(int fd,void*buf,size_t count){return(rix_ssize_t)rix_sys(0,fd,(long)buf,(long)count);}
 rix_ssize_t write(int fd,const void*buf,size_t count){return(rix_ssize_t)rix_sys(1,fd,(long)buf,(long)count);}
 int openat(int dirfd,const char*path,uint32_t flags,uint32_t mode){return(int)rix_sys4(2,dirfd,(long)path,flags,mode);}
+int mkdir(const char *path,uint32_t mode){return(int)rix_sys(83,(long)path,mode,0);}
+int unlink(const char *path){return(int)rix_sys(87,(long)path,0,0);}
+int getdents(int fd,rix_dirent_t *entries,size_t capacity,size_t *count){return(int)rix_sys4(78,fd,(long)entries,capacity,(long)count);}
 int close(int fd){return(int)rix_sys(3,fd,0,0);}
 int pipe(int fds[2]){return(int)rix_sys(22,(long)fds,0,0);}
 int dup(int old_fd){return(int)rix_sys(32,old_fd,0,0);}

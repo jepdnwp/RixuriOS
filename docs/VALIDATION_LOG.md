@@ -201,3 +201,9 @@ after-sleep
 ```
 
 The same run recorded `NVMe: controllers=1`, `VFS: mount nvme0n1 rc=0`, and `RIXURI:KERNEL_READY`, with no exec failure or exception output.
+
+## 2026-09-06 — ABI negative path and first directory utilities
+
+Added the real `/usr/bin/abi-negative` userspace test. Through the NVMe/RixFS shell path it exercised malformed pointers for `openat`, `getdents`, and `nanosleep`, producing `negative_abi=PASS` with no page fault, exception, or kernel crash.
+
+Added real `/bin/ls`, `/bin/mkdir`, and `/bin/rm` implementations over VFS directory APIs. QEMU confirmed `/bin/mkdir /usr/testdir` and `/bin/ls /usr` exposed `testdir`; the attempted `/bin/rm /usr/testdir` correctly failed because the current unlink ABI does not remove directories and no `rmdir` utility exists yet. A subsequent background `sleep 0 &` run launched the command and returned to the prompt, but did not emit `[job] done`; background completion notification remains an open failure/diagnostic target.
