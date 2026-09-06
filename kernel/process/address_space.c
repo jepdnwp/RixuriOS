@@ -1,5 +1,4 @@
 #include "address_space.h"
-#include "kernel.h"
 #include "../mm/pmm.h"
 #include "../mm/vmm.h"
 #include <stdint.h>
@@ -18,15 +17,14 @@ static uint64_t walk_pte(const rix_address_space_t *as,uint64_t va){
 static void free_pt(uint64_t phys){uint64_t*t=ptr(phys);for(unsigned i=0;i<TABLE_COUNT;i++){uint64_t e=t[i];if((e&RIXURI_PTE_PRESENT)&&(e&RIXURI_PTE_OWNED))pmm_free_page(e&PAGE_MASK);}pmm_free_page(phys);}
 static void free_pd(uint64_t phys){uint64_t*t=ptr(phys);for(unsigned i=0;i<TABLE_COUNT;i++){uint64_t e=t[i];if(!(e&RIXURI_PTE_PRESENT))continue;if(e&PTE_PS)continue;if(e&RIXURI_PTE_OWNED)free_pt(e&PAGE_MASK);}pmm_free_page(phys);}
 static void free_pdpt(uint64_t phys){uint64_t*t=ptr(phys);for(unsigned i=0;i<TABLE_COUNT;i++)if((t[i]&(RIXURI_PTE_PRESENT|RIXURI_PTE_OWNED))==(RIXURI_PTE_PRESENT|RIXURI_PTE_OWNED))free_pd(t[i]&PAGE_MASK);pmm_free_page(phys);}
-static void destroy_user_tables(rix_address_space_t *as){if(!as||!as->pml4_phys)return;serial_write("AS destroy pml4=");serial_write_hex(as->pml4_phys);serial_write("\r\n");uint64_t*t=ptr(as->pml4_phys);for(unsigned i=0;i<256;i++)if(t[i]&RIXURI_PTE_PRESENT)free_pdpt(t[i]&PAGE_MASK);pmm_free_page(as->pml4_phys);as->pml4_phys=0;}
+static void destroy_user_tables(rix_address_space_t *as){if(!as||!as->pml4_phys)return;uint64_t*t=ptr(as->pml4_phys);for(unsigned i=0;i<256;i++)if(t[i]&RIXURI_PTE_PRESENT)free_pdpt(t[i]&PAGE_MASK);pmm_free_page(as->pml4_phys);as->pml4_phys=0;}
 
 int address_space_create(rix_address_space_t *as){
  if(!as)return -1;
- as->pml4_phys=0;uint64_t pml4=pmm_alloc_page();if(!pml4)return -1;serial_write("AS create pml4=");serial_write_hex(pml4);serial_write("\r\n");uint64_t*t=ptr(pml4);for(unsigned i=0;i<TABLE_COUNT;i++)t[i]=0;as->pml4_phys=pml4;
- uint64_t kp=vmm_kernel_pml4(),active=vmm_current_pml4();if(active!=kp){serial_write("AS template active=");serial_write_hex(active);serial_write(" kernel=");serial_write_hex(kp);serial_write(" translate=");serial_write_hex(vmm_translate(kp+0x800ULL));serial_write("\r\n");}int switched=active!=kp;if(switched)vmm_switch_pml4(kp);
- uint64_t*kt=ptr(kp);for(unsigned i=256;i<512;i++)t[i]=kt[i];
- if(!(kt[0]&RIXURI_PTE_PRESENT))goto fail;
- uint64_t src_pdpt=kt[0]&PAGE_MASK;uint64_t new_pdpt=pmm_alloc_page();if(!new_pdpt)goto fail;
+ as->pml4_phys=0;uint64_t pml4=pmm_alloc_page();if(!pml4)return -1;uint64_t*t=ptr(pml4);for(unsigned i=0;i<TABLE_COUNT;i++)t[i]=0;as->pml4_phys=pml4;
+ uint64_t kp=vmm_kernel_pml4();uint64_t*kt=ptr(kp);for(unsigned i=256;i<512;i++)t[i]=kt[i];
+ if(!(kt[0]&RIXURI_PTE_PRESENT)){destroy_user_tables(as);return -1;}
+ uint64_t src_pdpt=kt[0]&PAGE_MASK;uint64_t new_pdpt=pmm_alloc_page();if(!new_pdpt){destroy_user_tables(as);return -1;}
  uint64_t*dp=ptr(new_pdpt);for(unsigned i=0;i<TABLE_COUNT;i++)dp[i]=0;t[0]=new_pdpt|RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE|RIXURI_PTE_OWNED;
  uint64_t*sp=ptr(src_pdpt);unsigned built=0;
  for(unsigned i=0;i<TABLE_COUNT;i++){
@@ -34,11 +32,10 @@ int address_space_create(rix_address_space_t *as){
   if(!(e&RIXURI_PTE_PRESENT)){built=i+1;continue;}
   if(e&PTE_PS){dp[i]=e;built=i+1;continue;}
   uint64_t new_pd=pmm_alloc_page();
-  if(!new_pd){for(unsigned j=0;j<built;j++)if(dp[j]&RIXURI_PTE_PRESENT&&!(dp[j]&PTE_PS))free_pd(dp[j]&PAGE_MASK);pmm_free_page(new_pdpt);t[0]=0;pmm_free_page(as->pml4_phys);as->pml4_phys=0;goto restore;}
+  if(!new_pd){for(unsigned j=0;j<built;j++)if(dp[j]&RIXURI_PTE_PRESENT&&!(dp[j]&PTE_PS))free_pd(dp[j]&PAGE_MASK);pmm_free_page(new_pdpt);t[0]=0;pmm_free_page(as->pml4_phys);as->pml4_phys=0;return -1;}
   uint64_t*dst=ptr(new_pd);uint64_t*src=ptr(e&PAGE_MASK);for(unsigned j=0;j<TABLE_COUNT;j++)dst[j]=src[j]&~RIXURI_PTE_OWNED;dp[i]=new_pd|RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE|RIXURI_PTE_OWNED;built=i+1;
  }
- restore:if(switched)vmm_switch_pml4(active);return as->pml4_phys?0:-1;
- fail:destroy_user_tables(as);goto restore;
+ return 0;
 }
 
 static int map_page(rix_address_space_t *as,uint64_t va,uint64_t pa,uint64_t flags,int owned){if(!as||!as->pml4_phys||!user_va(va)||(pa&0xfffULL))return -1;if(address_space_query_flags(as,va)&RIXURI_PTE_PRESENT)return -1;flags|=RIXURI_PTE_PRESENT|RIXURI_PTE_USER;if(owned)flags|=RIXURI_PTE_OWNED;else flags&=~RIXURI_PTE_OWNED;return vmm_map_page_in_pml4(as->pml4_phys,va,pa,flags);}

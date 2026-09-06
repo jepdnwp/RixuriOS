@@ -1,7 +1,6 @@
 #include "pmm.h"
 #include <stddef.h>
 #include <stdint.h>
-extern void serial_write(const char *s);extern void serial_write_hex(uint64_t value);
 
 #define PMM_MAX_PHYS RIXURI_MAX_PHYS_BYTES
 #define PMM_MAX_PAGES RIXURI_MAX_PAGES
@@ -89,7 +88,6 @@ void pmm_free_page(uint64_t physical_address){
     uint64_t page=physical_address/RIXURI_PAGE_SIZE;if(page>=PMM_MAX_PAGES)return;
     uint64_t*managed=&managed_bitmap[page>>6],*used=&page_bitmap[page>>6],*reserved=&reserved_bitmap[page>>6],bit=1ULL<<(page&63ULL);
     if(!(*managed&bit)||!(*used&bit)||(*reserved&bit))return;
-    if(physical_address<0x400000ULL){serial_write("PMM free low=");serial_write_hex(physical_address);serial_write("\r\n");}
     *used&=~bit;++free_pages_count;
 }
 uint64_t pmm_total_pages(void){return total_pages_count;}
