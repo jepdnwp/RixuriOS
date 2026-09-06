@@ -337,3 +337,8 @@ The detailed provisional ABI design for the deferred system utilities is recorde
 ## xargs runtime debug boundary — 2026-09-06
 
 Temporary QEMU diagnostics established that xargs consumes the input pipe to EOF and reaches its child-launch boundary. The subsequent page fault occurs in nested fork/exec address-space setup, not in the xargs tokenizer or the initial pipe read. Experimental CR3 switching and early VMM page-table PMM reservation were tested and reverted after failing to remove the fault. No unverified kernel patch was retained or pushed.
+
+
+## Fork child return-frame boundary — 2026-09-06
+
+An isolated second-fork regression reproduced the failure without xargs or child exec. Context creation and scheduler entry carried the correct user RIP/RSP, but the child faulted on return to user mode with an ASCII string address as RIP. The unresolved area is therefore the syscall ISR/return frame or kernel-stack corruption after context entry, not pipe refcounting. No temporary diagnostics or unverified fix remains in the tree.

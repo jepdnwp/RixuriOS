@@ -1178,3 +1178,8 @@ The provisional syscall/data-model design for this work is maintained in [`docs/
 ### xargs runtime regression follow-up
 
 Before closing the xargs gate, add a focused disposable-image QEMU regression for `fork → execve → wait` with one inherited pipe descriptor and no xargs parsing. Capture PMM allocation/free ownership for every address-space page-table level, verify bootstrap VMM tables cannot be returned by the allocator, and verify the child’s exec replacement leaves inherited descriptors and the parent’s CR3 valid. Then rerun the full xargs pipeline harness.
+
+
+### Minimal fork-return regression
+
+Add a standalone QEMU case where the second-fork child executes only `_exit(7)`. Log the syscall ISR frame pointer, saved user RIP/RSP, and the exact five-word `iretq` frame immediately before `x86_enter_user_context`. Compare parent and child kernel-stack bounds and verify no user buffer write overlaps the frame. This must pass before returning to nested `execve` and xargs.
