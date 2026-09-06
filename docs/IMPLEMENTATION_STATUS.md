@@ -131,4 +131,9 @@ Phase 15 continuation: add device-manager policy around port-event attach/detach
 
 - Added bounded wildcard pathname expansion over caller-provided candidate names, including `*`, `?`, no-match preservation and output-capacity checks.
 - Added shell regression coverage for wildcard matches and no-match behavior.
-- Phase 17/18 source and host-test work remains clean, but neither phase is marked COMPLETE: Phase 17 still lacks real pipe/process execution integration, while Phase 18 still lacks PATH search, exec, builtins, pipelines, redirections and real program composition.
+- Phase 17/18 source and host-test work remains clean, but neither phase is marked COMPLETE: Phase 17 still lacks real process execution integration, while Phase 18 still lacks PATH search, exec, builtins, pipelines, redirections and real program composition.
+
+## Latest continuation — Phase 17 pipe foundation
+
+- Added a bounded `rix_pipe_t` wrapper over the existing IPC channel with explicit read/write ownership, half-close operations and closed-peer error propagation.
+- Linked the pipe object into the kernel build. The current ABI still has no process FD-table duplication, `pipe` syscall, fork/exec path or shell executor, so this is a kernel foundation rather than a completed shell pipeline.
