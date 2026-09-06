@@ -317,3 +317,21 @@ qemu touch test: PASS
 ```
 
 The implementation currently provides create-or-open behavior; timestamp update semantics are not implemented because the current public stat/inode ABI has no timestamp mutation operation.
+
+## 2026-09-06 — Phase 19 `/bin/stat`
+
+The existing kernel `RIX_SYS_STAT` path was exposed through libc as `stat()`, and `/bin/stat` was added to the strict build and image. A real QEMU serial harness created a regular file, inspected that file, inspected `/usr`, checked a missing path, and removed the temporary file. The observed output included:
+
+```text
+inode 26
+type 2
+mode 33188
+size 0
+type 1
+mode 16877
+size 1536
+stat: failed
+qemu stat test: PASS
+```
+
+This validates regular-file, directory, and missing-path behavior for the current stat ABI.

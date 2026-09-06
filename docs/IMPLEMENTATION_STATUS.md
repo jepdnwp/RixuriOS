@@ -252,3 +252,9 @@ The tested external-command, argv/envp, redirection, pipeline, conditional, and 
 - Added `/bin/touch` to the strict userspace build and disposable RixFS image.
 - Real QEMU evidence covers creating a new empty file, reopening an existing file, rejecting a missing parent, removing the created file, and verifying the final directory listing.
 - This is `QEMU-VALIDATED` for create-or-open behavior only. Timestamp update semantics remain unsupported because the current public stat/inode ABI has no timestamp mutation operation.
+
+## Latest continuation — Phase 19 `/bin/stat` — 2026-09-06
+
+- Exposed the existing `RIX_SYS_STAT` kernel path through the freestanding libc as `stat()` and added `/bin/stat` to the strict image build.
+- Real QEMU validation passed regular-file creation and inspection, directory inspection, missing-path failure, and cleanup.
+- The observed ABI fields were inode, type, mode, and size; no timestamp fields are currently exposed.
