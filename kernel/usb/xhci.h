@@ -13,6 +13,7 @@ typedef struct {
 
 typedef struct { uint8_t connected, enabled, speed, reset_complete; } rix_xhci_port_status_t;
 typedef struct { uint8_t slot_id, port, speed, state; } rix_xhci_device_t;
+typedef struct { uint8_t request_type, request; uint16_t value, index, length; } rix_usb_setup_packet_t;
 
 #define RIX_XHCI_DEVICE_ADDRESSED 2u
 
@@ -26,3 +27,6 @@ int xhci_disable_slot(size_t controller, uint8_t slot);
 int xhci_address_device(size_t controller, uint8_t slot, uint8_t port, uint8_t speed);
 int xhci_device_attach(size_t controller, uint8_t port, rix_xhci_device_t *out);
 int xhci_device_detach(size_t controller, uint8_t slot);
+int xhci_control_transfer(size_t controller, uint8_t slot,
+                          const rix_usb_setup_packet_t *setup,
+                          void *data, uint16_t *actual_length);
