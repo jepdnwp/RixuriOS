@@ -1404,3 +1404,8 @@ Phase 20 now has a reproducible disposable-image power-loss matrix covering add,
 ### Current evidence — 2026-09-07
 
 A native `/usr/bin/rixtest` C runner is now available directly from the RixuriOS shell. Running `rixtest` executes the safe smoke suite, emits colored results and records `/usr/rixtest.log`; `rixtest --full` selects fixture-sensitive tests and `rixtest --pipe-stress` explicitly selects the currently faulting pipe stress case. Physical power-loss remains a manual hardware operation and is reported rather than falsely simulated in user space.
+
+
+### Current evidence — 2026-09-07
+
+UEFI GOP output is now a real kernel TTY framebuffer console with embedded ASCII glyph rendering. The shell prompt and command output are visible on the device display, while canonical Backspace removes the character from both the input queue and rendered line. QEMU interactive verification passed.

@@ -32,7 +32,7 @@ QEMU_ARGS=(
   -drive "if=none,format=raw,file=$RIXFS_IMAGE,id=rixfs-test"
   -device "nvme,drive=rixfs-test,serial=RIXURI-TEST"
   -serial stdio
-  -display none
+  -display "${RIXURI_QEMU_DISPLAY:-none}"
   -no-reboot
   -no-shutdown
 )

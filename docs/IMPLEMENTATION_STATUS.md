@@ -605,3 +605,8 @@ The new `make test-all` runner produces a timestamped full log under `build/test
 ## Native in-OS test runner — 2026-09-07
 
 The repository now includes `user/programs/rixtest.c`, a freestanding C test runner packaged as `/usr/bin/rixtest` inside the RixFS image. It is launched from the RixuriOS shell, uses only native `fork`, `execve`, `waitpid`, `kill`, `nanosleep` and file APIs, prints colored PASS/FAIL/SKIP results, and writes `/usr/rixtest.log`. The default safe smoke mode passed in QEMU without a fault. `rixtest --full` enables fixture-sensitive tests, while `rixtest --pipe-stress` explicitly enables the known pipe/fork stress path. Native user space cannot simulate an electrical power cut; the runner prints the exact manual account transaction/reboot procedure instead.
+
+
+## GOP framebuffer console and Backspace — 2026-09-07
+
+The UEFI GOP framebuffer handoff is now connected to the kernel TTY. RixuriOS renders an embedded 8x8 ASCII font directly to the physical framebuffer, so the colored prompt and command output are visible on a normal device display rather than only on COM1 serial output. ANSI cursor movement, line erase and the TTY canonical Backspace erase sequence update the framebuffer as well as the input buffer. The existing HID usage `0x2A` Backspace mapping remains active. QEMU verified shell line editing by entering `/bin/echX`, sending Backspace, then `o hello`; the resulting command executed as `/bin/echo hello`.

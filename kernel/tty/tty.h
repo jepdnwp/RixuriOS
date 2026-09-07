@@ -41,6 +41,8 @@ typedef struct {
 } rix_tty_t;
 
 void tty_init(void);
+void tty_set_framebuffer(uint64_t base, uint32_t size, uint32_t width,
+                         uint32_t height, uint32_t pitch, uint32_t format);
 rix_tty_t *tty_get(unsigned id);
 int tty_input(unsigned id, uint8_t ch);
 int tty_read(unsigned id, void *buf, size_t n, size_t *out);

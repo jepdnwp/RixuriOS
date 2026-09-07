@@ -187,3 +187,8 @@ The QEMU crash-injection harness passed 12 disposable-image account transaction 
 ## Native shell test runner checkpoint — 2026-09-07
 
 `/usr/bin/rixtest` now runs from the RixuriOS shell on the built image. Its safe smoke mode passed in QEMU, returns to the colored shell prompt, and writes `/usr/rixtest.log`. Fixture-sensitive and pipe-stress modes are explicit flags so a real device operator can choose them knowingly; external power removal is documented as a manual step.
+
+
+## Physical display console checkpoint — 2026-09-07
+
+The earlier QEMU launch path forced `-display none`, which made all visible output appear only on the serial terminal. The launch script now accepts `RIXURI_QEMU_DISPLAY`, and `make run` defaults to `gtk`; automated harnesses remain headless by setting `RIXURI_QEMU_DISPLAY=none`. The kernel reserves the UEFI GOP framebuffer from PMM, logs its base/geometry, and renders user TTY output through an embedded 8x8 font. The current QEMU handoff reports base `0x80000000`, 1280x800 resolution, 5120-byte pitch and format 1.

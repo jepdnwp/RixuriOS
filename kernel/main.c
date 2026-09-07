@@ -121,11 +121,27 @@ void kernel_main(const rixuri_boot_info_t *boot){
  serial_write("ACPI RSDP: ");serial_write_hex(boot->rsdp);serial_write("\r\n");
  gdt_init();idt_init();serial_write("GDT/IDT: initialized\r\n");
  pmm_init((const void*)(uintptr_t)boot->memory_map,boot->memory_map_size,boot->memory_descriptor_size,boot->kernel_phys_base,boot->kernel_phys_end,(uint64_t)(uintptr_t)boot,sizeof(*boot));
+ if(boot->framebuffer_base&&boot->framebuffer_size){
+  uint64_t fb_end=boot->framebuffer_base+boot->framebuffer_size;
+  for(uint64_t page=boot->framebuffer_base&~0xfffULL;page<fb_end;page+=0x1000ULL)
+   pmm_reserve_page(page);
+ }
  if(!pmm_free_pages())panic("physical memory allocator has no free pages");
  serial_write("PMM: total=");serial_write_dec(pmm_total_pages());serial_write(" free=");serial_write_dec(pmm_free_pages());serial_write("\r\n");
  vmm_early_init();if(!vmm_kernel_pml4())panic("VMM initialization failed");serial_write("VMM: initialized\r\n");
  heap_init();void *probe=kmalloc(1,sizeof(uintptr_t));if(!probe)panic("kernel heap initialization failed");kfree(probe);serial_write("KHEAP: initialized\r\n");
- tty_init();hid_init();serial_write("TTY/HID: initialized\r\n");
+ tty_init();
+ serial_write("GOP: base=");serial_write_hex(boot->framebuffer_base);
+ serial_write(" size=");serial_write_dec(boot->framebuffer_size);
+ serial_write(" width=");serial_write_dec(boot->framebuffer_width);
+ serial_write(" height=");serial_write_dec(boot->framebuffer_height);
+ serial_write(" pitch=");serial_write_dec(boot->framebuffer_pitch);
+ serial_write(" format=");serial_write_dec(boot->framebuffer_format);serial_write("\r\n");
+ if(boot->framebuffer_base&&boot->framebuffer_width&&boot->framebuffer_height)
+  tty_set_framebuffer(boot->framebuffer_base,(uint32_t)boot->framebuffer_size,
+                       boot->framebuffer_width,boot->framebuffer_height,
+                       boot->framebuffer_pitch,boot->framebuffer_format);
+ hid_init();serial_write("TTY/HID: initialized\r\n");
  if(boot->rsdp){if(acpi_init(boot->rsdp)==0){serial_write("ACPI CPUs: ");serial_write_dec(acpi_cpu_count());serial_write(" IOAPICs: ");serial_write_dec(acpi_ioapic_count());serial_write("\r\n");}else serial_write("ACPI: unavailable\r\n");}
  if(lapic_init()!=0)panic("local APIC initialization failed");
  if(pci_init()!=0)panic("PCI initialization failed");

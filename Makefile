@@ -142,7 +142,7 @@ powerloss-test: image
 test-all:
 		bash ./scripts/run-all-tests.sh
 run: image
-	bash ./scripts/run-qemu.sh
+	 RIXURI_QEMU_DISPLAY=$${RIXURI_QEMU_DISPLAY:-gtk} bash ./scripts/run-qemu.sh
 qemu: run
 auth-test: image
 		python3 scripts/qemu_auth_test.py

@@ -1,6 +1,30 @@
 #include "tty.h"
+#include "font8x8.h"
 
 static rix_tty_t ttys[RIX_TTY_COUNT];
+static struct { volatile uint32_t *pixels; uint32_t size, width, height, pitch, format; uint16_t columns, rows; } framebuffer;
+static void framebuffer_pixel(volatile uint32_t *pixel, uint32_t color) {
+    if (!pixel) return;
+    *pixel = framebuffer.format == 1u ? ((color & 0x0000ffu) << 16) |
+             (color & 0x00ff00u) | ((color & 0xff0000u) >> 16) : color;
+}
+static void framebuffer_clear(void) {
+    if (!framebuffer.pixels || !framebuffer.pitch) return;
+    for (uint32_t y=0; y<framebuffer.height; ++y) {
+        volatile uint32_t *row=(volatile uint32_t *)((uint8_t *)framebuffer.pixels+(size_t)y*framebuffer.pitch);
+        for (uint32_t x=0; x<framebuffer.width; ++x) row[x]=0;
+    }
+}
+static void framebuffer_glyph(uint16_t column,uint16_t row,uint8_t ch) {
+    if (!framebuffer.pixels || column>=framebuffer.columns || row>=framebuffer.rows) return;
+    uint32_t x0=(uint32_t)column*8u,y0=(uint32_t)row*8u;
+    const uint8_t *glyph=rix_font8x8[ch<128u?ch:(uint8_t)'?'];
+    for (uint32_t y=0;y<8u&&y0+y<framebuffer.height;++y) {
+        volatile uint32_t *pixels=(volatile uint32_t *)((uint8_t *)framebuffer.pixels+(size_t)(y0+y)*framebuffer.pitch);
+        for (uint32_t x=0;x<8u&&x0+x<framebuffer.width;++x)
+            framebuffer_pixel(&pixels[x0+x],glyph[y]&(1u<<x)?0x00ffffffu:0u);
+    }
+}
 
 #define VT_NORMAL 0u
 #define VT_ESC 1u
@@ -45,6 +69,7 @@ static void vt_clear_screen(rix_tty_t *t) {
 static void vt_print(rix_tty_t *t, uint8_t ch) {
     size_t index = (size_t)t->cursor_row * RIX_TTY_MAX_COLUMNS + t->cursor_column;
     t->screen[index] = ch;
+    framebuffer_glyph(t->cursor_column, t->cursor_row, ch);
     if (t->cursor_column + 1u >= t->columns) {
         t->cursor_column = 0;
         if (t->cursor_row + 1u < t->rows) t->cursor_row++;
@@ -57,8 +82,10 @@ static void vt_erase_line(rix_tty_t *t, uint16_t mode) {
     uint16_t start = mode == 1u ? 0u : t->cursor_column;
     uint16_t end = mode == 1u ? t->cursor_column : t->columns;
     if (mode == 2u) { start = 0u; end = t->columns; }
-    for (uint16_t column = start; column < end; ++column)
+    for (uint16_t column = start; column < end; ++column) {
         t->screen[(size_t)t->cursor_row * RIX_TTY_MAX_COLUMNS + column] = ' ';
+        framebuffer_glyph(column, t->cursor_row, ' ');
+    }
 }
 
 static void vt_erase_display(rix_tty_t *t, uint16_t mode) {
@@ -215,6 +242,18 @@ void tty_init(void) {
         t->foreground_pgrp = 0;
     }
     for (unsigned i = 0; i < RIX_PTY_COUNT; ++i) ptys[i].opened = 0;
+}
+
+void tty_set_framebuffer(uint64_t base,uint32_t size,uint32_t width,uint32_t height,
+                         uint32_t pitch,uint32_t format) {
+    framebuffer.pixels=(volatile uint32_t *)(uintptr_t)base; framebuffer.size=size;
+    framebuffer.width=width; framebuffer.height=height; framebuffer.pitch=pitch;
+    framebuffer.format=format; framebuffer.columns=(uint16_t)(width/8u);
+    framebuffer.rows=(uint16_t)(height/8u);
+    if(framebuffer.columns>RIX_TTY_MAX_COLUMNS) framebuffer.columns=RIX_TTY_MAX_COLUMNS;
+    if(framebuffer.rows>RIX_TTY_MAX_ROWS) framebuffer.rows=RIX_TTY_MAX_ROWS;
+    framebuffer_clear();
+    if(framebuffer.columns>=2u&&framebuffer.rows>=2u){ttys[0].columns=framebuffer.columns;ttys[0].rows=framebuffer.rows;}
 }
 
 rix_tty_t *tty_get(unsigned id) {
