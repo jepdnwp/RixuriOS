@@ -113,7 +113,7 @@ if b"cp: " in output or b"mv: " in output:
     raise SystemExit("cp/mv runtime failure observed")
 if b"command execution failed" in output or b"open failed" in output:
     raise SystemExit("shell command execution failure observed")
-for marker in (b"metadata-source=PASS", b"chown-policy=PASS", b"rename-inode=PASS", b"rename-exists=PASS", b"rename-roundtrip=PASS",
+for marker in (b"metadata-source=PASS", b"chown-policy=PASS", b"rename-inode=PASS", b"rename-overwrite=PASS", b"rename-crossdir=PASS", b"rename-roundtrip=PASS",
                b"cp-metadata-pass", b"mv-metadata-pass", b"fallback-metadata-pass",
                b"overwrite-pass", b"mv-overwrite-pass", b"multi-sector-pass"):
     if marker not in output:

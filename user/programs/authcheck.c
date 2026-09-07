@@ -182,7 +182,9 @@ int program_main(int argc, char **argv, char **envp) {
     }
     if (argc == 3 && text_equal(argv[1], "record")) {
         if (find_passwd_account(passwd, argv[2], &uid, &gid) != 0) return 1;
-        if (!text_equal(argv[2], "operator") || uid != 1000u || gid != 1000u) return 1;
+        if ((text_equal(argv[2], "operator") && (uid != 1000u || gid != 1000u)) ||
+            (text_equal(argv[2], "auditor") && (uid != 1100u || gid != 1100u)) ||
+            (!text_equal(argv[2], "operator") && !text_equal(argv[2], "auditor"))) return 1;
         out("account-record=PASS\n");
         return 0;
     }
@@ -194,6 +196,27 @@ int program_main(int argc, char **argv, char **envp) {
             return 1;
         }
         out("auth-pass\n");
+        return 0;
+    }
+    if (argc == 4 && text_equal(argv[1], "login")) {
+        rix_pid_t child;
+        uint64_t status = 0;
+        uint8_t digest[32];
+        if (find_passwd_account(passwd, argv[2], &uid, &gid) != 0 ||
+            shadow_digest(shadow, argv[2], argv[3], digest) != 0) return 1;
+        child = fork();
+        if (child == (rix_pid_t)-1) return 1;
+        if (child == 0) {
+            rix_pid_t session = 0;
+            rix_pid_t observed = 0;
+            if (login_session(0, &session) != 0 || session != getpid() ||
+                get_session(0, &observed) != 0 || observed != session ||
+                logout_session() != 0 || get_session(0, &observed) != 0 || observed != 0)
+                _exit(1);
+            _exit(0);
+        }
+        if (wait(child, &status) != child || status != 0) return 1;
+        out("login=PASS\n");
         return 0;
     }
     if (argc == 2 && text_equal(argv[1], "protected")) {
@@ -208,7 +231,7 @@ int program_main(int argc, char **argv, char **envp) {
         out("shadow-protected=PASS\n");
         return 0;
     }
-    out("authcheck: expected list, record, verify or protected\n");
+    out("authcheck: expected list, record, verify, login or protected\n");
     return 2;
 }
 

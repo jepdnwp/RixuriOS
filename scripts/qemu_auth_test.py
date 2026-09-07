@@ -63,6 +63,15 @@ try:
     command(b"/usr/bin/authcheck verify operator phase20-pass")
     command(b"/usr/bin/authcheck verify operator wrong-password")
     command(b"/usr/bin/authcheck protected")
+    command(b"/usr/bin/accountctl add auditor 1100 auditor-pass")
+    command(b"/usr/bin/authcheck record auditor")
+    command(b"/usr/bin/authcheck verify auditor auditor-pass")
+    command(b"/usr/bin/accountctl rotate operator phase20-rotated")
+    command(b"/usr/bin/authcheck verify operator phase20-rotated")
+    command(b"/usr/bin/authcheck login operator phase20-rotated")
+    command(b"/usr/bin/authcheck verify operator phase20-pass")
+    command(b"/usr/bin/accountctl remove auditor")
+    command(b"/usr/bin/authcheck list")
 finally:
     LOG.write_bytes(output)
     proc.terminate()
@@ -82,6 +91,11 @@ for marker in (
     b"auth-pass",
     b"auth-denied",
     b"shadow-protected=PASS",
+    b"account-add=PASS",
+    b"password-rotate=PASS",
+    b"login=PASS",
+    b"account-remove=PASS",
+    b"accounts=3",
 ):
     if marker not in output:
         raise SystemExit(f"missing authentication marker: {marker!r}")

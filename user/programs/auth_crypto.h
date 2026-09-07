@@ -125,7 +125,7 @@ static void rix_password_digest(const char *salt, const char *password,
     }
 }
 
-static int rix_constant_digest_equal(const uint8_t left[32], const uint8_t right[32]) {
+static __attribute__((unused)) int rix_constant_digest_equal(const uint8_t left[32], const uint8_t right[32]) {
     uint8_t difference = 0;
     for (unsigned i = 0; i < 32u; ++i) difference |= left[i] ^ right[i];
     return difference == 0;
