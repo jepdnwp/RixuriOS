@@ -235,19 +235,23 @@ static void early_fb_put_dec(uint64_t v) {
 }
 
 void kernel_main(const rixuri_boot_info_t *boot){
- /* Early framebuffer text output for real hardware debug */
- if(boot&&boot->framebuffer_base&&boot->framebuffer_width&&boot->framebuffer_height){
+ /* 1. serial_init: safe I/O port access, no memory mapping needed. */
+ serial_init();
+ /* 2. GDT/IDT FIRST: so page faults don't triple-fault.
+  *    On real HW, framebuffer may be at 0xFD000000+ which may not be
+  *    identity-mapped by UEFI. Any write to it before IDT = reboot. */
+ gdt_init();idt_init();
+ /* 3. Validate boot handoff (struct is on kernel stack, always mapped). */
+ if(!boot||boot->magic!=RIXURI_BOOT_MAGIC||boot->version!=RIXURI_BOOT_VERSION||boot->size<sizeof(*boot))panic("invalid UEFI boot handoff");
+ if(!boot->memory_map||!boot->memory_descriptor_size||!boot->memory_map_size)panic("missing UEFI memory map");
+ /* 4. NOW safe to use framebuffer for debug - IDT will catch faults. */
+ if(boot->framebuffer_base&&boot->framebuffer_width&&boot->framebuffer_height){
   g_early_fb=(volatile uint32_t *)(uintptr_t)boot->framebuffer_base;
   g_early_pitch=boot->framebuffer_pitch?boot->framebuffer_pitch:boot->framebuffer_width*4u;
   g_early_width=boot->framebuffer_width;
   g_early_height=boot->framebuffer_height;
-  early_fb_puts("[EARLY] kernel_main entered");
+  early_fb_puts("[EARLY] GDT/IDT done, boot info OK");
  }
- serial_init();serial_write("RixuriOS kernel: x86_64 / AMD64 64-bit\r\n");
- early_fb_puts("[EARLY] serial_init done");
- if(!boot||boot->magic!=RIXURI_BOOT_MAGIC||boot->version!=RIXURI_BOOT_VERSION||boot->size<sizeof(*boot))panic("invalid UEFI boot handoff");
- if(!boot->memory_map||!boot->memory_descriptor_size||!boot->memory_map_size)panic("missing UEFI memory map");
- early_fb_puts("[EARLY] boot info OK");
  early_fb_puts("[EARLY] memory_map="); early_fb_put_hex((uint64_t)(uintptr_t)boot->memory_map);
  early_fb_puts("[EARLY] map_size="); early_fb_put_dec(boot->memory_map_size);
  early_fb_puts("[EARLY] desc_size="); early_fb_put_dec(boot->memory_descriptor_size);
@@ -259,9 +263,6 @@ void kernel_main(const rixuri_boot_info_t *boot){
  early_fb_puts("[EARLY] fb_format="); early_fb_put_dec(boot->framebuffer_format);
  klog_write("Boot handoff: version=");klog_write_dec(boot->version);klog_write(" size=");klog_write_dec(boot->size);klog_write("\r\n");
  klog_write("ACPI RSDP: ");klog_write_hex(boot->rsdp);klog_write("\r\n");
- early_fb_puts("[EARLY] gdt_init...");
- gdt_init();idt_init();
- early_fb_puts("[EARLY] GDT/IDT done");
  early_fb_puts("[EARLY] pmm_init...");
  pmm_init((const void*)(uintptr_t)boot->memory_map,boot->memory_map_size,boot->memory_descriptor_size,boot->kernel_phys_base,boot->kernel_phys_end,(uint64_t)(uintptr_t)boot,sizeof(*boot));
  early_fb_puts("[EARLY] PMM done free="); early_fb_put_dec(pmm_free_pages());
