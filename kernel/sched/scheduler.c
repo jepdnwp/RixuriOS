@@ -131,7 +131,7 @@ void scheduler_yield(void){
     if(next==old){if(flags&0x200ULL)sti();return;}
     if(tasks[old].state==TASK_RUNNING)tasks[old].state=TASK_RUNNABLE;
     if(tasks[next].process_pid){if(process_activate(tasks[next].process_pid)!=0){kernel_log("DEBUG: scheduler process_activate FAILED\r\n");tasks[next].state=TASK_DEAD;if(flags&0x200ULL)sti();return;}}
-    else if(tasks[next].id==0){if(process_activate(0)!=0){if(flags&0x200ULL)sti();return;}}
+    else if(process_activate(0)!=0){if(flags&0x200ULL)sti();return;}
     tasks[next].state=TASK_RUNNING;current_index=next;
     /* The first user task is entered from the kernel bootstrap stack.  Do not
        switch to its synthetic kernel stack while its CR3 is already active:
@@ -147,6 +147,6 @@ void scheduler_yield(void){
        that ran immediately before it. */
     rix_task_t*resumed=&tasks[current_index];
     if(resumed->process_pid){if(process_activate(resumed->process_pid)!=0)resumed->state=TASK_DEAD;}
-    else if(resumed->id==0){(void)process_activate(0);}
+    else {(void)process_activate(0);}
     if(flags&0x200ULL)sti();
 }
