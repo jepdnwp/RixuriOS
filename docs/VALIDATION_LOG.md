@@ -551,3 +551,11 @@ This closes the bounded QEMU evidence for ownership/mode/set-id/ACL preservation
 - Reproducible validation: `git diff --check`, `make test CROSS=`, `make image CROSS=`, `make phase20-test CROSS=` and `python3 scripts/qemu_cp_mv_edge_test.py`.
 - Observed markers: `rename-inode=PASS`, `rename-exists=PASS`, `rename-roundtrip=PASS`, `cp-metadata-pass`, `mv-metadata-pass`, `fallback-metadata-pass`, and `qemu cp/mv edge tests: PASS`.
 - Scope boundary: cross-directory rename, overwrite replacement and multi-object transactional rollback are not claimed by this bounded slice.
+
+### Phase 20 continuation — persistent account records and password verification
+
+The disposable RixFS image now carries `/etc/passwd` with three deterministic accounts and `/etc/shadow` with a root-readable-only `rixsha256` record for the test operator account. The bounded format uses a fixed 32-byte salt and a capped 128-round SHA-256 derivation; the test program never stores a clear-text password in the image.
+
+`/usr/bin/authcheck` validates account record persistence, correct-password acceptance, wrong-password denial, and shadow-file access denial after dropping to UID 1000. The new `auth-test` target runs this over a disposable NVMe/RixFS image, and `make phase20-test CROSS=` includes the authentication harness.
+
+Observed QEMU markers were `accounts=3`, `account-record=PASS`, `auth-pass`, `auth-denied`, `shadow-protected=PASS` and `qemu account/authentication test: PASS`. The slice does not claim interactive login, account mutation/rollback, password rotation, PAM compatibility or hardware-backed credential storage.

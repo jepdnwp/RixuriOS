@@ -13,11 +13,11 @@ OBJ := kernel/boot.o kernel/main.o kernel/serial.o kernel/user_init_blob.o \
  kernel/mm/pmm.o kernel/mm/vmm.o kernel/mm/ptmap.o kernel/mm/uaccess.o kernel/mm/heap.o kernel/sync/lock.o kernel/sync/waitqueue.o kernel/ipc/channel.o kernel/ipc/pipe.o kernel/ipc/shared_memory.o kernel/tty/tty.o \
  kernel/storage/block.o kernel/storage/block_cache.o kernel/storage/nvme.o kernel/usb/xhci.o kernel/usb/usb.o kernel/usb/hid.o kernel/time/rtc.o kernel/time/time.o kernel/power/power.o
 
-PROGRAM_NAMES := echo cat args grep true false sleep ls mkdir rm rmdir touch stat ln head tail wc cut tr sort uniq env printf pwd which kill ps uname du cp mv find xargs sed test tee basename dirname seq id whoami date credtest sessiontest killtest metatest renametest abi-negative proc-test pipe-stress
+PROGRAM_NAMES := echo cat args grep true false sleep ls mkdir rm rmdir touch stat ln head tail wc cut tr sort uniq env printf pwd which kill ps uname du cp mv find xargs sed test tee basename dirname seq id whoami date credtest sessiontest killtest metatest renametest authcheck abi-negative proc-test pipe-stress
 PROGRAM_ELFS := $(addprefix build/programs/,$(addsuffix .elf,$(PROGRAM_NAMES)))
 PROGRAM_START_OBJ := build/programs/start.o
 
-.PHONY: all clean check image run qemu build-run test user-init programs rixfs-image usb-test hid-test tty-test shell-test pipe-test phase20-test
+.PHONY: all clean check image run qemu build-run test user-init programs rixfs-image usb-test hid-test tty-test shell-test pipe-test auth-test phase20-test
 all: build/kernel.elf
 
 build:
@@ -39,7 +39,7 @@ kernel/user_init_blob.o: build/user_init.elf | build
 	$(OBJCOPY) --add-section .note.GNU-stack=/dev/null --set-section-flags .note.GNU-stack=readonly,contents $@
 user-init: build/user_init.elf
 
-build/programs/%.o: user/programs/%.c user/libc/include/unistd.h user/programs/copy_metadata.h | build
+build/programs/%.o: user/programs/%.c user/libc/include/unistd.h user/programs/copy_metadata.h user/programs/auth_crypto.h | build
 	mkdir -p build/programs
 	$(CC) $(USER_INIT_CFLAGS) -c $< -o $@
 build/programs/start.o: user/programs/start.S | build
@@ -99,6 +99,9 @@ build/rixfs.img: programs scripts/build-rixfs-image.py | build
 				--file /usr/bin/killtest=build/programs/killtest.elf \
 				--file /usr/bin/metatest=build/programs/metatest.elf \
 				--file /usr/bin/renametest=build/programs/renametest.elf \
+				--file /usr/bin/authcheck=build/programs/authcheck.elf \
+				--file /etc/passwd=etc/passwd \
+				--file /etc/shadow=etc/shadow \
 				--file /usr/bin/abi-negative=build/programs/abi-negative.elf \
 				--file /usr/bin/proc-test=build/programs/proc-test.elf \
 			--file /usr/bin/pipe-stress=build/programs/pipe-stress.elf \
@@ -127,9 +130,13 @@ image: all rixfs-image
 run: image
 	bash ./scripts/run-qemu.sh
 qemu: run
+auth-test: image
+		python3 scripts/qemu_auth_test.py
 phase20-test: image
-	python3 scripts/qemu_phase20_cred_test.py
-	python3 scripts/qemu_session_test.py
+		python3 scripts/qemu_phase20_cred_test.py
+		python3 scripts/qemu_session_test.py
+		python3 scripts/qemu_auth_test.py
+
 build-run: clean
 	$(MAKE) all
 	$(MAKE) check

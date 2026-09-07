@@ -209,7 +209,7 @@ def build_image(output: Path, files: list[tuple[str, Path]], size_mib: int) -> N
     for path in paths:
         number = inode_numbers[path]
         host_path, is_dir = entries[path]
-        mode = (IFDIR if is_dir else IFREG) | (0o6755 if path.endswith("/id") else (0o755 if is_dir or path.endswith(("/echo", "/cat", "/grep", "/true", "/false", "/args")) else 0o644))
+        mode = (IFDIR if is_dir else IFREG) | (0o600 if path == "/etc/shadow" else (0o6755 if path.endswith("/id") else (0o755 if is_dir or path.endswith(("/echo", "/cat", "/grep", "/true", "/false", "/args")) else 0o644)))
         size = len(children[path]) * SECTOR_SIZE if is_dir else len(file_data[path])
         payload = inode(number, mode, size, allocations[path])
         offset = inode_base + (number - 1) * INODE_SIZE
