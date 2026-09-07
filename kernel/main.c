@@ -175,113 +175,35 @@ static void keyboard_poll_worker(void *arg){
  }
 }
 static void try_mount_root(void){const char *names[]={"nvme0n1","nvme0n1p1","nvme1n1","nvme1n1p1"};for(size_t i=0;i<sizeof(names)/sizeof(names[0]);i++){rix_block_device_t*d=block_find(names[i]);if(!d)continue;int rc=vfs_mount_root(d);klog_write("VFS: mount ");klog_write(names[i]);klog_write(" rc=");klog_write_dec((uint64_t)(rc<0?-rc:rc));klog_write("\r\n");if(rc==0)return;}}
-static volatile uint32_t *g_early_fb;
-static uint32_t g_early_pitch;
-static uint32_t g_early_width;
-static uint16_t g_early_col;
-static uint16_t g_early_row;
-static uint32_t g_early_height;
-
-#include "tty/font16x16.h"
-
-static void early_fb_glyph(uint16_t col, uint16_t row, char ch, uint32_t fg, uint32_t bg) {
- uint32_t x0 = (uint32_t)col * 16u;
- uint32_t y0 = (uint32_t)row * 16u;
- const uint16_t *glyph = rix_font16x16[(uint8_t)ch < 128u ? (uint8_t)ch : (uint8_t)'?'];
- for (uint32_t y = 0; y < 16u; y++) {
-  if (y0 + y >= g_early_height) return;
-  uint16_t bits = glyph[y];
-  for (uint32_t x = 0; x < 16u; x++) {
-   if (x0 + x >= g_early_width) continue;
-   volatile uint32_t *px = g_early_fb + (size_t)(y0 + y) * (g_early_pitch / 4u) + x0 + x;
-   *px = bits & (1u << (15u - x)) ? fg : bg;
-  }
- }
-}
-
-static void early_fb_putc(char c);
-static void early_fb_puts(const char *s);
-
-static void early_fb_putc(char c) {
- if (!g_early_fb) return;
- if (c == '\r') { g_early_col = 0; return; }
- if (c == '\n') { g_early_col = 0; g_early_row++; goto done; }
- uint32_t cols = g_early_width / 16u;
- if (cols > 120u) cols = 120u;
- if (g_early_col >= (uint16_t)cols) { g_early_col = 0; g_early_row++; }
- if (g_early_row >= 49u) { g_early_row = 0; }
- early_fb_glyph(g_early_col, g_early_row, c, 0x00FFFFFF, 0);
- g_early_col++;
-done:;
-}
-
-static void early_fb_puts(const char *s) {
- if (!s) return;
- while (*s) early_fb_putc(*s++);
- early_fb_putc('\r');
- early_fb_putc('\n');
-}
-
-static void early_fb_put_hex(uint64_t v) {
- static const char d[] = "0123456789abcdef";
- early_fb_puts("0x");
- for (int i = 60; i >= 0; i -= 4) early_fb_putc(d[(v >> i) & 0xF]);
-}
-
-static void early_fb_put_dec(uint64_t v) {
- char buf[21]; int i = 20; buf[20] = 0;
- if (v == 0) { buf[--i] = '0'; } else { while (v) { buf[--i] = (char)('0' + v % 10); v /= 10; } }
- early_fb_puts(&buf[i]);
-}
 
 void kernel_main(const rixuri_boot_info_t *boot){
- /* 1. serial_init: safe I/O port access, no memory mapping needed. */
+ /* serial + GDT/IDT first. NO framebuffer access before VMM init! */
  serial_init();
- /* 2. GDT/IDT FIRST: so page faults don't triple-fault.
-  *    On real HW, framebuffer may be at 0xFD000000+ which may not be
-  *    identity-mapped by UEFI. Any write to it before IDT = reboot. */
  gdt_init();idt_init();
- /* 3. Validate boot handoff (struct is on kernel stack, always mapped). */
+ serial_write("[EARLY] GDT/IDT done\r\n");
  if(!boot||boot->magic!=RIXURI_BOOT_MAGIC||boot->version!=RIXURI_BOOT_VERSION||boot->size<sizeof(*boot))panic("invalid UEFI boot handoff");
  if(!boot->memory_map||!boot->memory_descriptor_size||!boot->memory_map_size)panic("missing UEFI memory map");
- /* 4. NOW safe to use framebuffer for debug - IDT will catch faults. */
- if(boot->framebuffer_base&&boot->framebuffer_width&&boot->framebuffer_height){
-  g_early_fb=(volatile uint32_t *)(uintptr_t)boot->framebuffer_base;
-  g_early_pitch=boot->framebuffer_pitch?boot->framebuffer_pitch:boot->framebuffer_width*4u;
-  g_early_width=boot->framebuffer_width;
-  g_early_height=boot->framebuffer_height;
-  early_fb_puts("[EARLY] GDT/IDT done, boot info OK");
- }
- early_fb_puts("[EARLY] memory_map="); early_fb_put_hex((uint64_t)(uintptr_t)boot->memory_map);
- early_fb_puts("[EARLY] map_size="); early_fb_put_dec(boot->memory_map_size);
- early_fb_puts("[EARLY] desc_size="); early_fb_put_dec(boot->memory_descriptor_size);
- early_fb_puts("[EARLY] kernel_phys="); early_fb_put_hex(boot->kernel_phys_base);
- early_fb_puts("[EARLY] fb_base="); early_fb_put_hex(boot->framebuffer_base);
- early_fb_puts("[EARLY] fb_w="); early_fb_put_dec(boot->framebuffer_width);
- early_fb_puts("[EARLY] fb_h="); early_fb_put_dec(boot->framebuffer_height);
- early_fb_puts("[EARLY] fb_pitch="); early_fb_put_dec(boot->framebuffer_pitch);
- early_fb_puts("[EARLY] fb_format="); early_fb_put_dec(boot->framebuffer_format);
- klog_write("Boot handoff: version=");klog_write_dec(boot->version);klog_write(" size=");klog_write_dec(boot->size);klog_write("\r\n");
- klog_write("ACPI RSDP: ");klog_write_hex(boot->rsdp);klog_write("\r\n");
- early_fb_puts("[EARLY] pmm_init...");
+ serial_write("[EARLY] boot info OK\r\n");
+ serial_write("[EARLY] fb_base=");serial_write_hex(boot->framebuffer_base);
+ serial_write(" w=");serial_write_dec(boot->framebuffer_width);
+ serial_write(" h=");serial_write_dec(boot->framebuffer_height);
+ serial_write(" pitch=");serial_write_dec(boot->framebuffer_pitch);
+ serial_write(" fmt=");serial_write_dec(boot->framebuffer_format);serial_write("\r\n");
  pmm_init((const void*)(uintptr_t)boot->memory_map,boot->memory_map_size,boot->memory_descriptor_size,boot->kernel_phys_base,boot->kernel_phys_end,(uint64_t)(uintptr_t)boot,sizeof(*boot));
- early_fb_puts("[EARLY] PMM done free="); early_fb_put_dec(pmm_free_pages());
+ serial_write("[EARLY] PMM done\r\n");
  if(boot->framebuffer_base&&boot->framebuffer_size){
   uint64_t fb_end=boot->framebuffer_base+boot->framebuffer_size;
   for(uint64_t page=boot->framebuffer_base&~0xfffULL;page<fb_end;page+=0x1000ULL)
    pmm_reserve_page(page);
  }
- early_fb_puts("[EARLY] FB reserved");
  if(!pmm_free_pages())panic("physical memory allocator has no free pages");
- early_fb_puts("[EARLY] vmm_early_init...");
+ serial_write("[EARLY] starting vmm_init...\r\n");
  vmm_early_init();if(!vmm_kernel_pml4())panic("VMM initialization failed");
- early_fb_puts("[EARLY] VMM done");
- early_fb_puts("[EARLY] heap_init...");
+ serial_write("[EARLY] VMM done\r\n");
  heap_init();void *probe=kmalloc(1,sizeof(uintptr_t));if(!probe)panic("kernel heap init failed");kfree(probe);
- early_fb_puts("[EARLY] heap done");
- early_fb_puts("[EARLY] tty_init...");
+ serial_write("[EARLY] heap done\r\n");
  tty_init();
- early_fb_puts("[EARLY] TTY done");
+ serial_write("[EARLY] TTY done\r\n");
  klog_write("PMM: total=");klog_write_dec(pmm_total_pages());klog_write(" free=");klog_write_dec(pmm_free_pages());klog_write("\r\n");
  klog_write("GOP: base=");klog_write_hex(boot->framebuffer_base);
  klog_write(" size=");klog_write_dec(boot->framebuffer_size);
