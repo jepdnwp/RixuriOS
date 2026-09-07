@@ -251,9 +251,13 @@ void kernel_main(const rixuri_boot_info_t *boot){
  if(scheduler_create_kernel_thread(serial_tty_worker,0,&serial_worker_task)!=0)panic("failed to create serial TTY worker");
  rix_task_id_t kbd_poll_task=0;
  if(scheduler_create_kernel_thread(keyboard_poll_worker,0,&kbd_poll_task)!=0)panic("failed to create keyboard poll worker");
- klog_write("USER: embedded init prepared, pid=");klog_write_dec(user_pid);klog_write(" task=");klog_write_dec(user_task);klog_write("\r\n");
- ps2_keyboard_init();
- int io_ready=0;if(acpi_ioapic_count()&&ioapic_init()==0){if(ioapic_route_irq(0,32,(uint8_t)lapic_id())!=0)panic("failed to route PIT IRQ");if(ioapic_route_irq(1,33,(uint8_t)lapic_id())!=0)klog_write("IOAPIC: failed to route IRQ1 (keyboard)\r\n");else{ioapic_unmask_irq(0);ioapic_unmask_irq(1);}pic_disable();io_ready=1;}
+	 klog_write("USER: embedded init prepared, pid=");klog_write_dec(user_pid);klog_write(" task=");klog_write_dec(user_task);klog_write("\r\n");
+	 klog_write("BOOT: ps2 init begin\r\n");
+	 ps2_keyboard_init();
+	 klog_write("BOOT: ps2 init done\r\n");
+	 klog_write("BOOT: ioapic init begin\r\n");
+	 int io_ready=0;if(acpi_ioapic_count()&&ioapic_init()==0){if(ioapic_route_irq(0,32,(uint8_t)lapic_id())!=0)panic("failed to route PIT IRQ");if(ioapic_route_irq(1,33,(uint8_t)lapic_id())!=0)klog_write("IOAPIC: failed to route IRQ1 (keyboard)\r\n");else{ioapic_unmask_irq(0);ioapic_unmask_irq(1);}pic_disable();io_ready=1;}
+	 klog_write("BOOT: ioapic init done\r\n");
  if(io_ready){idt_enable();klog_write("IRQ: PIT routed through IOAPIC; interrupts enabled\r\n");}
  else if(pic_init()==0){lapic_enable_pic_extint();idt_enable();klog_write("IRQ: IOAPIC unavailable; LAPIC ExtINT/PIC fallback enabled\r\n");}
  else klog_write("IRQ: no usable interrupt controller; interrupts remain disabled\r\n");
