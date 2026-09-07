@@ -5,7 +5,7 @@ LD := $(CROSS)ld
 OBJCOPY := $(CROSS)objcopy
 READELF := $(CROSS)readelf
 OBJDUMP := $(CROSS)objdump
-CFLAGS := -std=c17 -ffreestanding -fno-stack-protector -fno-pie -mno-red-zone -m64 -Wall -Wextra -Werror -O2 -Iinclude
+CFLAGS := -std=c17 -ffreestanding -fno-stack-protector -fno-pie -fcf-protection=none -mno-red-zone -m64 -Wall -Wextra -Werror -O2 -Iinclude
 LDFLAGS := -nostdlib -z max-page-size=0x1000 -T linker/kernel.ld
 OBJ := kernel/boot.o kernel/main.o kernel/serial.o kernel/user_init_blob.o \
  kernel/arch/x86_64/cpu.o kernel/arch/x86_64/gdt.o kernel/arch/x86_64/idt.o kernel/arch/x86_64/interrupts.o kernel/arch/x86_64/irq.o kernel/arch/x86_64/apic.o kernel/arch/x86_64/acpi.o kernel/arch/x86_64/ioapic.o kernel/arch/x86_64/pic.o kernel/arch/x86_64/pit.o kernel/arch/x86_64/ps2_keyboard.o kernel/arch/x86_64/user_entry.o \
