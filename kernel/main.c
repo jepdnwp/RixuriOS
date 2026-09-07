@@ -175,43 +175,171 @@ static void keyboard_poll_worker(void *arg){
  }
 }
 static void try_mount_root(void){const char *names[]={"nvme0n1","nvme0n1p1","nvme1n1","nvme1n1p1"};for(size_t i=0;i<sizeof(names)/sizeof(names[0]);i++){rix_block_device_t*d=block_find(names[i]);if(!d)continue;int rc=vfs_mount_root(d);klog_write("VFS: mount ");klog_write(names[i]);klog_write(" rc=");klog_write_dec((uint64_t)(rc<0?-rc:rc));klog_write("\r\n");if(rc==0)return;}}
+#include "tty/font16x16.h"
+
 static volatile uint32_t *g_early_fb;
 static uint32_t g_early_pitch;
-static void early_bar(uint32_t y, uint32_t color) {
- if (!g_early_fb) return;
- volatile uint32_t *row = g_early_fb + (size_t)y * (g_early_pitch / 4u);
- for (uint32_t x = 0; x < 200u && x < 1280u; ++x) row[x] = color;
+static uint32_t g_early_width;
+static uint32_t g_early_height;
+static uint16_t g_early_col;
+static uint16_t g_early_row;
+
+static void early_fb_pixel(uint32_t x, uint32_t y, uint32_t color) {
+ if (!g_early_fb || x >= g_early_width || y >= g_early_height) return;
+ volatile uint32_t *px = g_early_fb + (size_t)y * (g_early_pitch / 4u) + x;
+ *px = ((color & 0xFF) << 16) | (color & 0xFF00) | ((color >> 16) & 0xFF);
 }
+
+static void early_fb_glyph(uint16_t col, uint16_t row, char ch, uint32_t fg, uint32_t bg) {
+ uint32_t x0 = (uint32_t)col * 16u;
+ uint32_t y0 = (uint32_t)row * 16u;
+ const uint16_t *glyph = rix_font16x16[(uint8_t)ch < 128u ? (uint8_t)ch : (uint8_t)'?'];
+ for (uint32_t y = 0; y < 16u; y++) {
+  uint32_t py = y0 + y;
+  if (py >= g_early_height) return;
+  uint16_t bits = glyph[y];
+  for (uint32_t x = 0; x < 16u; x++) {
+   uint32_t px = x0 + x;
+   if (px >= g_early_width) continue;
+   early_fb_pixel(px, py, bits & (1u << (15u - x)) ? fg : bg);
+  }
+ }
+}
+
+static void early_scroll(void) {
+ if (!g_early_fb) return;
+ uint32_t cols = g_early_width / 16u;
+ uint32_t rows = g_early_height / 16u;
+ if (cols > 120u) cols = 120u;
+ if (rows > 50u) rows = 50u;
+ /* Shift screen up by 1 row in framebuffer */
+ for (uint32_t r = 0; r + 1u < rows; r++) {
+  for (uint32_t c = 0; c < cols; c++) {
+   uint32_t x0 = c * 16u;
+   for (uint32_t y = 0; y < 16u; y++) {
+    uint32_t src_y = (r + 1u) * 16u + y;
+    uint32_t dst_y = r * 16u + y;
+    for (uint32_t x = 0; x < 16u; x++) {
+     if (x0 + x < g_early_width && src_y < g_early_height && dst_y < g_early_height) {
+      volatile uint32_t *src = g_early_fb + (size_t)src_y * (g_early_pitch / 4u) + x0 + x;
+      volatile uint32_t *dst = g_early_fb + (size_t)dst_y * (g_early_pitch / 4u) + x0 + x;
+      *dst = *src;
+     }
+    }
+   }
+  }
+ }
+ /* Clear last row */
+ for (uint32_t c = 0; c < cols; c++) {
+  for (uint32_t y = 0; y < 16u; y++) {
+   uint32_t py = (rows - 1u) * 16u + y;
+   for (uint32_t x = 0; x < 16u; x++) {
+    early_fb_pixel(c * 16u + x, py, 0);
+   }
+  }
+ }
+}
+
+static void early_put_char(char c);
+static void early_puts(const char *s);
+
+static void early_put_char(char c) {
+ if (!g_early_fb) return;
+ if (c == '\r') { g_early_col = 0; return; }
+ if (c == '\n') { g_early_col = 0; g_early_row++; goto wrap; }
+ uint32_t cols = g_early_width / 16u;
+ if (cols > 120u) cols = 120u;
+ if (g_early_col >= cols) { g_early_col = 0; g_early_row++; }
+wrap:
+ uint32_t rows = g_early_height / 16u;
+ if (rows > 50u) rows = 50u;
+ if (g_early_row >= rows) { early_scroll(); g_early_row = rows - 1u; }
+ if (c != '\r' && c != '\n') {
+  early_fb_glyph(g_early_col, g_early_row, c, 0x00FFFFFF, 0);
+  g_early_col++;
+ }
+}
+
+static void early_puts(const char *s) {
+ if (!s) return;
+ while (*s) early_put_char(*s++);
+ early_put_char('\n');
+}
+
+static void early_put_hex(uint64_t v) {
+ static const char d[] = "0123456789abcdef";
+ char buf[18] = "0x0000000000000000";
+ for (int i = 15; i >= 0 && v; i--) { buf[2 + i] = d[v & 0xF]; v >>= 4; }
+ early_puts(buf);
+}
+
+static void early_put_dec(uint64_t v) {
+ char buf[21]; int i = 20; buf[20] = 0;
+ if (v == 0) { buf[--i] = '0'; } else { while (v) { buf[--i] = (char)('0' + v % 10); v /= 10; } }
+ early_puts(&buf[i]);
+}
+
+static void early_clear(void) {
+ if (!g_early_fb) return;
+ uint32_t pitch = g_early_pitch / 4u;
+ for (uint32_t y = 0; y < g_early_height; y++) {
+  volatile uint32_t *row = g_early_fb + (size_t)y * pitch;
+  for (uint32_t x = 0; x < g_early_width; x++) row[x] = 0;
+ }
+ g_early_row = 0;
+ g_early_col = 0;
+}
+
 void kernel_main(const rixuri_boot_info_t *boot){
- /* Early framebuffer output - write directly to GOP fb for real hardware debug. */
+ /* Early framebuffer text output for real hardware debug */
  if(boot&&boot->framebuffer_base&&boot->framebuffer_width&&boot->framebuffer_height){
   g_early_fb=(volatile uint32_t *)(uintptr_t)boot->framebuffer_base;
   g_early_pitch=boot->framebuffer_pitch?boot->framebuffer_pitch:boot->framebuffer_width*4u;
-  early_bar(0, 0x0000FF00u); /* GREEN: kernel_main entered */
+  g_early_width=boot->framebuffer_width;
+  early_clear();
+  early_puts("[EARLY] kernel_main entered");
  }
  serial_init();serial_write("RixuriOS kernel: x86_64 / AMD64 64-bit\r\n");
- early_bar(1, 0x000000FFu); /* RED: serial_init done */
+ early_puts("[EARLY] serial_init done");
  if(!boot||boot->magic!=RIXURI_BOOT_MAGIC||boot->version!=RIXURI_BOOT_VERSION||boot->size<sizeof(*boot))panic("invalid UEFI boot handoff");
  if(!boot->memory_map||!boot->memory_descriptor_size||!boot->memory_map_size)panic("missing UEFI memory map");
- early_bar(2, 0x00FF0000u); /* BLUE: boot info validated */
+ early_puts("[EARLY] boot info validated");
+ early_puts("[EARLY] memory_map="); early_put_hex(boot->memory_map);
+ early_puts("[EARLY] memory_map_size="); early_put_dec(boot->memory_map_size);
+ early_puts("[EARLY] desc_size="); early_put_dec(boot->memory_descriptor_size);
+ early_puts("[EARLY] kernel_phys="); early_put_hex(boot->kernel_phys_base);
+ early_puts("[EARLY] fb_base="); early_put_hex(boot->framebuffer_base);
+ early_puts("[EARLY] fb_size="); early_put_dec(boot->framebuffer_size);
+ early_puts("[EARLY] fb_w="); early_put_dec(boot->framebuffer_width);
+ early_puts("[EARLY] fb_h="); early_put_dec(boot->framebuffer_height);
+ early_puts("[EARLY] fb_pitch="); early_put_dec(boot->framebuffer_pitch);
+ early_puts("[EARLY] fb_format="); early_put_dec(boot->framebuffer_format);
  klog_write("Boot handoff: version=");klog_write_dec(boot->version);klog_write(" size=");klog_write_dec(boot->size);klog_write("\r\n");
  klog_write("ACPI RSDP: ");klog_write_hex(boot->rsdp);klog_write("\r\n");
- gdt_init();idt_init();klog_write("GDT/IDT: initialized\r\n");
- early_bar(3, 0x00FFFF00u); /* YELLOW: GDT/IDT done */
+ early_puts("[EARLY] starting gdt_init...");
+ gdt_init();idt_init();
+ early_puts("[EARLY] GDT/IDT done");
+ early_puts("[EARLY] starting pmm_init...");
  pmm_init((const void*)(uintptr_t)boot->memory_map,boot->memory_map_size,boot->memory_descriptor_size,boot->kernel_phys_base,boot->kernel_phys_end,(uint64_t)(uintptr_t)boot,sizeof(*boot));
- early_bar(4, 0x0000FFFFu); /* CYAN: PMM done */
+ early_puts("[EARLY] PMM done");
+ early_puts("[EARLY] total pages="); early_put_dec(pmm_total_pages());
+ early_puts("[EARLY] free pages="); early_put_dec(pmm_free_pages());
  if(boot->framebuffer_base&&boot->framebuffer_size){
   uint64_t fb_end=boot->framebuffer_base+boot->framebuffer_size;
   for(uint64_t page=boot->framebuffer_base&~0xfffULL;page<fb_end;page+=0x1000ULL)
    pmm_reserve_page(page);
  }
+ early_puts("[EARLY] FB pages reserved");
  if(!pmm_free_pages())panic("physical memory allocator has no free pages");
- early_bar(5, 0x00FF00FFu); /* MAGENTA: PMM pages reserved */
- klog_write("PMM: total=");klog_write_dec(pmm_total_pages());klog_write(" free=");klog_write_dec(pmm_free_pages());klog_write("\r\n");
- vmm_early_init();if(!vmm_kernel_pml4())panic("VMM initialization failed");klog_write("VMM: initialized\r\n");
- early_bar(6, 0x00FFFFFFu); /* WHITE: VMM done */
- heap_init();void *probe=kmalloc(1,sizeof(uintptr_t));if(!probe)panic("kernel heap initialization failed");kfree(probe);klog_write("KHEAP: initialized\r\n");
- early_bar(7, 0x00808000u); /* DARK YELLOW: heap done */
+ early_puts("[EARLY] starting vmm_early_init...");
+ vmm_early_init();if(!vmm_kernel_pml4())panic("VMM initialization failed");
+ early_puts("[EARLY] VMM done");
+ early_puts("[EARLY] starting heap_init...");
+ heap_init();void *probe=kmalloc(1,sizeof(uintptr_t));if(!probe)panic("kernel heap initialization failed");kfree(probe);
+ early_puts("[EARLY] heap done");
+ early_puts("[EARLY] starting tty_init...");
+ tty_init();
+ early_puts("[EARLY] TTY done");
  tty_init();
  klog_write("GOP: base=");klog_write_hex(boot->framebuffer_base);
  klog_write(" size=");klog_write_dec(boot->framebuffer_size);
