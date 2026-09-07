@@ -282,7 +282,7 @@ static int shell_cd_builtin(const rix_shell_pipeline_t *pipeline, int *handled) 
 }
 
 static void shell_prompt(void) {
-    char cwd[256];
+    static char cwd[256];
     const char *user = getuid() == 0u ? "root" : "user";
     if (getcwd(cwd, sizeof(cwd)) < 0) cwd[0] = 0;
     (void)write_text(1, "\033[1;32m");

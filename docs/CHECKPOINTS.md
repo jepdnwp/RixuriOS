@@ -177,3 +177,8 @@ The final bounded QEMU run passed real login UID/GID transition, unprivileged se
 ## Colored prompt checkpoint — 2026-09-07
 
 The requested colored `username@hostname directory :` prompt is implemented. Root QEMU output contains colored `root@rixurios`, colored `/` and colored `/p19ext` after `cd /p19ext`, followed by the colored separator colon. All updated QEMU harnesses use the ANSI prompt marker and the Phase 19 extended test requires the new prompt evidence.
+
+
+## Power-loss and test-runner checkpoint — 2026-09-07
+
+The QEMU crash-injection harness passed 12 disposable-image account transaction recovery cases across add, rotate and remove operations. The UEFI ISO artifact is bootable and passes kernel/shell startup validation. The unified runner emits a timestamped log and correctly stopped with 20 PASS and 1 FAIL because the pipe/fork stress guest produced a kernel page fault before its PASS marker. This failure is preserved as an actionable blocker rather than suppressed.

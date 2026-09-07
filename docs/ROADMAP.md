@@ -1394,3 +1394,8 @@ Authentication now verifies the password, creates a session, transitions the ses
 ### Current evidence — 2026-09-07
 
 The shell prompt is now active as a colored dynamic `username@hostname directory :` presentation. It derives the username from the process UID, uses the `rixurios` machine label and reads cwd at each redraw. The Phase 19 QEMU regression requires both the colored root/hostname marker and the colored `/p19ext` marker after directory change; prompt text is not used as an authorization source.
+
+
+### Current evidence — 2026-09-07
+
+Phase 20 now has a reproducible disposable-image power-loss matrix covering add, rotate and remove account transactions at 1 ms, 10 ms, 50 ms and 150 ms crash points; all 12 recovery cases pass in QEMU. `make iso` creates a bootable UEFI El Torito `build/RixuriOS.iso`, and `make test-all` runs the complete host/QEMU/ISO/power-loss verification with timestamped logs. The first unified run reached 20 PASS and exposed one remaining page fault in the existing pipe/fork stress regression, so Phase 20 closure must not be marked all-green until that fault is resolved.

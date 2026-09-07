@@ -17,7 +17,7 @@ PROGRAM_NAMES := echo cat args grep true false sleep ls mkdir rm rmdir touch sta
 PROGRAM_ELFS := $(addprefix build/programs/,$(addsuffix .elf,$(PROGRAM_NAMES)))
 PROGRAM_START_OBJ := build/programs/start.o
 
-.PHONY: all clean check image run qemu build-run test user-init programs rixfs-image usb-test hid-test tty-test shell-test pipe-test auth-test phase20-test
+.PHONY: all clean check image iso iso-test powerloss-test test-all run qemu build-run test user-init programs rixfs-image usb-test hid-test tty-test shell-test pipe-test auth-test phase20-test
 all: build/kernel.elf
 
 build:
@@ -131,7 +131,15 @@ check: all
 	$(OBJDUMP) -drwC build/kernel.elf > build/kernel.disasm
 
 image: all rixfs-image
-	bash ./scripts/build-uefi.sh
+		bash ./scripts/build-uefi.sh
+iso: image
+		bash ./scripts/build-iso.sh
+iso-test: iso
+		python3 scripts/qemu_iso_boot_test.py
+powerloss-test: image
+		python3 scripts/qemu_powerloss_test.py
+test-all:
+		bash ./scripts/run-all-tests.sh
 run: image
 	bash ./scripts/run-qemu.sh
 qemu: run
