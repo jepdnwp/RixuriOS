@@ -24,14 +24,12 @@
 #define RIX_SYS_WAITPID 247
 #define RIX_WAITPID_NOHANG 1u
 static uint8_t exec_image_buffers[RIX_PROCESS_MAX][RIX_MAX_EXEC_IMAGE];
-static uint8_t first_syscall_debug;
 static int user_string(uint64_t src,char *dst,size_t cap){if(!dst||cap<2)return -1;for(size_t i=0;i+1<cap;i++){uint8_t c;if(copy_from_user(&c,src+i,1)!=0)return -1;dst[i]=(char)c;if(!c)return 0;}dst[cap-1]=0;return -1;}
 static int copy_string_vector(uint64_t vector,char storage[][RIX_PROCESS_ARG_TEXT_MAX],const char *pointers[],size_t *count){if(!count)return -1;*count=0;if(!vector)return 0;for(size_t i=0;i<RIX_PROCESS_ARG_MAX;i++){uint64_t user_ptr=0;if(copy_from_user(&user_ptr,vector+i*sizeof(user_ptr),sizeof(user_ptr))!=0)return -1;if(!user_ptr){*count=i;return 0;}if(user_string(user_ptr,storage[i],RIX_PROCESS_ARG_TEXT_MAX)!=0)return -1;pointers[i]=storage[i];}return -1;}
 static int syscall_interrupted(pid_t pid){unsigned signal=0;return process_signal_take(pid,&signal)==0;}
 static int vfs_result(int rc){return rc==0?0:(rc==RIX_VFS_ERR_PERMISSION?-RIX_EACCES:(rc==RIX_VFS_ERR_EXISTS?-RIX_EEXIST:-RIX_EINVAL));}
 void syscall_dispatch(rix_syscall_frame_t*frame){
  if(!frame)return;
- if(!first_syscall_debug){first_syscall_debug=1;kernel_log("DEBUG: first syscall rax=");kernel_log_dec(frame->rax);kernel_log(" rip=");kernel_log_hex(frame->rip);kernel_log("\r\n");}
  int64_t result=-(int64_t)RIX_ENOSYS;pid_t self=process_current();
  switch(frame->rax){
  case RIX_SYS_READ:{
