@@ -204,6 +204,14 @@ void kernel_main(const rixuri_boot_info_t *boot){
  serial_write("[EARLY] heap done\r\n");
  tty_init();
  serial_write("[EARLY] TTY done\r\n");
+ /* Attach GOP immediately after TTY setup so all following diagnostics are
+  * visible on the physical display, not only on a debug serial console. */
+ if(boot->framebuffer_base&&boot->framebuffer_width&&boot->framebuffer_height)
+  tty_set_framebuffer(boot->framebuffer_base,(uint32_t)boot->framebuffer_size,
+                       boot->framebuffer_width,boot->framebuffer_height,
+                       boot->framebuffer_pitch,boot->framebuffer_format);
+ klog_ready=1;
+ klog_write("RixuriOS kernel: display diagnostics enabled\r\n");
  klog_write("PMM: total=");klog_write_dec(pmm_total_pages());klog_write(" free=");klog_write_dec(pmm_free_pages());klog_write("\r\n");
  klog_write("GOP: base=");klog_write_hex(boot->framebuffer_base);
  klog_write(" size=");klog_write_dec(boot->framebuffer_size);
@@ -211,11 +219,6 @@ void kernel_main(const rixuri_boot_info_t *boot){
  klog_write(" height=");klog_write_dec(boot->framebuffer_height);
  klog_write(" pitch=");klog_write_dec(boot->framebuffer_pitch);
  klog_write(" format=");klog_write_dec(boot->framebuffer_format);klog_write("\r\n");
- if(boot->framebuffer_base&&boot->framebuffer_width&&boot->framebuffer_height)
-  tty_set_framebuffer(boot->framebuffer_base,(uint32_t)boot->framebuffer_size,
-                       boot->framebuffer_width,boot->framebuffer_height,
-                       boot->framebuffer_pitch,boot->framebuffer_format);
- klog_ready=1;
  hid_init();klog_write("TTY/HID: initialized\r\n");
  if(boot->rsdp){if(acpi_init(boot->rsdp)==0){klog_write("ACPI CPUs: ");klog_write_dec(acpi_cpu_count());klog_write(" IOAPICs: ");klog_write_dec(acpi_ioapic_count());klog_write("\r\n");}else klog_write("ACPI: unavailable\r\n");}
  if(lapic_init()!=0)panic("local APIC initialization failed");
