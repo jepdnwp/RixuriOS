@@ -10,6 +10,10 @@
 #define PCI_CLASS_SERIAL 0x0C
 #define PCI_SUBCLASS_USB 0x03
 #define PCI_PROGIF_XHCI 0x30
+#define PCI_VENDOR_AMD 0x1022u
+#define PCI_AMD_XHCI_15B6 0x15B6u
+#define PCI_AMD_XHCI_15B7 0x15B7u
+#define PCI_AMD_XHCI_43F7 0x43F7u
 #define PCI_COMMAND 0x04
 #define PCI_COMMAND_MEMORY (1u << 1)
 #define PCI_COMMAND_BUS_MASTER (1u << 2)
@@ -123,6 +127,15 @@ typedef struct {
 static rix_xhci_controller_t controllers[XHCI_MAX];
 static xhci_runtime_t runtimes[XHCI_MAX];
 static size_t count;
+static int is_xhci_device(const rix_pci_device_t *d) {
+    if (!d) return 0;
+    if (d->class_code == PCI_CLASS_SERIAL && d->subclass == PCI_SUBCLASS_USB &&
+        d->prog_if == PCI_PROGIF_XHCI) return 1;
+    if (d->vendor_id != PCI_VENDOR_AMD) return 0;
+    return d->device_id == PCI_AMD_XHCI_15B6 ||
+           d->device_id == PCI_AMD_XHCI_15B7 ||
+           d->device_id == PCI_AMD_XHCI_43F7;
+}
 
 static int map_range(uint64_t base, uint64_t length) {
     if (length == 0 || base > UINT64_MAX - (length - 1u)) return -1;
@@ -267,12 +280,15 @@ int xhci_init(void) {
     count = 0;
     for (size_t i = 0; i < pci_device_count() && count < XHCI_MAX; ++i) {
         const rix_pci_device_t *d = pci_device(i);
-        if (!d || d->class_code != PCI_CLASS_SERIAL || d->subclass != PCI_SUBCLASS_USB || d->prog_if != PCI_PROGIF_XHCI) continue;
+        if (!is_xhci_device(d)) continue;
+        serial_write("xHCI: AMD/PCI candidate "); serial_write_hex(d->vendor_id);
+        serial_write(":"); serial_write_hex(d->device_id); serial_write(" bus=");
+        serial_write_dec(d->bus); serial_write(" dev="); serial_write_dec(d->device); serial_write("\r\n");
         uint32_t lo = d->bars[0];
-        if (lo & 1u) continue;
+        if (lo & 1u) { serial_write("xHCI: candidate has I/O BAR\r\n"); continue; }
         uint64_t bar = (uint64_t)(lo & 0xfffffff0u);
         if (((lo >> 1) & 3u) == 2u) bar |= (uint64_t)d->bars[1] << 32;
-        if (!bar || map_range(bar, 0x10000u) != 0) continue;
+        if (!bar || map_range(bar, 0x10000u) != 0) { serial_write("xHCI: candidate BAR unavailable\r\n"); continue; }
 
         uint32_t command = pci_config_read32(d->bus, d->device, d->function, PCI_COMMAND);
         command |= PCI_COMMAND_MEMORY | PCI_COMMAND_BUS_MASTER;
@@ -300,11 +316,12 @@ int xhci_init(void) {
         c->usbcmd = *(volatile uint32_t *)(op + XHCI_USBCMD);
         c->usbsts = *(volatile uint32_t *)(op + XHCI_USBSTS);
         c->running = 0;
-        if (reset_controller(op) != 0) continue;
-        if (setup_runtime(c, op, &runtimes[count]) != 0) continue;
+        if (reset_controller(op) != 0) { serial_write("xHCI: candidate reset failed\r\n"); continue; }
+        if (setup_runtime(c, op, &runtimes[count]) != 0) { serial_write("xHCI: candidate runtime failed\r\n"); continue; }
         *(volatile uint32_t *)(op + XHCI_USBCMD) |= XHCI_CMD_RS;
         if (wait_halted(op, 0) != 0) {
             release_runtime_pages(c);
+            serial_write("xHCI: candidate run failed\r\n");
             continue;
         }
         c->usbcmd = *(volatile uint32_t *)(op + XHCI_USBCMD);
