@@ -1399,3 +1399,8 @@ The shell prompt is now active as a colored dynamic `username@hostname directory
 ### Current evidence — 2026-09-07
 
 Phase 20 now has a reproducible disposable-image power-loss matrix covering add, rotate and remove account transactions at 1 ms, 10 ms, 50 ms and 150 ms crash points; all 12 recovery cases pass in QEMU. `make iso` creates a bootable UEFI El Torito `build/RixuriOS.iso`, and `make test-all` runs the complete host/QEMU/ISO/power-loss verification with timestamped logs. The first unified run reached 20 PASS and exposed one remaining page fault in the existing pipe/fork stress regression, so Phase 20 closure must not be marked all-green until that fault is resolved.
+
+
+### Current evidence — 2026-09-07
+
+A native `/usr/bin/rixtest` C runner is now available directly from the RixuriOS shell. Running `rixtest` executes the safe smoke suite, emits colored results and records `/usr/rixtest.log`; `rixtest --full` selects fixture-sensitive tests and `rixtest --pipe-stress` explicitly selects the currently faulting pipe stress case. Physical power-loss remains a manual hardware operation and is reported rather than falsely simulated in user space.

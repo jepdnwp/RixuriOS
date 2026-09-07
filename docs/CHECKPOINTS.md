@@ -182,3 +182,8 @@ The requested colored `username@hostname directory :` prompt is implemented. Roo
 ## Power-loss and test-runner checkpoint — 2026-09-07
 
 The QEMU crash-injection harness passed 12 disposable-image account transaction recovery cases across add, rotate and remove operations. The UEFI ISO artifact is bootable and passes kernel/shell startup validation. The unified runner emits a timestamped log and correctly stopped with 20 PASS and 1 FAIL because the pipe/fork stress guest produced a kernel page fault before its PASS marker. This failure is preserved as an actionable blocker rather than suppressed.
+
+
+## Native shell test runner checkpoint — 2026-09-07
+
+`/usr/bin/rixtest` now runs from the RixuriOS shell on the built image. Its safe smoke mode passed in QEMU, returns to the colored shell prompt, and writes `/usr/rixtest.log`. Fixture-sensitive and pipe-stress modes are explicit flags so a real device operator can choose them knowingly; external power removal is documented as a manual step.
