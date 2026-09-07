@@ -12,3 +12,5 @@ typedef struct { uint64_t inode; uint16_t record_size; uint8_t type; uint8_t nam
 int rixfs_lookup_name(rixfs_t *fs,uint64_t dir_inode,const char *name,uint64_t *out_inode,uint8_t *out_type);
 int rixfs_readdir(rixfs_t *fs,uint64_t dir_inode,uint64_t *offset,rixfs_dirent_disk_t *out,char *name,size_t name_capacity);
 int rixfs_remove_name(rixfs_t *fs,uint64_t dir_inode,const char *name);
+/* Renames one file entry in one directory; destination must not exist. */
+int rixfs_rename(rixfs_t *fs,uint64_t dir_inode,const char *old_name,const char *new_name);

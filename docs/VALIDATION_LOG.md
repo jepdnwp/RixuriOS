@@ -540,3 +540,14 @@ python3 scripts/qemu_cp_mv_edge_test.py
 ```
 
 This closes the bounded QEMU evidence for ownership/mode/set-id/ACL preservation across the current copy-based `cp`/`mv` implementation. It does not claim atomic rename semantics, rollback of an already-overwritten destination after a later metadata failure, recursive directory metadata copying, or physical-hardware security evidence.
+
+### Phase 20 continuation — journaled same-directory rename
+
+- Added versioned `RIX_SYS_RENAME`/`rename()` for regular files within one directory.
+- The VFS captures the parent inode before subsequent path lookups; this avoids mutable path-node aliasing and passes the real NVMe/RixFS path.
+- RixFS updates one complete directory-entry sector through `journal_write`, preserving the inode and its UID/GID/mode/ACL metadata. An existing destination is rejected with `-EEXIST` rather than overwritten.
+- `/bin/mv` attempts atomic rename first and retains the existing metadata-preserving copy/remove fallback for destination collisions and unsupported cross-directory cases.
+- Added `/usr/bin/renametest`, covering inode identity preservation, destination-collision rejection and rename round trip in QEMU.
+- Reproducible validation: `git diff --check`, `make test CROSS=`, `make image CROSS=`, `make phase20-test CROSS=` and `python3 scripts/qemu_cp_mv_edge_test.py`.
+- Observed markers: `rename-inode=PASS`, `rename-exists=PASS`, `rename-roundtrip=PASS`, `cp-metadata-pass`, `mv-metadata-pass`, `fallback-metadata-pass`, and `qemu cp/mv edge tests: PASS`.
+- Scope boundary: cross-directory rename, overwrite replacement and multi-object transactional rollback are not claimed by this bounded slice.

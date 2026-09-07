@@ -29,6 +29,7 @@ int setuid(uint32_t uid){return(int)rix_sys(105,(long)uid,0,0);}
 int setgid(uint32_t gid){return(int)rix_sys(106,(long)gid,0,0);}
 int chmod(const char *path,uint32_t mode){return(int)rix_sys(90,(long)path,(long)mode,0);}
 int chown(const char *path,uint32_t uid,uint32_t gid){return(int)rix_sys(91,(long)path,(long)uid,(long)gid);}
+int rename(const char *old_path,const char *new_path){return(int)rix_sys(82,(long)old_path,(long)new_path,0);}
 int getacl(const char *path,rix_acl_t *out){return(int)rix_sys(117,(long)path,(long)out,0);}
 int setacl(const char *path,const rix_acl_t *acl){return(int)rix_sys(118,(long)path,(long)acl,0);}
 int clearacl(const char *path){return(int)rix_sys(119,(long)path,0,0);}

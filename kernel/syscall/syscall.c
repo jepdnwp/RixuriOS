@@ -14,6 +14,7 @@
 #define RIX_ENOSYS 38
 #define RIX_EINVAL 22
 #define RIX_EACCES 13
+#define RIX_EEXIST 17
 #define RIX_EFAULT 14
 #define RIX_EINTR 4
 #define RIX_ESRCH 3
@@ -26,7 +27,7 @@ static uint8_t exec_image_buffers[RIX_PROCESS_MAX][RIX_MAX_EXEC_IMAGE];
 static int user_string(uint64_t src,char *dst,size_t cap){if(!dst||cap<2)return -1;for(size_t i=0;i+1<cap;i++){uint8_t c;if(copy_from_user(&c,src+i,1)!=0)return -1;dst[i]=(char)c;if(!c)return 0;}dst[cap-1]=0;return -1;}
 static int copy_string_vector(uint64_t vector,char storage[][RIX_PROCESS_ARG_TEXT_MAX],const char *pointers[],size_t *count){if(!count)return -1;*count=0;if(!vector)return 0;for(size_t i=0;i<RIX_PROCESS_ARG_MAX;i++){uint64_t user_ptr=0;if(copy_from_user(&user_ptr,vector+i*sizeof(user_ptr),sizeof(user_ptr))!=0)return -1;if(!user_ptr){*count=i;return 0;}if(user_string(user_ptr,storage[i],RIX_PROCESS_ARG_TEXT_MAX)!=0)return -1;pointers[i]=storage[i];}return -1;}
 static int syscall_interrupted(pid_t pid){unsigned signal=0;return process_signal_take(pid,&signal)==0;}
-static int vfs_result(int rc){return rc==0?0:(rc==RIX_VFS_ERR_PERMISSION?-RIX_EACCES:-RIX_EINVAL);}
+static int vfs_result(int rc){return rc==0?0:(rc==RIX_VFS_ERR_PERMISSION?-RIX_EACCES:(rc==RIX_VFS_ERR_EXISTS?-RIX_EEXIST:-RIX_EINVAL));}
 void syscall_dispatch(rix_syscall_frame_t*frame){
  if(!frame)return;
  int64_t result=-(int64_t)RIX_ENOSYS;pid_t self=process_current();
@@ -77,6 +78,7 @@ void syscall_dispatch(rix_syscall_frame_t*frame){
  case RIX_SYS_CLEARACL:{char path[RIX_VFS_PATH_MAX];if(user_string(frame->rdi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}result=vfs_result(vfs_clear_acl(path));break;}
  case RIX_SYS_CHMOD:{char path[RIX_VFS_PATH_MAX];if(user_string(frame->rdi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}result=vfs_result(vfs_chmod(path,(uint32_t)frame->rsi));break;}
  case RIX_SYS_CHOWN:{char path[RIX_VFS_PATH_MAX];if(user_string(frame->rdi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}result=vfs_result(vfs_chown(path,(uint32_t)frame->rsi,(uint32_t)frame->rdx));break;}
+ case RIX_SYS_RENAME:{char old_path[RIX_VFS_PATH_MAX],new_path[RIX_VFS_PATH_MAX];if(user_string(frame->rdi,old_path,sizeof(old_path))!=0||user_string(frame->rsi,new_path,sizeof(new_path))!=0){result=-RIX_EFAULT;break;}result=vfs_result(vfs_rename(old_path,new_path));break;}
  case RIX_SYS_EXIT:if(process_exit(self,frame->rdi)!=0)result=-RIX_EINVAL;else scheduler_exit_current();break;
  case RIX_SYS_WAIT:{
   pid_t wanted=(pid_t)frame->rdi;uint64_t status=0;pid_t child=0;int rc;

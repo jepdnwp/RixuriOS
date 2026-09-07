@@ -7,6 +7,8 @@
 #define RIX_VFS_O_WRONLY 1u
 #define RIX_VFS_O_CREAT 4u
 #define RIX_VFS_O_TRUNC 8u
+#define RIX_EINVAL 22
+#define RIX_EEXIST 17
 
 static size_t length(const char *s) {
     size_t n = 0;
@@ -53,6 +55,12 @@ int program_main(int argc, char **argv, char **envp) {
         return 2;
     }
     if (same_text(argv[1], argv[2])) return 0;
+    int rename_status = rename(argv[1], argv[2]);
+    if (rename_status == 0) return 0;
+    if (rename_status != -RIX_EEXIST && rename_status != -RIX_EINVAL) {
+        out("mv: rename failed\n");
+        return 1;
+    }
     int input = openat(RIX_VFS_AT_FDCWD, argv[1], 0u, 0u);
     if (input < 0) {
         out("mv: source open failed\n");

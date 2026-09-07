@@ -14,6 +14,7 @@
 #define RIX_VFS_O_APPEND 16u
 /* Negative errno-style results are part of the internal VFS/syscall mapping. */
 #define RIX_VFS_ERR_PERMISSION (-13)
+#define RIX_VFS_ERR_EXISTS (-17)
 typedef enum { RIX_VFS_DIR=1, RIX_VFS_FILE=2, RIX_VFS_SYMLINK=3, RIX_VFS_DEVICE=4 } rix_vfs_type_t;
 typedef struct { uint64_t inode; rix_vfs_type_t type; uint32_t mode; uint32_t uid; uint32_t gid; uint64_t size; } rix_vnode_t;
 typedef struct { rix_vnode_t *node; char path[RIX_VFS_PATH_MAX]; } rix_vfs_path_t;
@@ -41,6 +42,7 @@ int vfs_readdir(uint64_t pid,int fd,uint64_t *offset,rix_vfs_dirent_t *out,char 
 int vfs_stat(const char *path,rix_vnode_t *out);
 int vfs_chmod(const char *path,uint32_t mode);
 int vfs_chown(const char *path,uint32_t uid,uint32_t gid);
+int vfs_rename(const char *old_path,const char *new_path);
 int vfs_mkdir(const char *path,uint32_t mode,uint32_t uid,uint32_t gid);
 int vfs_unlink(const char *path);
 int vfs_link(const char *old_path,const char *new_path);

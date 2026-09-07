@@ -14,6 +14,7 @@
 #define RIX_SYS_STAT 4
 #define RIX_SYS_CHMOD 90
 #define RIX_SYS_CHOWN 91
+#define RIX_SYS_RENAME 82
 #define RIX_SYS_MKDIR 83
 #define RIX_SYS_RMDIR 84
 #define RIX_SYS_UNLINK 87
