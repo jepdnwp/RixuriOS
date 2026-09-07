@@ -71,6 +71,7 @@ int program_main(int argc, char **argv, char **envp) {
     char *id_argv[] = {(char *)"/usr/bin/id", (char *)0};
     char *audit_argv[] = {(char *)"/usr/bin/auditcheck", (char *)0};
     char *empty_env[] = {(char *)0};
+    char *tainted_env[] = {(char *)"SECRET=must-not-reach-setid", (char *)"PATH=/tmp", (char *)0};
 
     if (argc != 1) return 2;
     if (get_audit_uid(&audit_uid) != 0 || audit_uid != 0u ||
@@ -195,7 +196,7 @@ int program_main(int argc, char **argv, char **envp) {
     rix_pid_t child = fork();
     if (child == (rix_pid_t)-1) return 1;
     if (child == 0) {
-        if (execve("/usr/bin/id", id_argv, empty_env) != 0) _exit(127);
+        if (execve("/usr/bin/id", id_argv, tainted_env) != 0) _exit(127);
         _exit(126);
     }
     if (wait(child, &status) != child || status != 0) {

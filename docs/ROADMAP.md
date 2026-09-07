@@ -1374,3 +1374,13 @@ The Phase 20 authentication path now passes the complete QEMU credential/session
 ### Current evidence — 2026-09-07
 
 The Phase 20 QEMU credential regression now covers not only owner/group/other regular-file access but also path-search and parent-mutation denial through a root-owned mode-0700 directory. After dropping to UID/GID 1000, open, stat, child creation and unlink through that inaccessible path return the documented permission error, while missing paths remain distinguishable. Group-owned mode-0640 read access through supplementary groups and write denial continue to pass, together with persisted owner/group/mode metadata checks. The complete credential, capability, session and account/authentication suites pass on the disposable NVMe-backed image. Broader policy matrices, physical hardware security evidence and remaining Phase 20 boundaries are still open.
+
+
+### Current evidence — 2026-09-07
+
+The bounded account store now supports reversible lock and unlock operations. A locked shadow record fails password verification and login while preserving its hash; unlock restores verification. The real QEMU auth harness also attempts a rotation for an unknown account, requires the command to fail, and immediately verifies that the existing operator password remains valid before continuing with a successful rotation/login and old-password rejection. This closes the bounded lock/unlock and invalid-input no-mutation slice, but not power-loss injection or a full interactive login manager.
+
+
+### Current evidence — 2026-09-07
+
+The set-ID exec regression now supplies a deliberately tainted environment and requires the privileged target to receive an empty environment while still completing the UID/GID transition. This provides real QEMU evidence for the privileged-environment sanitization branch; a complete environment-management subsystem and physical security qualification remain outside the bounded Phase 20 model.

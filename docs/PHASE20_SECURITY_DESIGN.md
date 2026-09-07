@@ -60,3 +60,13 @@ The Phase 20 credential regression sets audit UID 4242 as the trusted root proce
 Capability delegation v1 is limited to a live direct child. The caller must hold `CAP_DELEGATE` and the delegated bits, the target must not already hold them, and `CAP_DELEGATE` itself cannot be transferred. The caller loses the transferred bits atomically; ordinary exec preserves the child’s delegated bits, while set-ID exec clears all effective capabilities. Zombie, unrelated and invalid targets fail closed.
 
 The continuation evidence gate requires `cap=PASS`, `acl=PASS`, `matrix=PASS`, `audit=PASS`, `delegated-exec=PASS`, `delegation=PASS`, `setid=PASS`, `kill=PASS` and `session=PASS`, with no page fault, CPU exception or kernel panic markers. The shell prompt remains intentionally deferred until the broader Phase 20 security boundary is complete.
+
+
+## Authentication/account boundary update — 2026-09-07
+
+The bounded account-store slice now includes reversible lock/unlock markers and an invalid-account rotation no-mutation regression. Locked records remain structurally present and retain their hash, but verification/login fail closed until an authorized unlock operation removes the marker. The QEMU harness validates this through the real shell, VFS, RixFS and authentication path. Power-loss injection, hardware-backed security evidence, and a full interactive login/lockout service remain outside the evidence currently available in this environment.
+
+
+## Privileged environment evidence — 2026-09-07
+
+The set-ID QEMU fixture now passes a non-empty tainted environment and requires the privileged executable to observe no environment entries. This verifies the kernel’s privileged-transition sanitization path through execve rather than relying on an already-empty test environment. Ordinary environment mutation and a full login-service policy remain outside this bounded contract.

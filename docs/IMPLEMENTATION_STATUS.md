@@ -567,3 +567,17 @@ The observed storage and authentication scenarios are `QEMU-VALIDATED` on the di
 The real credential regression now adds path-search and parent-mutation coverage beyond the existing file owner/group/other checks. It creates a root-owned mode-0700 directory and secret file, verifies that a dropped UID/GID process receives `-EACCES` for open, stat, child creation, and unlink through the inaccessible path, while missing-path behavior remains separately checked as `-EINVAL`. The existing group-owned regular-file fixture continues to verify supplementary-group read access and write denial under mode 0640, and persisted UID/GID/mode metadata remains checked after creation.
 
 After rebuilding the userspace image, `make phase20-test CROSS=x86_64-linux-gnu-` passed the credential, session, capability, and account/authentication suites. The observed credential markers include `acl=PASS`, `matrix=PASS`, `audit=PASS`, `setid=PASS`, `delegated-exec=PASS`, `delegation=PASS`, and `kill=PASS`; session lifecycle and password-rotation login also passed. The phase remains in progress for broader policy matrices, physical-hardware evidence, and the remaining documented security boundaries.
+
+
+## Phase 20 authentication hardening continuation — 2026-09-07
+
+The bounded account store now supports reversible `accountctl lock USER` and `accountctl unlock USER` operations. Locking prefixes the stored shadow algorithm marker so password verification and login fail closed without destroying the password hash; unlocking removes only that lock marker and restores successful verification. The QEMU auth harness now checks locked-password denial and post-unlock success at the individual command boundary.
+
+The same harness exercises a failed rotation for an unknown account and immediately verifies that the existing operator password still works, providing a non-destructive account-store rollback/no-mutation regression. It then validates successful rotation, login with the new password, rejection of the old password, and account removal. The disposable NVMe-backed QEMU run passed all of these cases with no CPU exception or panic marker.
+
+This closes the implemented bounded account lock/unlock and failed-input rollback slice. It does not claim power-loss injection, physical hardware security evidence, or a full interactive login manager; those remain blocked or deferred boundaries for final Phase 20 closure.
+
+
+## Phase 20 privileged-environment sanitization continuation — 2026-09-07
+
+The set-ID credential regression now passes a deliberately tainted environment containing `SECRET=must-not-reach-setid` and `PATH=/tmp` into the setuid/setgid executable. The executable still reports `uid=0 gid=0` only when the kernel has replaced the environment with an empty privileged environment; ordinary non-set-ID execution remains outside this sanitization branch. The complete Phase 20 QEMU target and strict host tests passed after this addition.

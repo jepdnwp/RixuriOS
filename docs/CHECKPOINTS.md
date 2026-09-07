@@ -160,3 +160,10 @@ No release label may be claimed until its preceding checkpoint evidence is archi
 The Phase 8 storage integration gate has new disposable-image evidence: `make -j2 all CROSS=x86_64-linux-gnu-`, `make image CROSS=x86_64-linux-gnu-`, `make test CROSS=x86_64-linux-gnu- HOST_CC=gcc`, `python3 scripts/qemu_cp_mv_edge_test.py`, and `python3 scripts/qemu_phase19_extended_test.py` completed successfully. The QEMU path exercised RixFS through NVMe, VFS, syscalls, libc, shell, and real userspace utilities. Rename coverage includes inode preservation, overwrite, cross-directory movement, reusable deleted slots, and fail-closed directory collision handling. This closes the observed CP3/CP4/CP6 scenarios for regular-file rename and the listed coreutils flows, not the full crash-recovery or hardware gate.
 
 The Phase 13/20 credential gate also passed `make phase20-test CROSS=x86_64-linux-gnu-`. The run covered UID/GID and ACL policy, capability delegation, kill behavior, session lifecycle, protected shadow access, account add/remove, password rotation, new-password verification, old-password rejection, and login/logout. This is QEMU-validated for the observed policy matrix; physical-device, broader authorization, and injected storage-failure evidence remain open.
+
+
+## Phase 20 closure review — 2026-09-07
+
+The bounded Phase 20 implementation now has QEMU evidence for owner/group/other access, path-search denial, supplementary groups, saved IDs, ACLs, capabilities and delegation, audit identity, set-ID transitions, tainted-environment sanitization, session lifecycle, account lock/unlock, invalid-account no-mutation behavior, password rotation and login. Strict build and host regressions pass.
+
+CP7 and CP8 remain open for the phase as a whole. The remaining blockers are injected mid-commit power-loss/crash testing for the account store and journal, physical NVMe/security-target evidence, a complete interactive login/lockout service, and a final review of the broader authorization matrix. These cannot be honestly claimed from the current disposable QEMU environment; the shell prompt therefore remains unchanged.

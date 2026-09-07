@@ -45,13 +45,16 @@ def read_until(marker: bytes, timeout: float) -> bool:
     return False
 
 
-def command(line: bytes) -> None:
+def command(line: bytes, expected: bytes | None = None) -> None:
+    start = cursor
     for byte in line + b"\n":
         proc.stdin.write(bytes((byte,)))
         proc.stdin.flush()
         time.sleep(0.01)
     if not read_until(b"rixuri$ ", 25.0):
         raise RuntimeError(f"prompt not observed after {line!r}")
+    if expected is not None and expected not in output[start:]:
+        raise RuntimeError(f"expected {expected!r} after {line!r}")
 
 
 try:
@@ -65,7 +68,13 @@ try:
     command(b"/usr/bin/authcheck protected")
     command(b"/usr/bin/accountctl add auditor 1100 auditor-pass")
     command(b"/usr/bin/authcheck record auditor")
-    command(b"/usr/bin/authcheck verify auditor auditor-pass")
+    command(b"/usr/bin/authcheck verify auditor auditor-pass", b"auth-pass")
+    command(b"/usr/bin/accountctl lock auditor")
+    command(b"/usr/bin/authcheck verify auditor auditor-pass", b"auth-denied")
+    command(b"/usr/bin/accountctl unlock auditor")
+    command(b"/usr/bin/authcheck verify auditor auditor-pass", b"auth-pass")
+    command(b"/usr/bin/accountctl rotate missing missing-pass", b"command execution failed")
+    command(b"/usr/bin/authcheck verify operator phase20-pass", b"auth-pass")
     command(b"/usr/bin/accountctl rotate operator phase20-rotated")
     command(b"/usr/bin/authcheck verify operator phase20-rotated")
     command(b"/usr/bin/authcheck login operator phase20-rotated")
@@ -92,6 +101,8 @@ for marker in (
     b"auth-denied",
     b"shadow-protected=PASS",
     b"account-add=PASS",
+    b"account-lock=PASS",
+    b"account-unlock=PASS",
     b"password-rotate=PASS",
     b"login=PASS",
     b"account-remove=PASS",
