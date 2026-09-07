@@ -40,6 +40,10 @@ typedef struct {
     uint16_t rx_tail;
     uint16_t tx_head;
     uint16_t tx_tail;
+    uint64_t rx_ring_phys;
+    uint64_t tx_ring_phys;
+    uint64_t rx_buffers[RIX_E1000_RING_SIZE];
+    uint64_t tx_buffers[RIX_E1000_RING_SIZE];
     rix_e1000_descriptor_t rx_ring[RIX_E1000_RING_SIZE];
     rix_e1000_descriptor_t tx_ring[RIX_E1000_RING_SIZE];
 } rix_e1000_t;
@@ -47,3 +51,7 @@ typedef struct {
 int rix_e1000_is_supported(const rix_pci_device_t *device);
 int rix_e1000_validate_mmio(const rix_e1000_t *driver, uint32_t offset, uint32_t width);
 int rix_e1000_init_rings(rix_e1000_t *driver);
+int rix_e1000_init(void);
+int rix_e1000_configure(rix_e1000_t *driver);
+int rix_e1000_transmit(rix_e1000_t *driver, const void *data, size_t length);
+int rix_e1000_receive(rix_e1000_t *driver, void *data, size_t capacity, size_t *length);

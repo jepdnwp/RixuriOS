@@ -25,6 +25,7 @@
 #include "tty/tty.h"
 #include "time/rtc.h"
 #include "time/time.h"
+#include "net/e1000.h"
 
 static uint8_t klog_ready;
 static size_t klog_strlen(const char *s) { size_t n = 0; while (s[n]) n++; return n; }
@@ -225,6 +226,7 @@ void kernel_main(const rixuri_boot_info_t *boot){
  if(lapic_init()!=0)panic("local APIC initialization failed");
  if(pci_init()!=0)panic("PCI initialization failed");
  klog_write("PCI: devices=");klog_write_dec(pci_device_count());klog_write("\r\n");
+ (void)rix_e1000_init();
  if(block_init()!=0)panic("block subsystem initialization failed");
  if(vfs_init()!=0)panic("VFS initialization failed");
  if(nvme_init()!=0)panic("NVMe initialization failed");
