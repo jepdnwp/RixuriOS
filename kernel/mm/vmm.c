@@ -2,7 +2,10 @@
 #include "pmm.h"
 #include <stddef.h>
 #define TABLE_ENTRIES 512ULL
-#define IDENTITY_PD_COUNT 128ULL
+/* UEFI may place the memory map or GOP framebuffer above 128 GiB on
+ * machines with large/high-address physical memory.  Keep the early
+ * identity map wide enough to access those buffers while switching CR3. */
+#define IDENTITY_PD_COUNT 512ULL
 #define PAGE_MASK 0x000FFFFFFFFFF000ULL
 #define PTE_PS (1ULL<<7)
 #define CR0_WP (1ULL<<16)
