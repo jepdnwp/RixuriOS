@@ -175,31 +175,43 @@ static void keyboard_poll_worker(void *arg){
  }
 }
 static void try_mount_root(void){const char *names[]={"nvme0n1","nvme0n1p1","nvme1n1","nvme1n1p1"};for(size_t i=0;i<sizeof(names)/sizeof(names[0]);i++){rix_block_device_t*d=block_find(names[i]);if(!d)continue;int rc=vfs_mount_root(d);klog_write("VFS: mount ");klog_write(names[i]);klog_write(" rc=");klog_write_dec((uint64_t)(rc<0?-rc:rc));klog_write("\r\n");if(rc==0)return;}}
+static volatile uint32_t *g_early_fb;
+static uint32_t g_early_pitch;
+static void early_bar(uint32_t y, uint32_t color) {
+ if (!g_early_fb) return;
+ volatile uint32_t *row = g_early_fb + (size_t)y * (g_early_pitch / 4u);
+ for (uint32_t x = 0; x < 200u && x < 1280u; ++x) row[x] = color;
+}
 void kernel_main(const rixuri_boot_info_t *boot){
- /* Early framebuffer output - write directly to GOP fb for real hardware debug.
-  * Boot info might be on stack now, safe to access. */
+ /* Early framebuffer output - write directly to GOP fb for real hardware debug. */
  if(boot&&boot->framebuffer_base&&boot->framebuffer_width&&boot->framebuffer_height){
-  volatile uint32_t *fb=(volatile uint32_t *)(uintptr_t)boot->framebuffer_base;
-  for(uint32_t x=0;x<boot->framebuffer_width&&x<200u;++x){
-   fb[x]=0x00FFFF00u;
-  }
+  g_early_fb=(volatile uint32_t *)(uintptr_t)boot->framebuffer_base;
+  g_early_pitch=boot->framebuffer_pitch?boot->framebuffer_pitch:boot->framebuffer_width*4u;
+  early_bar(0, 0x0000FF00u); /* GREEN: kernel_main entered */
  }
  serial_init();serial_write("RixuriOS kernel: x86_64 / AMD64 64-bit\r\n");
+ early_bar(1, 0x000000FFu); /* RED: serial_init done */
  if(!boot||boot->magic!=RIXURI_BOOT_MAGIC||boot->version!=RIXURI_BOOT_VERSION||boot->size<sizeof(*boot))panic("invalid UEFI boot handoff");
  if(!boot->memory_map||!boot->memory_descriptor_size||!boot->memory_map_size)panic("missing UEFI memory map");
+ early_bar(2, 0x00FF0000u); /* BLUE: boot info validated */
  klog_write("Boot handoff: version=");klog_write_dec(boot->version);klog_write(" size=");klog_write_dec(boot->size);klog_write("\r\n");
  klog_write("ACPI RSDP: ");klog_write_hex(boot->rsdp);klog_write("\r\n");
  gdt_init();idt_init();klog_write("GDT/IDT: initialized\r\n");
+ early_bar(3, 0x00FFFF00u); /* YELLOW: GDT/IDT done */
  pmm_init((const void*)(uintptr_t)boot->memory_map,boot->memory_map_size,boot->memory_descriptor_size,boot->kernel_phys_base,boot->kernel_phys_end,(uint64_t)(uintptr_t)boot,sizeof(*boot));
+ early_bar(4, 0x0000FFFFu); /* CYAN: PMM done */
  if(boot->framebuffer_base&&boot->framebuffer_size){
   uint64_t fb_end=boot->framebuffer_base+boot->framebuffer_size;
   for(uint64_t page=boot->framebuffer_base&~0xfffULL;page<fb_end;page+=0x1000ULL)
    pmm_reserve_page(page);
  }
  if(!pmm_free_pages())panic("physical memory allocator has no free pages");
+ early_bar(5, 0x00FF00FFu); /* MAGENTA: PMM pages reserved */
  klog_write("PMM: total=");klog_write_dec(pmm_total_pages());klog_write(" free=");klog_write_dec(pmm_free_pages());klog_write("\r\n");
  vmm_early_init();if(!vmm_kernel_pml4())panic("VMM initialization failed");klog_write("VMM: initialized\r\n");
+ early_bar(6, 0x00FFFFFFu); /* WHITE: VMM done */
  heap_init();void *probe=kmalloc(1,sizeof(uintptr_t));if(!probe)panic("kernel heap initialization failed");kfree(probe);klog_write("KHEAP: initialized\r\n");
+ early_bar(7, 0x00808000u); /* DARK YELLOW: heap done */
  tty_init();
  klog_write("GOP: base=");klog_write_hex(boot->framebuffer_base);
  klog_write(" size=");klog_write_dec(boot->framebuffer_size);
