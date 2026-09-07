@@ -64,13 +64,19 @@ int program_main(int argc, char **argv, char **envp) {
     uint32_t received_groups[2] = {0, 0};
     uint64_t status = 0;
     uint64_t caps = 0;
+    uint32_t audit_uid = 0;
     rix_stat_t stat_result;
     rix_acl_t acl;
     rix_acl_t acl_read;
     char *id_argv[] = {(char *)"/usr/bin/id", (char *)0};
+    char *audit_argv[] = {(char *)"/usr/bin/auditcheck", (char *)0};
     char *empty_env[] = {(char *)0};
 
     if (argc != 1) return 2;
+    if (get_audit_uid(&audit_uid) != 0 || audit_uid != 0u ||
+        set_audit_uid(4242u) != 0 || get_audit_uid(&audit_uid) != 0 ||
+        audit_uid != 4242u)
+        return 1;
     if (emit("before uid=") != 0 || emit_number(getuid()) != 0 ||
         emit(" gid=") != 0 || emit_number(getgid()) != 0 || emit("\n") != 0)
         return 1;
@@ -118,7 +124,9 @@ int program_main(int argc, char **argv, char **envp) {
         get_capabilities(&caps) != 0 || caps != (RIX_CAP_SETUID | RIX_CAP_SETGID) ||
         expect_error(setacl("/phase20-work/acl-user", &acl_read), RIX_EACCES) != 0 ||
         expect_error(chmod("/phase20-mode", 0777u), RIX_EACCES) != 0 ||
-        expect_error(openat(RIX_VFS_AT_FDCWD, "/phase20-other", 0u, 0u), RIX_EACCES) != 0)
+        expect_error(openat(RIX_VFS_AT_FDCWD, "/phase20-other", 0u, 0u), RIX_EACCES) != 0 ||
+        expect_error(set_audit_uid(7u), RIX_EACCES) != 0 ||
+        get_audit_uid(&audit_uid) != 0 || audit_uid != 4242u)
         return 1;
     if (emit("cap=PASS\n") != 0) return 1;
     if (setgroups(2u, groups) != 0 || setgid(1000u) != 0 || setuid(1000u) != 0)
@@ -167,6 +175,14 @@ int program_main(int argc, char **argv, char **envp) {
     if (expect_error(mkdir("/phase20-denied", 0755u), RIX_EACCES) != 0)
         return 1;
     if (emit("matrix=PASS\n") != 0) return 1;
+
+    rix_pid_t audit_child = fork();
+    if (audit_child == (rix_pid_t)-1) return 1;
+    if (audit_child == 0) {
+        if (execve("/usr/bin/auditcheck", audit_argv, empty_env) != 0) _exit(127);
+        _exit(126);
+    }
+    if (wait(audit_child, &status) != audit_child || status != 0) return 1;
 
     rix_pid_t child = fork();
     if (child == (rix_pid_t)-1) return 1;

@@ -72,6 +72,7 @@ for marker in (
     b"acl=PASS",
     b"cap=PASS",
     b"matrix=PASS",
+    b"audit=PASS\n",
     b"setid=PASS\n",
     b"kill=PASS\n",
 ):

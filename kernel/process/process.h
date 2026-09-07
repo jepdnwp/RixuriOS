@@ -57,3 +57,5 @@ int process_apply_exec_credentials(pid_t pid,uint32_t uid,uint32_t gid,int setui
 int process_has_capability(pid_t pid,uint64_t capability);
 int process_get_capabilities(pid_t pid,uint64_t *out);
 int process_drop_capabilities(pid_t pid,uint64_t mask);
+int process_get_audit_uid(pid_t pid,uint32_t *out);
+int process_set_audit_uid(pid_t pid,uint32_t uid);

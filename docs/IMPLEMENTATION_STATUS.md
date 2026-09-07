@@ -524,4 +524,12 @@ The strict userspace fork ABI declaration now carries `returns_twice`, and fork 
 - Added `/usr/bin/sessionlisttest` and extended the session QEMU harness to prove two concurrent sessions are observable and that logout/exit cleanup removes the child session without disturbing the parent session.
 - Clean strict build, host tests, Phase 20 credential/CAP_KILL QEMU, session lifecycle/registry QEMU, atomic rename, metadata cp/mv and account/authentication QEMU suites all passed in this environment.
 
-Phase 20 remains `IMPLEMENTED / NOT YET VALIDATED` for hardware-specific security claims and for an interactive login service with account mutation/rollback and password rotation, capability delegation across ordinary exec, audit identity, cross-directory/overwrite transactional rename semantics, and physical-hardware security evidence. These are intentionally separate from the validated bounded kernel ABI and enforcement slices above.
+## Phase 20 audit identity continuation — 2026-09-07
+
+- Added an out-of-line PID-indexed audit UID initialized from the creator identity and inherited across fork/spawn without changing the stable `rix_process_t` layout.
+- Added version-1 `get_audit_uid` and `set_audit_uid` syscalls plus freestanding libc wrappers. Assignment requires `CAP_AUDIT_ADMIN`; dropping that capability fails closed with `-EACCES`.
+- Ordinary `execve` preserves the audit UID, including through the existing set-ID credential path. Set-ID execution clears effective capabilities but does not rewrite the recorded audit identity.
+- Added `/usr/bin/auditcheck` and extended `/usr/bin/credtest` to validate trusted assignment, post-drop immutability, fork inheritance and ordinary exec preservation.
+- The disposable Phase 20 QEMU harness now requires `audit=PASS` in addition to the existing credential, ACL, capability, permission-matrix, set-ID, CAP_KILL and session markers. The strict build, image generation and complete `make phase20-test CROSS=x86_64-linux-gnu-` run passed without page fault, CPU exception, panic, timeout or prompt loss.
+
+Phase 20 remains `IMPLEMENTED / NOT YET VALIDATED` for hardware-specific security claims and for an interactive login service with account mutation/rollback and password rotation, capability delegation across ordinary exec, cross-directory/overwrite transactional rename semantics, and physical-hardware security evidence. These are intentionally separate from the validated bounded kernel ABI and enforcement slices above.

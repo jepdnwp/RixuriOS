@@ -17,7 +17,8 @@ typedef struct { uint64_t inode; uint8_t type; uint32_t mode; uint32_t uid; uint
 #define RIX_CAP_TTY_ADMIN    (1ULL << 4)
 #define RIX_CAP_ACL_ADMIN    (1ULL << 5)
 #define RIX_CAP_SESSION_ADMIN (1ULL << 6)
-#define RIX_CAP_ALL (RIX_CAP_DAC_OVERRIDE | RIX_CAP_SETUID | RIX_CAP_SETGID | RIX_CAP_KILL | RIX_CAP_TTY_ADMIN | RIX_CAP_ACL_ADMIN | RIX_CAP_SESSION_ADMIN)
+#define RIX_CAP_AUDIT_ADMIN  (1ULL << 7)
+#define RIX_CAP_ALL (RIX_CAP_DAC_OVERRIDE | RIX_CAP_SETUID | RIX_CAP_SETGID | RIX_CAP_KILL | RIX_CAP_TTY_ADMIN | RIX_CAP_ACL_ADMIN | RIX_CAP_SESSION_ADMIN | RIX_CAP_AUDIT_ADMIN)
 typedef struct { uint32_t version; uint32_t user; uint32_t user_perm; uint32_t group; uint32_t group_perm; uint32_t mask; } rix_acl_t;
 rix_ssize_t read(int fd, void *buf, size_t count);
 rix_ssize_t write(int fd,const void *buf,size_t count);
@@ -60,6 +61,8 @@ int logout_session(void);
 int list_sessions(rix_session_info_t *sessions,size_t capacity,size_t *count);
 int get_capabilities(uint64_t *out);
 int drop_capabilities(uint64_t mask);
+int get_audit_uid(uint32_t *out);
+int set_audit_uid(uint32_t uid);
 int getgroups(size_t capacity, uint32_t *groups);
 int setgroups(size_t count, const uint32_t *groups);
 int execve(const char *path, char *const argv[], char *const envp[]);
