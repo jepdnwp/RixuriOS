@@ -163,6 +163,7 @@ static void serial_tty_worker(void *arg){
 static void keyboard_poll_worker(void *arg){
  (void)arg;
  for(;;){
+  ps2_keyboard_poll();
   for(size_t k=0;k<RIX_MAX_KEYBOARDS;k++){
    if(!known_keyboards[k].used)continue;
    uint16_t actual=0;
