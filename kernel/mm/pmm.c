@@ -75,6 +75,28 @@ uint64_t pmm_alloc_page_below(uint64_t max_exclusive){
     return 0;
 }
 uint64_t pmm_alloc_page(void){return pmm_alloc_page_below(PMM_MAX_PHYS);}
+uint64_t pmm_alloc_pages(size_t count){
+    if(!count||count>PMM_MAX_PAGES)return 0;
+    for(uint64_t start=0;start+count<=PMM_MAX_PAGES;start++){
+        int available=1;
+        for(size_t i=0;i<count;i++){
+            uint64_t page=start+(uint64_t)i,word=page>>6,bit=1ULL<<(page&63ULL);
+            if(!(managed_bitmap[word]&bit)||page_bitmap[word]&bit){available=0;break;}
+        }
+        if(!available)continue;
+        for(size_t i=0;i<count;i++){
+            uint64_t page=start+(uint64_t)i,word=page>>6,bit=1ULL<<(page&63ULL);
+            page_bitmap[word]|=bit;
+        }
+        free_pages_count-=count;
+        return start*RIXURI_PAGE_SIZE;
+    }
+    return 0;
+}
+void pmm_free_page_range(uint64_t physical_address,size_t count){
+    if(!count||(physical_address&(RIXURI_PAGE_SIZE-1ULL))!=0)return;
+    for(size_t i=0;i<count;i++)pmm_free_page(physical_address+(uint64_t)i*RIXURI_PAGE_SIZE);
+}
 void pmm_reserve_page(uint64_t physical_address){
     if((physical_address&(RIXURI_PAGE_SIZE-1ULL))!=0)return;
     uint64_t page=physical_address/RIXURI_PAGE_SIZE;if(page>=PMM_MAX_PAGES)return;

@@ -412,6 +412,14 @@ int tty_input(unsigned id, uint8_t ch) {
     if (t->canonical && t->isig && (ch == 0x03u || ch == 0x1au || ch == 0x1cu)) {
         return tty_control_signal(t, ch);
     }
+    if (ch >= RIX_TTY_KEY_UP && ch <= RIX_TTY_KEY_RIGHT) {
+        if (t->canonical) return 0;
+        if (t->count == RIX_TTY_INPUT) return -2;
+        t->input[t->tail] = ch;
+        t->tail = (t->tail + 1u) % RIX_TTY_INPUT;
+        t->count++;
+        return 0;
+    }
     if (t->canonical && (ch == 8u || ch == 127u)) {
         if (t->line_chars != 0u && t->count != 0u) {
             t->tail = (t->tail + RIX_TTY_INPUT - 1u) % RIX_TTY_INPUT;

@@ -13,6 +13,8 @@ void pmm_init(const void *memory_map, uint64_t memory_map_size,
              uint64_t kernel_end, uint64_t boot_info,
              uint64_t boot_info_size);
 uint64_t pmm_alloc_page(void);
+uint64_t pmm_alloc_pages(size_t count);
+void pmm_free_page_range(uint64_t physical_address, size_t count);
 uint64_t pmm_alloc_page_below(uint64_t max_physical_exclusive);
 void pmm_reserve_page(uint64_t physical_address);
 void pmm_free_page(uint64_t physical_address);

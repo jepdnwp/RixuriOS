@@ -7,6 +7,7 @@
 
 static uint8_t shift_held;
 static uint8_t ctrl_held;
+static uint8_t extended_scancode;
 
 static inline uint8_t inb(uint16_t port) {
     uint8_t val;
@@ -38,10 +39,25 @@ static void ps2_irq_handler(unsigned irq, const struct interrupt_frame *frame) {
     (void)irq; (void)frame;
     uint8_t scancode = inb(PS2_DATA_PORT);
 
-    if (scancode == 0xe0u) return;
+    if (scancode == 0xe0u) {
+        extended_scancode = 1u;
+        return;
+    }
 
     uint8_t released = scancode & 0x80u;
     uint8_t code = scancode & 0x7fu;
+    uint8_t extended = extended_scancode;
+    extended_scancode = 0;
+
+    if (extended && !released) {
+        uint8_t key = 0;
+        if (code == 0x48u) key = RIX_TTY_KEY_UP;
+        else if (code == 0x50u) key = RIX_TTY_KEY_DOWN;
+        else if (code == 0x4bu) key = RIX_TTY_KEY_LEFT;
+        else if (code == 0x4du) key = RIX_TTY_KEY_RIGHT;
+        if (key) tty_input(0, key);
+        return;
+    }
 
     if (code == 0x2au || code == 0x36u) { shift_held = !released; return; }
     if (code == 0x1du) { ctrl_held = !released; return; }
@@ -65,5 +81,6 @@ static void ps2_irq_handler(unsigned irq, const struct interrupt_frame *frame) {
 void ps2_keyboard_init(void) {
     shift_held = 0;
     ctrl_held = 0;
+    extended_scancode = 0;
     irq_register(1u, ps2_irq_handler);
 }

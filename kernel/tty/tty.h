@@ -8,6 +8,10 @@
 #define RIX_PTY_COUNT 4u
 #define RIX_TTY_MAX_ROWS 64u
 #define RIX_TTY_MAX_COLUMNS 128u
+#define RIX_TTY_KEY_UP 0x80u
+#define RIX_TTY_KEY_DOWN 0x81u
+#define RIX_TTY_KEY_LEFT 0x82u
+#define RIX_TTY_KEY_RIGHT 0x83u
 
 typedef struct {
     uint8_t input[RIX_TTY_INPUT];
