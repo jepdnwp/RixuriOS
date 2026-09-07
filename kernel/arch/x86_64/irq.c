@@ -1,5 +1,6 @@
 #include "irq.h"
 #include "apic.h"
+#include "pic.h"
 #include "../../sched/scheduler.h"
 #include <stddef.h>
 
@@ -21,7 +22,7 @@ void x86_irq_dispatch(const struct interrupt_frame *frame) {
     unsigned irq = (unsigned)(frame->vector - 32);
     irq_handler_t handler = handlers[irq];
     if (handler) handler(irq, frame);
-    lapic_eoi();
+    if (pic_active()) pic_eoi(irq); else lapic_eoi();
     /* Interrupt entry frames are not task stacks. Timer IRQs only account time;
        voluntary yields perform context switches until a dedicated IRQ-return
        scheduler path is implemented. */
