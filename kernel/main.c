@@ -176,6 +176,14 @@ static void keyboard_poll_worker(void *arg){
 }
 static void try_mount_root(void){const char *names[]={"nvme0n1","nvme0n1p1","nvme1n1","nvme1n1p1"};for(size_t i=0;i<sizeof(names)/sizeof(names[0]);i++){rix_block_device_t*d=block_find(names[i]);if(!d)continue;int rc=vfs_mount_root(d);klog_write("VFS: mount ");klog_write(names[i]);klog_write(" rc=");klog_write_dec((uint64_t)(rc<0?-rc:rc));klog_write("\r\n");if(rc==0)return;}}
 void kernel_main(const rixuri_boot_info_t *boot){
+ /* Early framebuffer output - write directly to GOP fb for real hardware debug.
+  * Boot info might be on stack now, safe to access. */
+ if(boot&&boot->framebuffer_base&&boot->framebuffer_width&&boot->framebuffer_height){
+  volatile uint32_t *fb=(volatile uint32_t *)(uintptr_t)boot->framebuffer_base;
+  for(uint32_t x=0;x<boot->framebuffer_width&&x<200u;++x){
+   fb[x]=0x00FFFF00u;
+  }
+ }
  serial_init();serial_write("RixuriOS kernel: x86_64 / AMD64 64-bit\r\n");
  if(!boot||boot->magic!=RIXURI_BOOT_MAGIC||boot->version!=RIXURI_BOOT_VERSION||boot->size<sizeof(*boot))panic("invalid UEFI boot handoff");
  if(!boot->memory_map||!boot->memory_descriptor_size||!boot->memory_map_size)panic("missing UEFI memory map");
