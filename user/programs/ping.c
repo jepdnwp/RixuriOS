@@ -22,7 +22,11 @@ static uint16_t checksum(const uint8_t *data, size_t length_bytes) {
 }
 
 int program_main(int argc, char **argv, char **envp) {
-    (void)argc; (void)argv; (void)envp;
+    (void)envp;
+    if (argc > 1 && argv && argv[1] && argv[1][0] != '1') {
+        say("ping: DNS/network path unavailable\n");
+        return 2;
+    }
     uint8_t request[8] = {8, 0, 0, 0, 0x12, 0x34, 0, 1};
     uint16_t sum = checksum(request, sizeof(request));
     request[2] = (uint8_t)(sum >> 8);

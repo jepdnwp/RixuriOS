@@ -12,8 +12,8 @@ static int has_prefix(const char *text, size_t size, const char *prefix) {
 
 int program_main(int argc, char **argv, char **envp) {
     (void)envp;
-    if (argc > 1 && argv && argv[1] && argv[1][0] != 'h') {
-        say("curl: only loopback HTTP is supported\n");
+    if (argc > 1 && argv && argv[1] && argv[1][0] != 'l') {
+        say("curl: DNS/network path unavailable\n");
         return 2;
     }
     int fd = socket_open(RIX_NET_SOCKET_TCP);

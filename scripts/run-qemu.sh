@@ -37,4 +37,11 @@ QEMU_ARGS=(
   -no-shutdown
 )
 
+if [[ "${RIXURI_QEMU_NET:-0}" == "1" ]]; then
+  QEMU_ARGS+=(
+    -netdev "user,id=net0"
+    -device "e1000,netdev=net0"
+  )
+fi
+
 exec qemu-system-x86_64 "${QEMU_ARGS[@]}" "$@"
