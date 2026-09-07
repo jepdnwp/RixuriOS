@@ -5,7 +5,6 @@
 
 #define PS2_DATA_PORT 0x60u
 #define PS2_STATUS_PORT 0x64u
-#define PS2_COMMAND_PORT 0x64u
 
 static uint8_t shift_held;
 static uint8_t ctrl_held;
@@ -16,23 +15,6 @@ static inline uint8_t inb(uint16_t port) {
     __asm__ volatile("inb %1, %0" : "=a"(val) : "Nd"(port));
     return val;
 }
-static inline void outb(uint16_t port, uint8_t val) {
-    __asm__ volatile("outb %0, %1" : : "a"(val), "Nd"(port));
-}
-static int ps2_wait_input_clear(void) {
-    for (unsigned i = 0; i < 100000u; ++i)
-        if ((inb(PS2_STATUS_PORT) & 2u) == 0u) return 0;
-    return -1;
-}
-static int ps2_wait_output_full(void) {
-    for (unsigned i = 0; i < 100000u; ++i)
-        if (inb(PS2_STATUS_PORT) & 1u) return 0;
-    return -1;
-}
-static void ps2_write_device(uint8_t value) {
-    if (ps2_wait_input_clear() == 0) outb(PS2_DATA_PORT, value);
-}
-
 static void ps2_irq_handler(unsigned irq, const struct interrupt_frame *frame);
 
 static const uint8_t scancode_to_ascii[128] = {
@@ -102,12 +84,10 @@ void ps2_keyboard_init(void) {
     shift_held = 0;
     ctrl_held = 0;
     extended_scancode = 0;
-    /* Some firmware/QEMU configurations leave the 8042 keyboard interface
-       disabled until it is explicitly enabled and scanning is started. */
-    if (ps2_wait_input_clear() == 0) outb(PS2_COMMAND_PORT, 0xAEu);
-    while (inb(PS2_STATUS_PORT) & 1u) (void)inb(PS2_DATA_PORT);
-    ps2_write_device(0xF4u);
-    if (ps2_wait_output_full() == 0) (void)inb(PS2_DATA_PORT);
+    /* Do not probe or command the legacy 8042 here. On USB-only systems the
+       controller may be absent or firmware-owned, and port I/O can stall the
+       boot path. PS/2 input remains available when IRQ1 actually produces
+       data; USB HID is handled by the xHCI worker. */
     irq_register(1u, ps2_irq_handler);
 }
 
