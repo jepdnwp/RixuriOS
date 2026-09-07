@@ -51,7 +51,7 @@ def run_scenario(name, control):
     output = bytearray()
     cursor = 0
     try:
-        cursor = read_until(proc, output, cursor, b"USER: init returned to kernel", 30.0)
+        cursor = read_until(proc, output, cursor, b"RIXURI: SHELL READY", 30.0)
         if cursor is None:
             raise RuntimeError(f"{name}: embedded init completion not observed")
         time.sleep(1.0)

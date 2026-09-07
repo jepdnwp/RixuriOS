@@ -45,12 +45,16 @@ with tempfile.TemporaryDirectory(prefix="rixurios-session-") as temporary:
         return False
 
     try:
-        if not until(b"USER: init returned to kernel"):
+        if not until(b"RIXURI: SHELL READY"):
             raise RuntimeError("boot")
         time.sleep(1)
-        for command in (b"/usr/bin/sessiontest\n", b"/usr/bin/sessionlisttest\n"):
+        commands = ((b"/usr/bin/sessiontest\n", b"session=PASS\n"),
+                    (b"/usr/bin/sessionlisttest\n", b"session-registry=PASS\n"))
+        for command, result in commands:
             process.stdin.write(command)
             process.stdin.flush()
+            if not until(result, 20):
+                raise RuntimeError("result")
             if not until(b"\x1b[1;37m:\x1b[0m ", 20):
                 raise RuntimeError("prompt")
     finally:

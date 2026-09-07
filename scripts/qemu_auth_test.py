@@ -46,19 +46,18 @@ def read_until(marker: bytes, timeout: float) -> bool:
 
 
 def command(line: bytes, expected: bytes | None = None) -> None:
-    start = cursor
     for byte in line + b"\n":
         proc.stdin.write(bytes((byte,)))
         proc.stdin.flush()
         time.sleep(0.01)
+    if expected is not None and not read_until(expected, 25.0):
+        raise RuntimeError(f"expected {expected!r} after {line!r}")
     if not read_until(b"\x1b[1;37m:\x1b[0m ", 25.0):
         raise RuntimeError(f"prompt not observed after {line!r}")
-    if expected is not None and expected not in output[start:]:
-        raise RuntimeError(f"expected {expected!r} after {line!r}")
 
 
 try:
-    if not read_until(b"USER: init returned to kernel", 30.0):
+    if not read_until(b"RIXURI: SHELL READY", 30.0):
         raise RuntimeError("embedded init completion not observed")
     time.sleep(1.0)
     command(b"/usr/bin/authcheck list")

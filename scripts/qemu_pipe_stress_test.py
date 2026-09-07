@@ -49,7 +49,7 @@ def send(line: bytes) -> None:
 
 
 try:
-    if not read_until(b"USER: init returned to kernel", 30.0):
+    if not read_until(b"RIXURI: SHELL READY", 30.0):
         raise RuntimeError("embedded init completion not observed")
     time.sleep(1.0)
     send(b"/usr/bin/pipe-stress")

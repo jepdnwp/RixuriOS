@@ -44,7 +44,7 @@ def command(line: bytes) -> None:
         raise RuntimeError(f"prompt missing after {line!r}")
 
 try:
-    if not read_until(b"USER: init returned to kernel"):
+    if not read_until(b"RIXURI: SHELL READY"):
         raise RuntimeError("embedded init completion not observed")
     time.sleep(1.0)
     for line in (

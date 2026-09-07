@@ -50,4 +50,9 @@ int setgroups(size_t count,const uint32_t *groups){return(int)rix_sys(116,(long)
 int execve(const char *path,char *const argv[],char *const envp[]){return(int)rix_sys(59,(long)path,(long)argv,(long)envp);}
 rix_pid_t getpid(void){return(rix_pid_t)rix_sys(39,0,0,0);}
 int kill(rix_pid_t pid,uint32_t signal){return(int)rix_sys(62,(long)pid,(long)signal,0);}
+int socket_open(int type){return(int)rix_sys(41,type,0,0);}
+int socket_bind(int fd,rix_net_endpoint_t endpoint){return(int)rix_sys(42,fd,(long)&endpoint,0);}
+int socket_connect(int fd,rix_net_endpoint_t endpoint){return(int)rix_sys(43,fd,(long)&endpoint,0);}
+int socket_send(int fd,const void*data,size_t length,rix_net_endpoint_t destination){return(int)rix_sys4(44,fd,(long)data,(long)length,(long)&destination);}
+int socket_receive(int fd,void*data,size_t capacity,rix_net_endpoint_t*source){return(int)rix_sys4(45,fd,(long)data,(long)capacity,(long)source);}
 _Noreturn void _exit(int status){(void)rix_sys(60,status,0,0);for(;;)__asm__ volatile("hlt");}

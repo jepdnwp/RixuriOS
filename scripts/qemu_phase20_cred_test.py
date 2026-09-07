@@ -45,19 +45,25 @@ with tempfile.TemporaryDirectory(prefix="rixurios-phase20-") as temporary:
         return False
 
     try:
-        if not until(b"USER: init returned to kernel"):
+        if not until(b"RIXURI: SHELL READY"):
             raise RuntimeError("boot")
         time.sleep(1)
         process.stdin.write(b"/usr/bin/credtest\n")
         process.stdin.flush()
+        if not until(b"setid=PASS\n", 20):
+            raise RuntimeError("credtest result")
         if not until(b"\x1b[1;37m:\x1b[0m ", 20):
             raise RuntimeError("prompt")
         process.stdin.write(b"/usr/bin/capdelegatetest\n")
         process.stdin.flush()
+        if not until(b"delegation=PASS\n", 20):
+            raise RuntimeError("capdelegatetest result")
         if not until(b"\x1b[1;37m:\x1b[0m ", 20):
             raise RuntimeError("capdelegatetest prompt")
         process.stdin.write(b"/usr/bin/killtest\n")
         process.stdin.flush()
+        if not until(b"kill=PASS\n", 20):
+            raise RuntimeError("killtest result")
         if not until(b"\x1b[1;37m:\x1b[0m ", 20):
             raise RuntimeError("killtest prompt")
     finally:

@@ -25,6 +25,17 @@ typedef struct {
     uint8_t stack[RIX_STACK_SIZE] __attribute__((aligned(16)));
 } rix_task_t;
 
+/* user_entry.S consumes rix_user_context_t at fixed byte offsets.  Keep the
+ * C/assembly ABI explicit so a field change cannot silently corrupt IRETQ. */
+_Static_assert(offsetof(rix_user_context_t, r15) == 0, "user context r15 offset");
+_Static_assert(offsetof(rix_user_context_t, r8) == 56, "user context r8 offset");
+_Static_assert(offsetof(rix_user_context_t, rsi) == 80, "user context rsi offset");
+_Static_assert(offsetof(rix_user_context_t, rax) == 112, "user context rax offset");
+_Static_assert(offsetof(rix_user_context_t, rip) == 120, "user context rip offset");
+_Static_assert(offsetof(rix_user_context_t, rflags) == 128, "user context rflags offset");
+_Static_assert(offsetof(rix_user_context_t, rsp) == 136, "user context rsp offset");
+_Static_assert(sizeof(rix_user_context_t) == 144, "user context size");
+
 extern void rix_context_switch(uint64_t *old_rsp,uint64_t new_rsp);
 static volatile uint64_t ticks;
 static rix_task_t tasks[RIX_MAX_TASKS];

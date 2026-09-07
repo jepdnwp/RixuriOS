@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include "address_space.h"
 #include "capability.h"
+#include "../net/socket.h"
 
 typedef uint64_t pid_t;
 typedef enum { RIX_PROC_UNUSED=0, RIX_PROC_RUNNING=1, RIX_PROC_SLEEPING=2, RIX_PROC_ZOMBIE=3 } rix_process_state_t;
@@ -17,7 +18,7 @@ typedef enum { RIX_PROC_UNUSED=0, RIX_PROC_RUNNING=1, RIX_PROC_SLEEPING=2, RIX_P
 #define RIX_SESSION_MAX RIX_PROCESS_MAX
 #define RIX_SESSION_ACTIVE 1u
 
-typedef struct { pid_t pid; pid_t parent; pid_t process_group; pid_t session; rix_process_state_t state; uint32_t uid; uint32_t gid; uint64_t capabilities; rix_address_space_t address_space; uint64_t kernel_stack; uint64_t kernel_stack_size; uint64_t exit_status; uint64_t fd_bitmap; uint64_t signal_pending; uint64_t signal_mask; char name[RIX_PROCESS_NAME_MAX]; char cwd[RIX_PROCESS_CWD_MAX]; } rix_process_t;
+typedef struct { pid_t pid; pid_t parent; pid_t process_group; pid_t session; rix_process_state_t state; uint32_t uid; uint32_t gid; uint64_t capabilities; rix_address_space_t address_space; uint64_t kernel_stack; uint64_t kernel_stack_size; uint64_t exit_status; uint64_t fd_bitmap; uint64_t signal_pending; uint64_t signal_mask; rix_net_socket_table_t sockets; char name[RIX_PROCESS_NAME_MAX]; char cwd[RIX_PROCESS_CWD_MAX]; } rix_process_t;
 typedef struct { pid_t session; pid_t leader; uint32_t uid; uint32_t controlling_tty; uint32_t flags; } rix_session_info_t;
 int process_init(void);
 pid_t process_current(void);

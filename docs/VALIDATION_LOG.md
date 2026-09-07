@@ -567,3 +567,29 @@ Added a bounded session registry alongside process session membership. `RIX_SYS_
 `/usr/bin/sessionlisttest` creates a concurrent child session, verifies that both the parent and child sessions are visible, waits for the child to logout and exit, then verifies that the child record is gone while the parent session remains. The existing session QEMU harness now runs both lifecycle and registry tests.
 
 Observed markers were `session=PASS`, `session-registry=PASS` and `qemu session lifecycle test: PASS`, with no page fault, CPU exception or panic markers. This is an in-memory runtime registry; reboot-persistent session serialization and a full login/session manager remain outside this slice.
+
+
+## 2026-09-07 — Phase 20 clean QEMU gate rerun
+
+After installing the local validation toolchain (`gcc`, MinGW x86_64 UEFI compiler, QEMU/OVMF, `dosfstools` and `mtools`), a clean UEFI/RixFS image was built successfully. The Phase 20 harnesses were aligned with the current boot contract by waiting for `RIXURI: SHELL READY`; credential, session and authentication harnesses were tightened to consume command-specific success markers rather than accepting a stale shell prompt.
+
+The complete `make phase20-test CROSS=` gate passed on the disposable NVMe-backed QEMU image. Observed results included:
+
+- `qemu Phase 20 credential/permission test: PASS`
+- `session=PASS`
+- `session-registry=PASS`
+- `qemu session lifecycle test: PASS`
+- `accounts=3`
+- `account-record=PASS`
+- `auth-pass` and `auth-denied`
+- `shadow-protected=PASS`
+- `account-add=PASS`, `account-lock=PASS`, `account-unlock=PASS`
+- invalid-account rotation rejected without damaging the existing record
+- `password-rotate=PASS`
+- `login-identity=PASS` and `login=PASS`
+- `account-remove=PASS`
+- `qemu account/authentication test: PASS`
+
+The run also reached `RIXURI:KERNEL_READY`, `RIXURI:USER_ENTER`, `RIXURI:SYSCALL_OK` and `RIXURI: SHELL READY` without a page fault, CPU exception, panic, timeout or prompt-loss failure. `git diff --check` passed.
+
+This closes the bounded Phase 20 credential, permission, capability, audit, session and account/authentication QEMU slice. It does **not** justify marking the entire Phase 20 complete: the existing fork/address-space/pipe-stress regression remains open, physical AMD hardware security evidence is unavailable here, and power-loss/hardware qualification remains outside this run.

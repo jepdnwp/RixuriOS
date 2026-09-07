@@ -21,6 +21,11 @@ typedef struct { uint64_t inode; uint8_t type; uint32_t mode; uint32_t uid; uint
 #define RIX_CAP_DELEGATE     (1ULL << 8)
 #define RIX_CAP_ALL (RIX_CAP_DAC_OVERRIDE | RIX_CAP_SETUID | RIX_CAP_SETGID | RIX_CAP_KILL | RIX_CAP_TTY_ADMIN | RIX_CAP_ACL_ADMIN | RIX_CAP_SESSION_ADMIN | RIX_CAP_AUDIT_ADMIN | RIX_CAP_DELEGATE)
 typedef struct { uint32_t version; uint32_t user; uint32_t user_perm; uint32_t group; uint32_t group_perm; uint32_t mask; } rix_acl_t;
+typedef struct { uint32_t address; uint16_t port; } rix_net_endpoint_t;
+#define RIX_NET_SOCKET_UDP 1
+#define RIX_NET_SOCKET_RAW_ICMP 2
+#define RIX_NET_SOCKET_TCP 3
+#define RIX_NET_SOCKET_LOOPBACK 0x7f000001u
 rix_ssize_t read(int fd, void *buf, size_t count);
 rix_ssize_t write(int fd,const void *buf,size_t count);
 int openat(int dirfd, const char *path, uint32_t flags, uint32_t mode);
@@ -70,4 +75,9 @@ int setgroups(size_t count, const uint32_t *groups);
 int execve(const char *path, char *const argv[], char *const envp[]);
 rix_pid_t getpid(void);
 int kill(rix_pid_t pid, uint32_t signal);
+int socket_open(int type);
+int socket_bind(int fd, rix_net_endpoint_t endpoint);
+int socket_connect(int fd, rix_net_endpoint_t endpoint);
+int socket_send(int fd, const void *data, size_t length, rix_net_endpoint_t destination);
+int socket_receive(int fd, void *data, size_t capacity, rix_net_endpoint_t *source);
 _Noreturn void _exit(int status);

@@ -11,13 +11,13 @@ OBJ := kernel/boot.o kernel/main.o kernel/serial.o kernel/user_init_blob.o \
  kernel/arch/x86_64/cpu.o kernel/arch/x86_64/gdt.o kernel/arch/x86_64/idt.o kernel/arch/x86_64/interrupts.o kernel/arch/x86_64/irq.o kernel/arch/x86_64/apic.o kernel/arch/x86_64/acpi.o kernel/arch/x86_64/ioapic.o kernel/arch/x86_64/pic.o kernel/arch/x86_64/pit.o kernel/arch/x86_64/ps2_keyboard.o kernel/arch/x86_64/user_entry.o \
  kernel/pci/pci.o kernel/pci/dma.o kernel/pci/iommu.o kernel/pci/msix.o kernel/sched/scheduler.o kernel/sched/switch.o kernel/process/process.o kernel/process/signal.o kernel/process/address_space.o kernel/syscall/syscall.o kernel/vfs/vfs.o kernel/fs/rixfs.o kernel/fs/rixfs_ops.o kernel/fs/rixfs_dir.o kernel/fs/rixfs_fsck.o kernel/elf/elf.o kernel/elf/loader.o \
  kernel/mm/pmm.o kernel/mm/vmm.o kernel/mm/ptmap.o kernel/mm/uaccess.o kernel/mm/heap.o kernel/sync/lock.o kernel/sync/waitqueue.o kernel/ipc/channel.o kernel/ipc/pipe.o kernel/ipc/shared_memory.o kernel/tty/tty.o \
- kernel/storage/block.o kernel/storage/block_cache.o kernel/storage/nvme.o kernel/usb/xhci.o kernel/usb/usb.o kernel/usb/hid.o kernel/time/rtc.o kernel/time/time.o kernel/power/power.o kernel/tty/font_psf.o
+	 kernel/storage/block.o kernel/storage/block_cache.o kernel/storage/nvme.o kernel/net/net.o kernel/net/ethernet.o kernel/net/arp.o kernel/net/ipv4.o kernel/net/loopback.o kernel/net/socket.o kernel/net/rtl8125.o kernel/usb/xhci.o kernel/usb/usb.o kernel/usb/hid.o kernel/time/rtc.o kernel/time/time.o kernel/power/power.o kernel/tty/font_psf.o
 
-PROGRAM_NAMES := echo cat args grep true false sleep ls mkdir rm rmdir touch stat ln head tail wc cut tr sort uniq env printf pwd which kill ps uname du cp mv find xargs sed test tee basename dirname seq id whoami date credtest auditcheck capdelegatecheck capdelegatetest accountctl sessiontest sessionlisttest killtest metatest renametest authcheck abi-negative proc-test pipe-stress rixtest
+PROGRAM_NAMES := echo cat args grep true false sleep ls mkdir rm rmdir touch stat ln head tail wc cut tr sort uniq env printf pwd which kill ps uname du cp mv find xargs sed test tee basename dirname seq id whoami date ping curl credtest auditcheck capdelegatecheck capdelegatetest accountctl sessiontest sessionlisttest killtest metatest renametest authcheck abi-negative proc-test pipe-stress rixtest
 PROGRAM_ELFS := $(addprefix build/programs/,$(addsuffix .elf,$(PROGRAM_NAMES)))
 PROGRAM_START_OBJ := build/programs/start.o
 
-.PHONY: all clean check image iso iso-test powerloss-test test-all run qemu build-run test user-init programs rixfs-image usb-test hid-test tty-test shell-test pipe-test auth-test phase20-test
+.PHONY: all clean check image iso-test powerloss-test test-all run qemu build-run test user-init programs rixfs-image usb-test hid-test tty-test shell-test pipe-test net-test rtl-test auth-test phase20-test ring3-test
 all: build/kernel.elf
 
 build:
@@ -96,7 +96,9 @@ build/rixfs.img: programs scripts/build-rixfs-image.py | build
 				--file /usr/bin/seq=build/programs/seq.elf \
 				--file /usr/bin/id=build/programs/id.elf \
 				--file /usr/bin/whoami=build/programs/whoami.elf \
-				--file /bin/date=build/programs/date.elf \
+					--file /bin/date=build/programs/date.elf \
+					--file /usr/bin/ping=build/programs/ping.elf \
+					--file /usr/bin/curl=build/programs/curl.elf \
 				--file /usr/bin/credtest=build/programs/credtest.elf \
 					--file /usr/bin/auditcheck=build/programs/auditcheck.elf \
 					--file /usr/bin/capdelegatecheck=build/programs/capdelegatecheck.elf \
@@ -153,6 +155,8 @@ phase20-test: image
 		python3 scripts/qemu_phase20_cred_test.py
 		python3 scripts/qemu_session_test.py
 		python3 scripts/qemu_auth_test.py
+ring3-test: image
+		python3 scripts/qemu_ring3_test.py
 
 build-run: clean
 	$(MAKE) all
@@ -177,7 +181,15 @@ pipe-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -DRIX_HOST_TEST -I. tests/pipe_test.c kernel/ipc/channel.c kernel/ipc/pipe.c kernel/sync/lock.c -o build/pipe_test
 		build/pipe_test
 
-test: check usb-test hid-test tty-test shell-test pipe-test
+net-test: | build
+	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/net_test.c kernel/net/net.c kernel/net/ethernet.c kernel/net/arp.c kernel/net/ipv4.c kernel/net/loopback.c kernel/net/socket.c -o build/net_test
+		build/net_test
+
+rtl-test: | build
+	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/rtl8125_test.c kernel/net/rtl8125.c -o build/rtl8125_test
+		build/rtl8125_test
+
+test: check usb-test hid-test tty-test shell-test pipe-test net-test rtl-test
 	@echo 'Static kernel build checks completed.'
 
 clean:

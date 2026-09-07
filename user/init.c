@@ -338,6 +338,14 @@ void _start(void) {
     char line[RIX_INIT_LINE_CAP];
     rix_shell_history_t history;
     rix_shell_history_init(&history);
+    /* Qualify Ring 3 and the first syscall before exercising the shell. */
+    (void)write_text(1, "RIXURI:USER_ENTER\r\n");
+    if (getpid() != 1u) {
+        (void)write_text(2, "RIXURI:SYSCALL_FAIL\r\n");
+        _exit(127);
+    }
+    (void)write_text(1, "RIXURI:SYSCALL_OK\r\n");
+    (void)write_text(1, "RIXURI: SHELL READY\r\n");
     (void)write_text(1, "RixuriOS shell ready\r\n");
     for (;;) {
         reap_background_jobs();
@@ -345,5 +353,6 @@ void _start(void) {
         if (shell_read_line(line, sizeof(line)) != 0) break;
         (void)shell_execute_line(line, &history);
     }
+    (void)write_text(1, "RIXURI:USER_EXIT\r\n");
     _exit(0);
 }
