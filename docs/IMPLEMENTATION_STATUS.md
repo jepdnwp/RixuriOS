@@ -560,3 +560,10 @@ Phase 20 remains `IMPLEMENTED / NOT YET VALIDATED` for hardware-specific securit
 - `make phase20-test CROSS=x86_64-linux-gnu-` passed credential/permission, session lifecycle, and authentication/account rotation tests, including `login=PASS` after password rotation.
 
 The observed storage and authentication scenarios are `QEMU-VALIDATED` on the disposable QEMU NVMe image. Hardware NVMe qualification, injected mid-commit power-loss testing, directory rename semantics, symbolic links, and broader POSIX/account policy remain open and are not claimed complete.
+
+
+## Phase 20 permission-matrix continuation — 2026-09-07
+
+The real credential regression now adds path-search and parent-mutation coverage beyond the existing file owner/group/other checks. It creates a root-owned mode-0700 directory and secret file, verifies that a dropped UID/GID process receives `-EACCES` for open, stat, child creation, and unlink through the inaccessible path, while missing-path behavior remains separately checked as `-EINVAL`. The existing group-owned regular-file fixture continues to verify supplementary-group read access and write denial under mode 0640, and persisted UID/GID/mode metadata remains checked after creation.
+
+After rebuilding the userspace image, `make phase20-test CROSS=x86_64-linux-gnu-` passed the credential, session, capability, and account/authentication suites. The observed credential markers include `acl=PASS`, `matrix=PASS`, `audit=PASS`, `setid=PASS`, `delegated-exec=PASS`, `delegation=PASS`, and `kill=PASS`; session lifecycle and password-rotation login also passed. The phase remains in progress for broader policy matrices, physical-hardware evidence, and the remaining documented security boundaries.

@@ -118,6 +118,8 @@ int program_main(int argc, char **argv, char **envp) {
         getacl("/phase20-work/acl-clear", &acl_read) != 0 ||
         acl_read.user != RIX_ACL_NONE || acl_read.group != RIX_ACL_NONE)
         return 1;
+    if (create_byte_file("/phase20-mode/secret", 0600u, 's') != 0)
+        return 1;
 
     if (get_capabilities(&caps) != 0 || caps != RIX_CAP_ALL ||
         drop_capabilities(RIX_CAP_ALL & ~(RIX_CAP_SETUID | RIX_CAP_SETGID)) != 0 ||
@@ -161,6 +163,12 @@ int program_main(int argc, char **argv, char **envp) {
     if (read_byte_file("/phase20-other", 'o') != 0 ||
         expect_error(openat(RIX_VFS_AT_FDCWD, "/phase20-other",
                             RIX_VFS_O_WRONLY, 0u), RIX_EACCES) != 0)
+        return 1;
+    if (expect_error(openat(RIX_VFS_AT_FDCWD, "/phase20-mode/secret",
+                            0u, 0u), RIX_EACCES) != 0 ||
+        expect_error(stat("/phase20-mode/secret", &stat_result), RIX_EACCES) != 0 ||
+        expect_error(mkdir("/phase20-mode/new", 0700u), RIX_EACCES) != 0 ||
+        expect_error(unlink("/phase20-mode/secret"), RIX_EACCES) != 0)
         return 1;
     if (expect_error(openat(RIX_VFS_AT_FDCWD, "/phase20-missing",
                             0u, 0u), RIX_EINVAL) != 0)
