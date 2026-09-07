@@ -37,8 +37,8 @@ static uint64_t read_rflags(void){uint64_t v;__asm__ volatile("pushfq; popq %0":
 static void cli(void){__asm__ volatile("cli" ::: "memory");}
 static void sti(void){__asm__ volatile("sti" ::: "memory");}
 
-static void task_returned(void){ tasks[current_index].state=TASK_DEAD; for(;;) scheduler_yield(); }
-static void task_bootstrap(void){
+static __attribute__((noreturn)) void task_returned(void){ tasks[current_index].state=TASK_DEAD; for(;;) scheduler_yield(); }
+static __attribute__((noreturn)) void task_bootstrap(void){
     rix_task_t *t=&tasks[current_index];
     if(t->process_pid){
         if(!bootstrap_debug){bootstrap_debug=1;kernel_log("DEBUG: task bootstrap pid=1\r\n");}
@@ -138,6 +138,15 @@ void scheduler_yield(void){
     if(tasks[next].process_pid){if(process_activate(tasks[next].process_pid)!=0){kernel_log("DEBUG: scheduler process_activate FAILED\r\n");tasks[next].state=TASK_DEAD;if(flags&0x200ULL)sti();return;}}
     else if(tasks[next].id==0){if(process_activate(0)!=0){if(flags&0x200ULL)sti();return;}}
     tasks[next].state=TASK_RUNNING;current_index=next;
+    /* The first user task is entered from the kernel bootstrap stack.  Do not
+       switch to its synthetic kernel stack while its CR3 is already active:
+       some firmware page-table layouts do not keep that low identity mapping
+       available during the transition.  Syscalls will use the process TSS
+       stack after iretq, and later tasks still use the normal switch path. */
+    if (old==0u && tasks[next].process_pid) {
+        kernel_log("DEBUG: direct user bootstrap (no synthetic stack switch)\r\n");
+        task_bootstrap();
+    }
     rix_context_switch(&tasks[old].rsp,tasks[next].rsp);
     /* The context switch returns in the task that was waiting in this
        function. The address space must follow the resumed task, not the task
