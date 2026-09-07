@@ -27,37 +27,313 @@ int rixfs_mkdir(rixfs_t*f,uint64_t d,const char*name,uint32_t mode,uint32_t uid,
 int rixfs_create(rixfs_t*f,uint64_t d,const char*name,uint32_t mode,uint32_t uid,uint32_t gid,uint64_t*out){size_t nl;if(!f||!out||valid_name(name,&nl))return-1;uint64_t old;uint8_t t;if(rixfs_lookup_name(f,d,name,&old,&t)==0)return-2;uint64_t ino;if(alloc_inode(f,&ino))return-3;rixfs_inode_disk_t in={0};in.inode=ino;in.mode=RIXFS_IFREG|(mode&07777u);in.uid=uid;in.gid=gid;in.generation=1;in.links=1;if(rixfs_write_inode(f,ino,&in))return-4;rixfs_inode_disk_t dir;if(rixfs_read_inode(f,d,&dir)||dir_append(f,&dir,ino,RIXFS_DIR_TYPE_FILE,name,nl)){rixfs_inode_disk_t z={0};rixfs_write_inode(f,ino,&z);return-5;}if(rixfs_write_inode(f,d,&dir))return-6;*out=ino;return 0;}
 int rixfs_link(rixfs_t*f,uint64_t source,uint64_t d,const char*name,uint8_t type){size_t nl;if(!f||valid_name(name,&nl))return-1;uint64_t old;uint8_t t;if(rixfs_lookup_name(f,d,name,&old,&t)==0)return-2;rixfs_inode_disk_t in;if(rixfs_read_inode(f,source,&in)||!in.inode)return-3;if((in.mode&RIXFS_IFMT)==RIXFS_IFDIR)return-4;if(in.links==UINT32_MAX)return-5;rixfs_inode_disk_t dir;if(rixfs_read_inode(f,d,&dir)||dir_append(f,&dir,source,type,name,nl))return-6;if(rixfs_write_inode(f,d,&dir))return-7;in.links=in.links?in.links+1u:2u;return rixfs_write_inode(f,source,&in);}
 int rixfs_unlink(rixfs_t*f,uint64_t d,const char*name){size_t nl;if(!f||valid_name(name,&nl))return-1;uint64_t ino;uint8_t type;if(rixfs_lookup_name(f,d,name,&ino,&type))return-2;if(ino==f->super.root_inode)return-3;rixfs_inode_disk_t in;if(rixfs_read_inode(f,ino,&in))return-4;if((in.mode&RIXFS_IFMT)==RIXFS_IFDIR)return-5;if(rixfs_remove_name(f,d,name))return-6;if(in.links>1){in.links--;return rixfs_write_inode(f,ino,&in);}if(free_inode_data(f,&in))return-7;rixfs_inode_disk_t z={0};return rixfs_write_inode(f,ino,&z);}
-int rixfs_rename(rixfs_t*f,uint64_t old_dir,const char*old_name,uint64_t new_dir,const char*new_name,int replace){
-    size_t old_len,new_len;uint64_t old_ino,existing=0;uint8_t old_type=0,existing_type=0;
-    if(!f||!f->mounted||valid_name(old_name,&old_len)||valid_name(new_name,&new_len)||!old_dir||!new_dir)return-1;
-    if(old_dir==new_dir&&old_len==new_len){size_t i=0;for(;i<old_len&&old_name[i]==new_name[i];i++){}if(i==old_len)return 0;}
-    if(rixfs_lookup_name(f,old_dir,old_name,&old_ino,&old_type))return-2;
-    rixfs_inode_disk_t source_inode,old_parent,new_parent;
-    if(rixfs_read_inode(f,old_ino,&source_inode)||!source_inode.inode||(source_inode.mode&RIXFS_IFMT)!=RIXFS_IFREG)return-3;
-    if(rixfs_read_inode(f,old_dir,&old_parent)||!old_parent.inode||(old_parent.mode&RIXFS_IFMT)!=RIXFS_IFDIR)return-4;
-    if(rixfs_read_inode(f,new_dir,&new_parent)||!new_parent.inode||(new_parent.mode&RIXFS_IFMT)!=RIXFS_IFDIR)return-5;
-    if(rixfs_lookup_name(f,new_dir,new_name,&existing,&existing_type)==0){
-        if(!replace||existing==old_ino)return-17;
-        rixfs_inode_disk_t destination;if(rixfs_read_inode(f,existing,&destination)||(destination.mode&RIXFS_IFMT)!=RIXFS_IFREG)return-18;
-        if(rixfs_unlink(f,new_dir,new_name))return-19;
+typedef struct {
+    uint64_t sector;
+    uint8_t *data;
+} rixfs_rename_change_t;
+
+static void rename_changes_release(rixfs_rename_change_t *changes, size_t count) {
+    for (size_t i = 0; i < count; ++i) {
+        if (changes[i].data) pmm_free_page((uint64_t)(uintptr_t)changes[i].data);
+        changes[i].data = NULL;
     }
-    if(old_dir==new_dir){
-        uint64_t off=0,start=0;rixfs_dirent_disk_t entry;char name[RIXFS_NAME_MAX+1];int found=0;
-        while(off<old_parent.size){start=off;int rc=rixfs_readdir(f,old_dir,&off,&entry,name,sizeof(name));if(rc==1)break;if(rc!=0)return-20;
-            if(entry.inode==old_ino&&entry.type==old_type&&entry.name_length==old_len){size_t i=0;for(;i<old_len&&name[i]==old_name[i];i++){}if(i==old_len){found=1;break;}}
+}
+
+static int rename_change_get(rixfs_t *f, rixfs_rename_change_t *changes,
+                             size_t *count, uint64_t sector,
+                             rixfs_rename_change_t **out) {
+    if (!f || !changes || !count || !out || sector >= f->super.total_sectors)
+        return -1;
+    for (size_t i = 0; i < *count; ++i) {
+        if (changes[i].sector == sector) {
+            *out = &changes[i];
+            return 0;
         }
-        if(!found||entry.record_size!=f->device->sector_size||start%f->device->sector_size)return-21;
-        uint64_t logical=start/f->device->sector_size,physical=0;if(dir_sector(&old_parent,logical,&physical))return-22;
-        uint64_t page=pmm_alloc_page();if(!page)return-23;uint8_t*b=(uint8_t*)(uintptr_t)page;int rc=rd(f->device,physical,b);
-        if(!rc){b[11]=(uint8_t)new_len;for(size_t i=0;i<new_len;i++)b[16+i]=(uint8_t)new_name[i];for(size_t i=new_len;i<old_len;i++)b[16+i]=0;rc=journal_write(f,physical,b);}pmm_free_page(page);return rc;
     }
-    if(rixfs_link(f,old_ino,new_dir,new_name,RIXFS_DIR_TYPE_FILE))return-24;
-    if(rixfs_unlink(f,old_dir,old_name)){(void)rixfs_unlink(f,new_dir,new_name);return-25;}
+    if (*count >= RIXFS_JOURNAL_TX_MAX_ENTRIES) return -2;
+    uint64_t page = pmm_alloc_page();
+    if (!page) return -3;
+    if (rd(f->device, sector, (void *)(uintptr_t)page)) {
+        pmm_free_page(page);
+        return -4;
+    }
+    changes[*count].sector = sector;
+    changes[*count].data = (uint8_t *)(uintptr_t)page;
+    *out = &changes[*count];
+    ++*count;
     return 0;
+}
+
+static void rename_store64(uint8_t *p, uint64_t value) {
+    for (unsigned i = 0; i < 8; ++i) p[i] = (uint8_t)(value >> (8u * i));
+}
+
+static int rename_change_inode(rixfs_t *f, rixfs_rename_change_t *changes,
+                               size_t *count, uint64_t inode,
+                               const rixfs_inode_disk_t *replacement) {
+    uint64_t sector;
+    uint32_t offset;
+    rixfs_rename_change_t *change;
+    if (!replacement || inode_pos(f, inode, &sector, &offset) ||
+        rename_change_get(f, changes, count, sector, &change)) return -1;
+    for (size_t i = 0; i < sizeof(*replacement); ++i)
+        change->data[offset + i] = ((const uint8_t *)replacement)[i];
+    return 0;
+}
+
+static int rename_set_bitmap(rixfs_t *f, rixfs_rename_change_t *changes,
+                              size_t *count, uint64_t sector, int allocated) {
+    uint64_t bytes_per_sector = f->device->sector_size;
+    uint64_t bitmap_byte = sector / 8u;
+    uint64_t bitmap_sector = f->super.bitmap_sector + bitmap_byte / bytes_per_sector;
+    uint32_t offset = (uint32_t)(bitmap_byte % bytes_per_sector);
+    if (bitmap_sector >= f->super.bitmap_sector + f->super.bitmap_sectors)
+        return -1;
+    rixfs_rename_change_t *change;
+    if (rename_change_get(f, changes, count, bitmap_sector, &change)) return -2;
+    uint8_t mask = (uint8_t)(1u << (sector % 8u));
+    int was_allocated = (change->data[offset] & mask) != 0;
+    if (was_allocated == allocated) return -3;
+    if (allocated) change->data[offset] |= mask;
+    else change->data[offset] &= (uint8_t)~mask;
+    return 0;
+}
+
+static int rename_find_free_sector(rixfs_t *f, uint64_t *out_sector) {
+    if (!f || !out_sector) return -1;
+    uint64_t start = f->super.free_hint;
+    if (start < f->super.data_start_sector) start = f->super.data_start_sector;
+    for (unsigned pass = 0; pass < 2; ++pass) {
+        uint64_t begin = pass ? f->super.data_start_sector : start;
+        uint64_t end = pass ? start : f->super.total_sectors;
+        for (uint64_t sector = begin; sector < end; ++sector) {
+            int used = 0;
+            if (bit_get(f, sector, &used)) return -2;
+            if (!used) {
+                *out_sector = sector;
+                return 0;
+            }
+        }
+    }
+    return -3;
+}
+
+static int rename_find_entry(rixfs_t *f, uint64_t dir_inode, const char *wanted,
+                             uint64_t *out_sector, rixfs_dirent_disk_t *out_entry) {
+    rixfs_inode_disk_t dir;
+    uint64_t offset = 0;
+    char name[RIXFS_NAME_MAX + 1];
+    rixfs_dirent_disk_t entry;
+    if (!wanted || rixfs_read_inode(f, dir_inode, &dir) ||
+        (dir.mode & RIXFS_IFMT) != RIXFS_IFDIR) return -1;
+    while (offset < dir.size) {
+        int rc = rixfs_readdir(f, dir_inode, &offset, &entry, name, sizeof(name));
+        if (rc == 1) break;
+        if (rc != 0) return -2;
+        if (name[0] == wanted[0]) {
+            size_t i = 0;
+            while (name[i] && wanted[i] && name[i] == wanted[i]) ++i;
+            if (!name[i] && !wanted[i]) {
+                uint64_t start = offset - entry.record_size;
+                uint64_t logical = start / f->device->sector_size;
+                uint64_t physical = 0;
+                if (start % f->device->sector_size ||
+                    entry.record_size != f->device->sector_size ||
+                    dir_sector(&dir, logical, &physical)) return -3;
+                *out_sector = physical;
+                if (out_entry) *out_entry = entry;
+                return 0;
+            }
+        }
+    }
+    return -8;
+}
+
+static int rename_find_empty_slot(rixfs_t *f, uint64_t dir_inode,
+                                  uint64_t *out_sector) {
+    rixfs_inode_disk_t dir;
+    if (!out_sector || rixfs_read_inode(f, dir_inode, &dir) ||
+        (dir.mode & RIXFS_IFMT) != RIXFS_IFDIR ||
+        dir.size % f->device->sector_size) return -1;
+    uint64_t page = pmm_alloc_page();
+    if (!page) return -2;
+    for (uint64_t logical = 0; logical < dir.size / f->device->sector_size; ++logical) {
+        uint64_t physical = 0;
+        if (dir_sector(&dir, logical, &physical) ||
+            rd(f->device, physical, (void *)(uintptr_t)page)) {
+            pmm_free_page(page);
+            return -3;
+        }
+        uint64_t inode = 0;
+        for (unsigned i = 0; i < 8; ++i)
+            inode |= (uint64_t)((uint8_t *)(uintptr_t)page)[i] << (8u * i);
+        if (!inode) {
+            *out_sector = physical;
+            pmm_free_page(page);
+            return 0;
+        }
+    }
+    pmm_free_page(page);
+    return 1;
+}
+
+static void rename_clear_sector(uint8_t *data, uint32_t sector_size) {
+    for (uint32_t i = 0; i < sector_size; ++i) data[i] = 0;
+}
+
+static int rename_write_dirent(uint8_t *data, uint32_t sector_size,
+                               uint64_t inode, uint8_t type, const char *name) {
+    size_t length = 0;
+    if (!data || !name || sector_size < RIXFS_DIRENT_MIN_SIZE) return -1;
+    while (name[length]) {
+        if (++length > RIXFS_NAME_MAX || length + RIXFS_DIRENT_MIN_SIZE > sector_size ||
+            name[length - 1] == '/') return -2;
+    }
+    rename_clear_sector(data, sector_size);
+    rename_store64(data, inode);
+    data[8] = (uint8_t)sector_size;
+    data[9] = (uint8_t)(sector_size >> 8u);
+    data[10] = type;
+    data[11] = (uint8_t)length;
+    for (size_t i = 0; i < length; ++i) data[RIXFS_DIRENT_MIN_SIZE + i] = (uint8_t)name[i];
+    return 0;
+}
+
+static int journal_write_transaction(rixfs_t *f,
+                                     const rixfs_rename_change_t *changes,
+                                     size_t count) {
+    if (!f || !changes || count == 0 || count > RIXFS_JOURNAL_TX_MAX_ENTRIES ||
+        (uint64_t)count + 1u > f->super.journal_sectors ||
+        24u + count * 16u > f->device->sector_size) return -1;
+    uint64_t page = pmm_alloc_page();
+    if (!page) return -2;
+    uint8_t *buffer = (uint8_t *)(uintptr_t)page;
+    for (uint32_t i = 0; i < f->device->sector_size; ++i) buffer[i] = 0;
+    rename_store64(buffer, RIXFS_JOURNAL_TX_MAGIC);
+    rename_store64(buffer + 8u, ++f->super.journal_generation);
+    buffer[16] = (uint8_t)count;
+    for (size_t i = 0; i < count; ++i) {
+        rename_store64(buffer + 24u + i * 16u, changes[i].sector);
+        rename_store64(buffer + 32u + i * 16u,
+                       hash64(changes[i].data, f->device->sector_size));
+    }
+    int result = wr(f->device, f->super.journal_sector, buffer);
+    if (!result) result = flush(f->device);
+    for (size_t i = 0; !result && i < count; ++i) {
+        for (uint32_t j = 0; j < f->device->sector_size; ++j)
+            buffer[j] = changes[i].data[j];
+        result = wr(f->device, f->super.journal_sector + 1u + i, buffer);
+    }
+    if (!result) result = flush(f->device);
+    for (size_t i = 0; !result && i < count; ++i) {
+        for (uint32_t j = 0; j < f->device->sector_size; ++j)
+            buffer[j] = changes[i].data[j];
+        result = wr(f->device, changes[i].sector, buffer);
+    }
+    if (!result) result = flush(f->device);
+    if (!result) {
+        for (uint32_t i = 0; i < f->device->sector_size; ++i) buffer[i] = 0;
+        result = wr(f->device, f->super.journal_sector, buffer);
+        if (!result) result = flush(f->device);
+    }
+    pmm_free_page(page);
+    return result;
+}
+
+int rixfs_rename(rixfs_t *f, uint64_t old_dir, const char *old_name,
+                 uint64_t new_dir, const char *new_name, int replace) {
+    size_t old_length, new_length;
+    uint64_t source_inode, destination_inode = 0;
+    uint8_t source_type, destination_type = 0;
+    rixfs_inode_disk_t source, destination, new_parent;
+    rixfs_rename_change_t changes[RIXFS_JOURNAL_TX_MAX_ENTRIES] = {{0, NULL}};
+    size_t change_count = 0;
+    uint64_t source_sector, destination_sector = 0, new_sector = 0;
+    int destination_exists = 0;
+    int result = -1;
+    if (!f || !f->mounted || valid_name(old_name, &old_length) ||
+        valid_name(new_name, &new_length) || !old_dir || !new_dir ||
+        (uint64_t)old_length > f->device->sector_size - RIXFS_DIRENT_MIN_SIZE ||
+        (uint64_t)new_length > f->device->sector_size - RIXFS_DIRENT_MIN_SIZE)
+        return -1;
+    if (old_dir == new_dir && old_length == new_length) {
+        size_t i = 0;
+        while (i < old_length && old_name[i] == new_name[i]) ++i;
+        if (i == old_length) return 0;
+    }
+    if (rixfs_lookup_name(f, old_dir, old_name, &source_inode, &source_type) ||
+        rixfs_read_inode(f, source_inode, &source) ||
+        (source.mode & RIXFS_IFMT) != RIXFS_IFREG ||
+        rename_find_entry(f, old_dir, old_name, &source_sector, NULL))
+        return -2;
+    int lookup_result = rixfs_lookup_name(f, new_dir, new_name,
+                                          &destination_inode, &destination_type);
+    if (lookup_result == 0) {
+        destination_exists = 1;
+        if (destination_inode == source_inode) return -17;
+        if (!replace || rixfs_read_inode(f, destination_inode, &destination) ||
+            (destination.mode & RIXFS_IFMT) != RIXFS_IFREG) return -17;
+        if (rename_find_entry(f, new_dir, new_name, &destination_sector, NULL)) return -3;
+    } else if (lookup_result != -8) {
+        return -4;
+    }
+    rixfs_inode_disk_t old_parent;
+    if (rixfs_read_inode(f, old_dir, &old_parent) ||
+        (old_parent.mode & RIXFS_IFMT) != RIXFS_IFDIR ||
+        rixfs_read_inode(f, new_dir, &new_parent) ||
+        (new_parent.mode & RIXFS_IFMT) != RIXFS_IFDIR)
+        return -5;
+    rixfs_rename_change_t *change;
+    if (rename_change_get(f, changes, &change_count, source_sector, &change)) goto done;
+    rename_clear_sector(change->data, f->device->sector_size);
+    if (destination_exists) {
+        if (rename_change_get(f, changes, &change_count, destination_sector, &change)) goto done;
+        if (rename_write_dirent(change->data, f->device->sector_size,
+                                source_inode, source_type, new_name)) goto done;
+    } else {
+        int slot_result = rename_find_empty_slot(f, new_dir, &destination_sector);
+        if (slot_result < 0) goto done;
+        if (slot_result == 0) {
+            if (rename_change_get(f, changes, &change_count, destination_sector, &change)) goto done;
+        } else {
+            if (rename_find_free_sector(f, &new_sector) ||
+                rename_set_bitmap(f, changes, &change_count, new_sector, 1) ||
+                new_parent.size > UINT64_MAX - f->device->sector_size ||
+                append_extent(&new_parent, new_sector)) goto done;
+            new_parent.size += f->device->sector_size;
+            if (rename_change_inode(f, changes, &change_count, new_dir, &new_parent)) goto done;
+            destination_sector = new_sector;
+            if (rename_change_get(f, changes, &change_count, destination_sector, &change)) goto done;
+        }
+        if (rename_write_dirent(change->data, f->device->sector_size,
+                                source_inode, source_type, new_name)) goto done;
+    }
+    if (destination_exists) {
+        if (destination.links > 1u) {
+            --destination.links;
+            if (rename_change_inode(f, changes, &change_count,
+                                    destination_inode, &destination)) goto done;
+        } else {
+            for (unsigned e = 0; e < RIXFS_DIRECT_EXTENTS; ++e) {
+                for (uint64_t j = 0; j < destination.extent_length[e]; ++j) {
+                    if (rename_set_bitmap(f, changes, &change_count,
+                                          destination.extent_start[e] + j, 0)) goto done;
+                }
+            }
+            rixfs_inode_disk_t empty = {0};
+            if (rename_change_inode(f, changes, &change_count,
+                                    destination_inode, &empty)) goto done;
+        }
+    }
+    result = journal_write_transaction(f, changes, change_count);
+    if (!result && new_sector) f->super.free_hint = new_sector + 1u;
+done:
+    rename_changes_release(changes, change_count);
+    return result;
 }
 static int directory_empty(rixfs_t*f,uint64_t ino){uint64_t off=0;rixfs_dirent_disk_t e;char name[RIXFS_NAME_MAX+1];for(;;){int r=rixfs_readdir(f,ino,&off,&e,name,sizeof(name));if(r==1)return 0;if(r!=0)return -1;return -2;}}
 int rixfs_rmdir(rixfs_t*f,uint64_t d,const char*name){size_t nl;if(!f||valid_name(name,&nl))return-1;uint64_t ino;uint8_t type;if(rixfs_lookup_name(f,d,name,&ino,&type))return-2;if(ino==f->super.root_inode)return-3;rixfs_inode_disk_t in;if(rixfs_read_inode(f,ino,&in))return-4;if((in.mode&RIXFS_IFMT)!=RIXFS_IFDIR)return-5;if(directory_empty(f,ino))return-6;if(free_inode_data(f,&in))return-7;if(rixfs_remove_name(f,d,name))return-8;rixfs_inode_disk_t z={0};return rixfs_write_inode(f,ino,&z);}
-int rixfs_format(rix_block_device_t*d,uint64_t ic){if(!d||d->sector_size<512||d->sector_size>RIXFS_SECTOR_MAX||d->sector_count<128||ic<8)return-1;uint64_t is=(ic*RIXFS_INODE_SIZE+d->sector_size-1)/d->sector_size,bs=(d->sector_count+8*d->sector_size-1)/(8*d->sector_size),js=1+is+bs,ds=js+2;if(ds+1>=d->sector_count)return-2;uint64_t q=pmm_alloc_page();if(!q)return-3;uint8_t*b=(uint8_t*)(uintptr_t)q;for(uint32_t i=0;i<d->sector_size;i++)b[i]=0;rixfs_superblock_t sb={0};sb.magic=RIXFS_MAGIC;sb.version=RIXFS_VERSION;sb.header_size=sizeof(sb);sb.sector_size=d->sector_size;sb.total_sectors=d->sector_count;sb.inode_table_sector=1;sb.inode_count=ic;sb.bitmap_sector=1+is;sb.bitmap_sectors=bs;sb.journal_sector=js;sb.journal_sectors=2;sb.data_start_sector=ds;sb.root_inode=1;sb.generation=1;sb.free_hint=ds;sb.checksum=hash64(&sb,sizeof(sb));for(size_t i=0;i<sizeof(sb);i++)b[i]=((const uint8_t*)&sb)[i];if(wr(d,0,b)){pmm_free_page(q);return-4;}for(uint64_t s=1;s<ds;s++){for(uint32_t i=0;i<d->sector_size;i++)b[i]=0;if(wr(d,s,b)){pmm_free_page(q);return-5;}}rixfs_t f={.device=d,.super=sb,.mounted=1};for(uint64_t s=0;s<ds;s++)if(bit(&f,s,1)){pmm_free_page(q);return-6;}uint64_t root;if(alloc_sec(&f,&root)){pmm_free_page(q);return-7;}rixfs_inode_disk_t in={0};in.inode=1;in.mode=RIXFS_IFDIR|0755u;in.generation=1;in.extent_start[0]=root;in.extent_length[0]=1;if(rixfs_write_inode(&f,1,&in)){pmm_free_page(q);return-8;}for(uint32_t i=0;i<d->sector_size;i++)b[i]=0;if(wr(d,root,b)){pmm_free_page(q);return-9;}pmm_free_page(q);return 0;}
+int rixfs_format(rix_block_device_t*d,uint64_t ic){if(!d||d->sector_size<512||d->sector_size>RIXFS_SECTOR_MAX||d->sector_count<128||ic<8)return-1;uint64_t is=(ic*RIXFS_INODE_SIZE+d->sector_size-1)/d->sector_size,bs=(d->sector_count+8*d->sector_size-1)/(8*d->sector_size),js=1+is+bs,ds=js+2;if(ds+1>=d->sector_count)return-2;uint64_t q=pmm_alloc_page();if(!q)return-3;uint8_t*b=(uint8_t*)(uintptr_t)q;for(uint32_t i=0;i<d->sector_size;i++)b[i]=0;rixfs_superblock_t sb={0};sb.magic=RIXFS_MAGIC;sb.version=RIXFS_VERSION;sb.header_size=sizeof(sb);sb.sector_size=d->sector_size;sb.total_sectors=d->sector_count;sb.inode_table_sector=1;sb.inode_count=ic;sb.bitmap_sector=1+is;sb.bitmap_sectors=bs;sb.journal_sector=js;sb.journal_sectors=RIXFS_JOURNAL_TX_MAX_ENTRIES+1u;sb.data_start_sector=ds;sb.root_inode=1;sb.generation=1;sb.free_hint=ds;sb.checksum=hash64(&sb,sizeof(sb));for(size_t i=0;i<sizeof(sb);i++)b[i]=((const uint8_t*)&sb)[i];if(wr(d,0,b)){pmm_free_page(q);return-4;}for(uint64_t s=1;s<ds;s++){for(uint32_t i=0;i<d->sector_size;i++)b[i]=0;if(wr(d,s,b)){pmm_free_page(q);return-5;}}rixfs_t f={.device=d,.super=sb,.mounted=1};for(uint64_t s=0;s<ds;s++)if(bit(&f,s,1)){pmm_free_page(q);return-6;}uint64_t root;if(alloc_sec(&f,&root)){pmm_free_page(q);return-7;}rixfs_inode_disk_t in={0};in.inode=1;in.mode=RIXFS_IFDIR|0755u;in.generation=1;in.extent_start[0]=root;in.extent_length[0]=1;if(rixfs_write_inode(&f,1,&in)){pmm_free_page(q);return-8;}for(uint32_t i=0;i<d->sector_size;i++)b[i]=0;if(wr(d,root,b)){pmm_free_page(q);return-9;}pmm_free_page(q);return 0;}
 int rixfs_format_standard_tree(rix_block_device_t*d,uint64_t ic){if(rixfs_format(d,ic)!=0)return-1;rixfs_t f={0};if(rixfs_mount(d,&f)!=0)return-2;static const char*dirs[]={"boot","bin","sbin","lib","lib64","usr","etc","home","root","var","tmp","dev","proc","sys","run","opt","mnt","media"};for(size_t i=0;i<sizeof(dirs)/sizeof(dirs[0]);i++){uint64_t ino=0;if(rixfs_mkdir(&f,f.super.root_inode,dirs[i],0755,0,0,&ino)!=0){rixfs_unmount(&f);return-3;}}if(rixfs_sync(&f)!=0){rixfs_unmount(&f);return-4;}rixfs_unmount(&f);return 0;}
 
 

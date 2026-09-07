@@ -25,7 +25,7 @@ IFREG = 0x8000
 IFDIR = 0x4000
 DIR_FILE = 2
 DIR_DIR = 1
-JOURNAL_SECTORS = 2
+JOURNAL_SECTORS = 17
 
 
 def fnv1a(data: bytes) -> int:

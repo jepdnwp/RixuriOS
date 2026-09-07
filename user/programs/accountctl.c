@@ -26,9 +26,9 @@ static int line_name(const char *line,const char *name) { size_t i=0; while(line
 static const char *next_line(const char *cursor,char *line,size_t cap) { size_t n=0; if(!cursor||!*cursor)return cursor; while(cursor[n]&&cursor[n]!='\n'){if(n+1>=cap)return 0;line[n]=cursor[n];++n;} line[n]=0; if(cursor[n]=='\n')++n; return cursor+n; }
 static int build_passwd(const char *input,const char *name,uint32_t uid,uint32_t gid,int mode,char *output,size_t cap) {
     const char *cursor=input;char line[512];size_t used=0;int found=0;output[0]=0;
-    while(cursor&&*cursor){const char *next=next_line(cursor,line,sizeof(line));if(!next)return-1;if(!line_name(line,name)){if(append_text(output,cap,&used,line)||append_text(output,cap,&used,"\n"))return-1;}else{found=1;if(mode==1){if(append_text(output,cap,&used,name)||append_text(output,cap,&used,":" )||append_uint(output,cap,&used,uid)||append_text(output,cap,&used,":" )||append_uint(output,cap,&used,gid)||append_text(output,cap,&used,":/home/operator:/bin/sh\n"))return-1;}}cursor=next;}
+    while(cursor&&*cursor){const char *next=next_line(cursor,line,sizeof(line));if(!next)return-1;if(!line_name(line,name)){if(append_text(output,cap,&used,line)||append_text(output,cap,&used,"\n"))return-1;}else{found=1;if(mode==1){if(append_text(output,cap,&used,name)||append_text(output,cap,&used,":" )||append_uint(output,cap,&used,uid)||append_text(output,cap,&used,":" )||append_uint(output,cap,&used,gid)||append_text(output,cap,&used,":/home/operator:/bin/sh\n"))return-1;}else if(mode!=2){if(append_text(output,cap,&used,line)||append_text(output,cap,&used,"\n"))return-1;}}cursor=next;}
     if(mode==0&&!found){if(append_text(output,cap,&used,name)||append_text(output,cap,&used,":" )||append_uint(output,cap,&used,uid)||append_text(output,cap,&used,":" )||append_uint(output,cap,&used,gid)||append_text(output,cap,&used,":/home/operator:/bin/sh\n"))return-1;}
-    return (mode==2&&!found)||(mode==0&&found)?-1:0;
+    return (mode==2&&!found)||(mode==0&&found)||(mode==3&&!found)?-1:0;
 }
 static void salt_for(const char *name,char salt[RIX_SALT_LENGTH+1]) { uint32_t state=0x9e3779b9u;for(size_t i=0;name[i];++i)state=state*33u+(uint8_t)name[i];for(size_t i=0;i<RIX_SALT_LENGTH;++i){state=state*1664525u+1013904223u;salt[i]="0123456789abcdef"[(state>>28)&15u];}salt[RIX_SALT_LENGTH]=0; }
 static int hex_digest(const uint8_t digest[32],char output[RIX_HASH_HEX+1]) { static const char hex[]="0123456789abcdef";for(size_t i=0;i<32;++i){output[i*2]=hex[digest[i]>>4];output[i*2+1]=hex[digest[i]&15u];}output[RIX_HASH_HEX]=0;return 0; }
@@ -37,7 +37,7 @@ static int build_shadow(const char *input,const char *name,const char *password,
     if(mode!=2){salt_for(name,salt);uint8_t digest[32];rix_password_digest(salt,password,128u,digest);hex_digest(digest,hash);}
     while(cursor&&*cursor){const char *next=next_line(cursor,line,sizeof(line));if(!next)return-1;if(!line_name(line,name)){if(append_text(output,cap,&used,line)||append_text(output,cap,&used,"\n"))return-1;}else{found=1;if(mode==1){if(append_text(output,cap,&used,name)||append_text(output,cap,&used,":rixsha256:")||append_text(output,cap,&used,salt)||append_text(output,cap,&used,":128:")||append_text(output,cap,&used,hash)||append_text(output,cap,&used,"\n"))return-1;}}cursor=next;}
     if(mode==0&&!found){if(append_text(output,cap,&used,name)||append_text(output,cap,&used,":rixsha256:")||append_text(output,cap,&used,salt)||append_text(output,cap,&used,":128:")||append_text(output,cap,&used,hash)||append_text(output,cap,&used,"\n"))return-1;}
-    return (mode==2&&!found)||(mode==0&&found)?-1:0;
+    return (mode==2&&!found)||(mode==0&&found)||(mode==1&&!found)?-1:0;
 }
 static int write_file(const char *path,const char *data,uint32_t mode) { int fd=openat(RIX_VFS_AT_FDCWD,path,RIX_VFS_O_WRONLY|RIX_VFS_O_CREAT|RIX_VFS_O_TRUNC,mode);if(fd<0)return-1;size_t n=length(data);int rc=write(fd,data,n)==(rix_ssize_t)n?0:-1;if(close(fd)!=0)rc=-1;return rc; }
 static int commit_stores(const char *passwd,const char *shadow) {
@@ -68,7 +68,7 @@ int program_main(int argc,char **argv,char **envp) {
     if(read_file("/etc/passwd",passwd,sizeof(passwd))!=0||read_file("/etc/shadow",shadow,sizeof(shadow))!=0)return -1;
     if(equal(argv[1],"add")){uint32_t uid=0,gid=0;if(argc!=5||!valid_name(argv[2]))return-RIX_EINVAL;for(size_t i=0;argv[3][i];++i){if(argv[3][i]<'0'||argv[3][i]>'9')return-RIX_EINVAL;uid=uid*10u+(uint32_t)(argv[3][i]-'0');}gid=uid;if(build_passwd(passwd,argv[2],uid,gid,0,new_passwd,sizeof(new_passwd))!=0)return-1;if(build_shadow(shadow,argv[2],argv[4],0,new_shadow,sizeof(new_shadow))!=0)return-1;if(commit_stores(new_passwd,new_shadow)!=0)return-1;return emit("account-add=PASS\n");}
     if(equal(argv[1],"remove")){if(argc!=3)return-RIX_EINVAL;if(build_passwd(passwd,argv[2],0,0,2,new_passwd,sizeof(new_passwd))!=0||build_shadow(shadow,argv[2],"",2,new_shadow,sizeof(new_shadow))!=0)return-1;if(commit_stores(new_passwd,new_shadow)!=0)return-1;return emit("account-remove=PASS\n");}
-    if(equal(argv[1],"rotate")){if(argc!=4)return-RIX_EINVAL;if(build_passwd(passwd,argv[2],0,0,2,new_passwd,sizeof(new_passwd))!=0||build_shadow(shadow,argv[2],argv[3],1,new_shadow,sizeof(new_shadow))!=0)return-1;if(commit_stores(new_passwd,new_shadow)!=0)return-1;return emit("password-rotate=PASS\n");}
+    if(equal(argv[1],"rotate")){if(argc!=4)return-RIX_EINVAL;if(build_passwd(passwd,argv[2],0,0,3,new_passwd,sizeof(new_passwd))!=0||build_shadow(shadow,argv[2],argv[3],1,new_shadow,sizeof(new_shadow))!=0)return-1;if(commit_stores(new_passwd,new_shadow)!=0)return-1;return emit("password-rotate=PASS\n");}
     return -RIX_EINVAL;
 }
 int main(int argc,char **argv,char **envp){return program_main(argc,argv,envp);}

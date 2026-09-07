@@ -541,3 +541,22 @@ The strict userspace fork ABI declaration now carries `returns_twice`, and fork 
 - The complete `make phase20-test CROSS=x86_64-linux-gnu-` suite passed with the existing credential, ACL, audit, set-ID, CAP_KILL, session and authentication evidence and no page fault, CPU exception, panic, timeout or prompt loss.
 
 Phase 20 remains `IMPLEMENTED / NOT YET VALIDATED` for hardware-specific security claims and for an interactive login service with account mutation/rollback and password rotation, cross-directory/overwrite transactional rename semantics, and physical-hardware security evidence. These are intentionally separate from the validated bounded kernel ABI and enforcement slices above.
+
+
+## Latest continuation — Phase 19 rename transactions and Phase 20 auth rotation — 2026-09-07
+
+- Replaced the previous VFS rename fallback path with an RixFS transaction path for regular-file renames. The implementation supports same-directory and cross-directory moves, overwrite replacement, inode-preserving metadata, bitmap/inode updates, bounded multi-sector redo-journal records, flush ordering, and mount-time replay validation.
+- Added fail-closed handling for rename-to-directory collisions and corrected directory traversal after deleted entries. `lookup_name`, `readdir`, `remove_name`, and rename entry discovery now skip zeroed directory sectors without treating them as malformed records; rename discovery derives the physical sector from the post-skip iterator offset.
+- Extended `renametest` and `qemu_cp_mv_edge_test.py` with inode preservation, overwrite, failure-safe collision, cross-directory, cross-directory overwrite, and round-trip markers. The real NVMe-backed QEMU path reports all rename markers as PASS.
+- Corrected `accountctl rotate` so it preserves the existing `/etc/passwd` database while replacing only the selected `/etc/shadow` record. The rotation path now rejects unknown users instead of silently producing an incomplete store.
+
+### Validation evidence
+
+- `make -j2 all CROSS=x86_64-linux-gnu-` passed with `-Wall -Wextra -Werror`.
+- `make image CROSS=x86_64-linux-gnu-` generated the disposable RixFS image and UEFI ESP successfully.
+- `make test CROSS=x86_64-linux-gnu- HOST_CC=gcc` passed the host USB/HID/TTY/shell/pipe tests and static kernel checks.
+- `python3 scripts/qemu_cp_mv_edge_test.py` passed the real serial-to-TTY, NVMe-backed RixFS rename/cp/mv edge suite, including all new rename markers.
+- `python3 scripts/qemu_phase19_extended_test.py` passed the extended Phase 19 working-directory, utility, negative-path, and cleanup scenarios.
+- `make phase20-test CROSS=x86_64-linux-gnu-` passed credential/permission, session lifecycle, and authentication/account rotation tests, including `login=PASS` after password rotation.
+
+The observed storage and authentication scenarios are `QEMU-VALIDATED` on the disposable QEMU NVMe image. Hardware NVMe qualification, injected mid-commit power-loss testing, directory rename semantics, symbolic links, and broader POSIX/account policy remain open and are not claimed complete.

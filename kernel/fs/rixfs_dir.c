@@ -57,6 +57,16 @@ int rixfs_lookup_name(rixfs_t *fs, uint64_t dir_inode, const char *name,
         if (dir.size - off < RIXFS_DIRENT_MIN_SIZE) return -4;
         rixfs_dirent_disk_t e;
         if (read_ent(fs, dir_inode, off, &e)) return -5;
+        if (!e.inode) {
+            if (e.record_size == 0) {
+                if (dir.size - off < fs->device->sector_size) return -6;
+                off += fs->device->sector_size;
+            } else {
+                if (e.record_size > dir.size - off) return -6;
+                off += e.record_size;
+            }
+            continue;
+        }
         if (e.record_size < RIXFS_DIRENT_MIN_SIZE || e.record_size > dir.size - off ||
             e.name_length > e.record_size - RIXFS_DIRENT_MIN_SIZE) return -6;
         if (e.inode && e.name_length == wanted) {
@@ -88,6 +98,17 @@ int rixfs_readdir(rixfs_t *fs, uint64_t dir_inode, uint64_t *offset,
         rixfs_dirent_disk_t e;
         if (dir.size - off < RIXFS_DIRENT_MIN_SIZE ||
             read_ent(fs, dir_inode, off, &e)) return -3;
+        if (!e.inode) {
+            if (e.record_size == 0) {
+                if (dir.size - off < fs->device->sector_size) return -4;
+                *offset = off + fs->device->sector_size;
+            } else {
+                if (e.record_size > dir.size - off) return -4;
+                *offset = off + e.record_size;
+            }
+            off = *offset;
+            continue;
+        }
         if (e.record_size < RIXFS_DIRENT_MIN_SIZE || e.record_size > dir.size - off ||
             e.name_length > e.record_size - RIXFS_DIRENT_MIN_SIZE) return -4;
         *offset = off + e.record_size;
@@ -117,6 +138,16 @@ int rixfs_remove_name(rixfs_t *fs, uint64_t dir_inode, const char *name) {
     while (off < dir.size) {
         rixfs_dirent_disk_t e;
         if (read_ent(fs, dir_inode, off, &e)) return -4;
+        if (!e.inode) {
+            if (e.record_size == 0) {
+                if (dir.size - off < fs->device->sector_size) return -5;
+                off += fs->device->sector_size;
+            } else {
+                if (e.record_size > dir.size - off) return -5;
+                off += e.record_size;
+            }
+            continue;
+        }
         if (e.record_size < RIXFS_DIRENT_MIN_SIZE || e.record_size > dir.size - off ||
             e.name_length > e.record_size - RIXFS_DIRENT_MIN_SIZE) return -5;
         if (e.inode && e.name_length == wanted) {

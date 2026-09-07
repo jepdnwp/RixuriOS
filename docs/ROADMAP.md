@@ -1362,3 +1362,10 @@ Implement the phased design in [`docs/FORK_ADDRESS_SPACE_DESIGN.md`](FORK_ADDRES
 
 
 Phase A has started with a checked `vmm_phys_ptr()` access boundary. The next implementation step is to back this boundary with a permanent mapped kernel window; the current identity fallback is deliberately not considered a fork/xargs fix.
+
+
+### Current evidence — 2026-09-07
+
+The RixFS/VFS rename path now has a bounded redo-journal transaction for regular-file moves. Real QEMU/NVMe evidence passed same-directory inode-preserving rename, overwrite replacement, rename-to-directory failure safety, cross-directory move, cross-directory overwrite, and round-trip movement. Deleted directory sectors are skipped consistently by lookup, readdir, remove, and rename discovery, so repeated create/remove and transactional rename operations do not fail on reusable holes. The cp/mv edge harness also passed empty-file movement, metadata-preserving fallback, overwrite, and multi-sector executable copy/readback.
+
+The Phase 20 authentication path now passes the complete QEMU credential/session/authentication suite, including account add, password rotation, verification with the new password, login session creation and teardown, old-password rejection, protected shadow access, account removal, and account-count checks. A rotation preserves `/etc/passwd` and replaces only the requested `/etc/shadow` record. These results are QEMU-validated on the disposable NVMe-backed image; physical NVMe behavior, power-loss injection during commit, directory rename semantics, symlinks, and broader policy matrices remain open.
