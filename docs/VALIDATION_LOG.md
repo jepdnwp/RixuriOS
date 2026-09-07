@@ -559,3 +559,11 @@ The disposable RixFS image now carries `/etc/passwd` with three deterministic ac
 `/usr/bin/authcheck` validates account record persistence, correct-password acceptance, wrong-password denial, and shadow-file access denial after dropping to UID 1000. The new `auth-test` target runs this over a disposable NVMe/RixFS image, and `make phase20-test CROSS=` includes the authentication harness.
 
 Observed QEMU markers were `accounts=3`, `account-record=PASS`, `auth-pass`, `auth-denied`, `shadow-protected=PASS` and `qemu account/authentication test: PASS`. The slice does not claim interactive login, account mutation/rollback, password rotation, PAM compatibility or hardware-backed credential storage.
+
+### Phase 20 continuation — persistent multi-session registry
+
+Added a bounded session registry alongside process session membership. `RIX_SYS_LIST_SESSIONS` returns a capacity-checked snapshot containing session ID, leader PID, authenticated UID, flags and controlling-TTY state. The kernel registers the embedded user-init session and every newly created login/setsid session, refreshes TTY ownership when listing, and removes records only after the final live member exits or leaves.
+
+`/usr/bin/sessionlisttest` creates a concurrent child session, verifies that both the parent and child sessions are visible, waits for the child to logout and exit, then verifies that the child record is gone while the parent session remains. The existing session QEMU harness now runs both lifecycle and registry tests.
+
+Observed markers were `session=PASS`, `session-registry=PASS` and `qemu session lifecycle test: PASS`, with no page fault, CPU exception or panic markers. This is an in-memory runtime registry; reboot-persistent session serialization and a full login/session manager remain outside this slice.

@@ -39,6 +39,7 @@ int attach_tty(uint32_t tty_id){return(int)rix_sys(122,(long)tty_id,0,0);}
 int detach_tty(uint32_t tty_id){return(int)rix_sys(123,(long)tty_id,0,0);}
 int login_session(uint32_t tty_id,rix_pid_t *out_session){return(int)rix_sys(124,(long)tty_id,(long)out_session,0);}
 int logout_session(void){return(int)rix_sys(125,0,0,0);}
+int list_sessions(rix_session_info_t*sessions,size_t capacity,size_t*count){return(int)rix_sys(126,(long)sessions,(long)capacity,(long)count);}
 int get_capabilities(uint64_t*out){return(int)rix_sys(132,(long)out,0,0);}
 int drop_capabilities(uint64_t mask){return(int)rix_sys(133,(long)mask,0,0);}
 int getgroups(size_t capacity,uint32_t *groups){return(int)rix_sys(115,(long)capacity,(long)groups,0);}

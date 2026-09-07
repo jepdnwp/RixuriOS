@@ -3,6 +3,7 @@
 #include <stdint.h>
 typedef int64_t rix_ssize_t;
 typedef uint64_t rix_pid_t;
+typedef struct { rix_pid_t session; rix_pid_t leader; uint32_t uid; uint32_t controlling_tty; uint32_t flags; } rix_session_info_t;
 typedef struct { uint64_t sec; uint64_t nsec; } rix_timespec_t;
 typedef struct { uint64_t inode; uint8_t type; char name[256]; } rix_dirent_t;
 typedef struct { uint64_t inode; uint8_t type; uint32_t mode; uint32_t uid; uint32_t gid; uint64_t size; } rix_stat_t;
@@ -56,6 +57,7 @@ int attach_tty(uint32_t tty_id);
 int detach_tty(uint32_t tty_id);
 int login_session(uint32_t tty_id, rix_pid_t *out_session);
 int logout_session(void);
+int list_sessions(rix_session_info_t *sessions,size_t capacity,size_t *count);
 int get_capabilities(uint64_t *out);
 int drop_capabilities(uint64_t mask);
 int getgroups(size_t capacity, uint32_t *groups);

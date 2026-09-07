@@ -48,10 +48,11 @@ with tempfile.TemporaryDirectory(prefix="rixurios-session-") as temporary:
         if not until(b"USER: init returned to kernel"):
             raise RuntimeError("boot")
         time.sleep(1)
-        process.stdin.write(b"/usr/bin/sessiontest\n")
-        process.stdin.flush()
-        if not until(b"rixuri$ ", 20):
-            raise RuntimeError("prompt")
+        for command in (b"/usr/bin/sessiontest\n", b"/usr/bin/sessionlisttest\n"):
+            process.stdin.write(command)
+            process.stdin.flush()
+            if not until(b"rixuri$ ", 20):
+                raise RuntimeError("prompt")
     finally:
         process.terminate()
         try:
@@ -65,6 +66,8 @@ Path("/tmp/session-qemu.log").write_bytes(out)
 print(out.decode("utf-8", "replace"))
 if b"session=PASS" not in out:
     raise SystemExit("missing session pass marker")
+if b"session-registry=PASS" not in out:
+    raise SystemExit("missing session registry pass marker")
 if b"PAGE FAULT" in out or b"CPU exception" in out or b"PANIC" in out:
     raise SystemExit("fault")
 print("qemu session lifecycle test: PASS")
