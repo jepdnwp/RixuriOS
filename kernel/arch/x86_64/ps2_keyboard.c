@@ -4,7 +4,6 @@
 #include <stdint.h>
 
 #define PS2_DATA_PORT 0x60u
-#define PS2_STATUS_PORT 0x64u
 
 static uint8_t shift_held;
 static uint8_t ctrl_held;
@@ -15,8 +14,6 @@ static inline uint8_t inb(uint16_t port) {
     __asm__ volatile("inb %1, %0" : "=a"(val) : "Nd"(port));
     return val;
 }
-
-static void ps2_irq_handler(unsigned irq, const struct interrupt_frame *frame);
 
 static const uint8_t scancode_to_ascii[128] = {
     0, 0, '1','2','3','4','5','6','7','8','9','0','-','=', 0, 0,
@@ -86,10 +83,4 @@ void ps2_keyboard_init(void) {
     ctrl_held = 0;
     extended_scancode = 0;
     irq_register(1u, ps2_irq_handler);
-}
-
-void ps2_keyboard_poll(void) {
-    /* Firmware PS/2 routing is not consistent on modern boards; drain the
-       controller even when IRQ1 is unavailable. */
-    while (inb(PS2_STATUS_PORT) & 1u) ps2_irq_handler(1u, NULL);
 }
