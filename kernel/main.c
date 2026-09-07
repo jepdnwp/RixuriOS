@@ -254,7 +254,7 @@ void kernel_main(const rixuri_boot_info_t *boot){
  ps2_keyboard_init();
  int io_ready=0;if(acpi_ioapic_count()&&ioapic_init()==0){if(ioapic_route_irq(0,32,(uint8_t)lapic_id())!=0)panic("failed to route PIT IRQ");if(ioapic_route_irq(1,33,(uint8_t)lapic_id())!=0)klog_write("IOAPIC: failed to route IRQ1 (keyboard)\r\n");else{ioapic_unmask_irq(0);ioapic_unmask_irq(1);}pic_disable();io_ready=1;}
  if(io_ready){idt_enable();klog_write("IRQ: PIT routed through IOAPIC; interrupts enabled\r\n");}
- else if(pic_init()==0){idt_enable();klog_write("IRQ: IOAPIC unavailable; legacy PIC PIT/keyboard fallback enabled\r\n");}
+ else if(pic_init()==0){lapic_enable_pic_extint();idt_enable();klog_write("IRQ: IOAPIC unavailable; LAPIC ExtINT/PIC fallback enabled\r\n");}
  else klog_write("IRQ: no usable interrupt controller; interrupts remain disabled\r\n");
  klog_write("xHCI: hotplug worker task=");klog_write_dec(xhci_worker_task);klog_write(" serial TTY worker task=");klog_write_dec(serial_worker_task);klog_write(" kbd poll task=");klog_write_dec(kbd_poll_task);klog_write("\r\n");
  klog_write("Core services: timer/scheduler/process/syscall/PCI/NVMe/xHCI/HID/block/VFS/time initialized\r\n");klog_write("LAPIC: initialized, id=");klog_write_dec(lapic_id());klog_write("\r\n");klog_write("RIXURI:KERNEL_READY\r\n");for(;;)scheduler_yield();

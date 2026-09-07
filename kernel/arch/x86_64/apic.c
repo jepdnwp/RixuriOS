@@ -8,6 +8,7 @@
 #define APIC_REG_ID 0x020
 #define APIC_REG_EOI 0x0B0
 #define APIC_REG_SVR 0x0F0
+#define APIC_REG_LVT_LINT0 0x350
 #define APIC_SVR_ENABLE (1u << 8)
 #define PTE_FLAGS (RIXURI_PTE_PRESENT | RIXURI_PTE_WRITE | RIXURI_PTE_NX)
 #define LAPIC_VIRTUAL_BASE 0xFFFF8000FEE00000ULL
@@ -40,3 +41,4 @@ int lapic_init(void) {
 
 uint32_t lapic_id(void) { return lapic_read(APIC_REG_ID) >> 24; }
 void lapic_eoi(void) { lapic_write(APIC_REG_EOI, 0); }
+void lapic_enable_pic_extint(void) { lapic_write(APIC_REG_LVT_LINT0, 7u << 8); }

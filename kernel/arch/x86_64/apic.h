@@ -9,3 +9,4 @@ uint32_t lapic_id(void);
 void lapic_eoi(void);
 void lapic_write(uint32_t offset, uint32_t value);
 uint32_t lapic_read(uint32_t offset);
+void lapic_enable_pic_extint(void);
