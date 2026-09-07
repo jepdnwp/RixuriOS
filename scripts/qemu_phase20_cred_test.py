@@ -52,6 +52,10 @@ with tempfile.TemporaryDirectory(prefix="rixurios-phase20-") as temporary:
         process.stdin.flush()
         if not until(b"rixuri$ ", 20):
             raise RuntimeError("prompt")
+        process.stdin.write(b"/usr/bin/capdelegatetest\n")
+        process.stdin.flush()
+        if not until(b"rixuri$ ", 20):
+            raise RuntimeError("capdelegatetest prompt")
         process.stdin.write(b"/usr/bin/killtest\n")
         process.stdin.flush()
         if not until(b"rixuri$ ", 20):
@@ -73,6 +77,8 @@ for marker in (
     b"cap=PASS",
     b"matrix=PASS",
     b"audit=PASS\n",
+    b"delegated-exec=PASS\n",
+    b"delegation=PASS\n",
     b"setid=PASS\n",
     b"kill=PASS\n",
 ):

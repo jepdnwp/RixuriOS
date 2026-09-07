@@ -44,6 +44,7 @@ int get_capabilities(uint64_t*out){return(int)rix_sys(132,(long)out,0,0);}
 int drop_capabilities(uint64_t mask){return(int)rix_sys(133,(long)mask,0,0);}
 int get_audit_uid(uint32_t*out){return(int)rix_sys(135,(long)out,0,0);}
 int set_audit_uid(uint32_t uid){return(int)rix_sys(136,(long)uid,0,0);}
+int delegate_capabilities(rix_pid_t child,uint64_t mask){return(int)rix_sys(137,(long)child,(long)mask,0);}
 int getgroups(size_t capacity,uint32_t *groups){return(int)rix_sys(115,(long)capacity,(long)groups,0);}
 int setgroups(size_t count,const uint32_t *groups){return(int)rix_sys(116,(long)count,(long)groups,0);}
 int execve(const char *path,char *const argv[],char *const envp[]){return(int)rix_sys(59,(long)path,(long)argv,(long)envp);}
