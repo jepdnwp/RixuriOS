@@ -11,7 +11,7 @@ OBJ := kernel/boot.o kernel/main.o kernel/serial.o kernel/user_init_blob.o \
  kernel/arch/x86_64/cpu.o kernel/arch/x86_64/gdt.o kernel/arch/x86_64/idt.o kernel/arch/x86_64/interrupts.o kernel/arch/x86_64/irq.o kernel/arch/x86_64/apic.o kernel/arch/x86_64/acpi.o kernel/arch/x86_64/ioapic.o kernel/arch/x86_64/pic.o kernel/arch/x86_64/pit.o kernel/arch/x86_64/ps2_keyboard.o kernel/arch/x86_64/user_entry.o \
  kernel/pci/pci.o kernel/pci/dma.o kernel/pci/iommu.o kernel/pci/msix.o kernel/sched/scheduler.o kernel/sched/switch.o kernel/process/process.o kernel/process/signal.o kernel/process/address_space.o kernel/syscall/syscall.o kernel/vfs/vfs.o kernel/fs/rixfs.o kernel/fs/rixfs_ops.o kernel/fs/rixfs_dir.o kernel/fs/rixfs_fsck.o kernel/elf/elf.o kernel/elf/loader.o \
  kernel/mm/pmm.o kernel/mm/vmm.o kernel/mm/ptmap.o kernel/mm/uaccess.o kernel/mm/heap.o kernel/sync/lock.o kernel/sync/waitqueue.o kernel/ipc/channel.o kernel/ipc/pipe.o kernel/ipc/shared_memory.o kernel/tty/tty.o \
- kernel/storage/block.o kernel/storage/block_cache.o kernel/storage/nvme.o kernel/usb/xhci.o kernel/usb/usb.o kernel/usb/hid.o kernel/time/rtc.o kernel/time/time.o kernel/power/power.o
+ kernel/storage/block.o kernel/storage/block_cache.o kernel/storage/nvme.o kernel/usb/xhci.o kernel/usb/usb.o kernel/usb/hid.o kernel/time/rtc.o kernel/time/time.o kernel/power/power.o kernel/tty/font_psf.o
 
 PROGRAM_NAMES := echo cat args grep true false sleep ls mkdir rm rmdir touch stat ln head tail wc cut tr sort uniq env printf pwd which kill ps uname du cp mv find xargs sed test tee basename dirname seq id whoami date credtest auditcheck capdelegatecheck capdelegatetest accountctl sessiontest sessionlisttest killtest metatest renametest authcheck abi-negative proc-test pipe-stress rixtest
 PROGRAM_ELFS := $(addprefix build/programs/,$(addsuffix .elf,$(PROGRAM_NAMES)))
@@ -37,6 +37,9 @@ build/user_init.elf: build/user_init.o build/user_shell.o build/user_unistd.o us
 kernel/user_init_blob.o: build/user_init.elf | build
 	$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
 	$(OBJCOPY) --add-section .note.GNU-stack=/dev/null --set-section-flags .note.GNU-stack=readonly,contents $@
+kernel/tty/font_psf.o: assets/fonts/terminus-12x24.psf
+	$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
+	$(OBJCOPY) --rename-section .data=.rodata,alloc,load,readonly,data,contents $@
 user-init: build/user_init.elf
 
 build/programs/%.o: user/programs/%.c user/libc/include/unistd.h user/programs/copy_metadata.h user/programs/auth_crypto.h | build
@@ -164,7 +167,7 @@ hid-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -DHID_PARSER_HOST_TEST -I. tests/hid_report_test.c kernel/usb/hid.c -o build/hid_report_test
 	build/hid_report_test
 tty-test: | build
-	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/tty_test.c kernel/tty/tty.c -o build/tty_test
+		$(HOST_CC) -std=c17 -Wall -Wextra -Werror -DRIX_HOST_TEST -I. tests/tty_test.c kernel/tty/tty.c -o build/tty_test
 	build/tty_test
 shell-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/shell_test.c user/shell/shell.c -o build/shell_test

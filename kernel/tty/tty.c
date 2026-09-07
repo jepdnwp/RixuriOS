@@ -1,8 +1,16 @@
 #include "tty.h"
-#include "font16x16.h"
+#include "font_psf.h"
+
+#ifdef RIX_HOST_TEST
+const unsigned char _binary_assets_fonts_terminus_12x24_psf_start[] = {0};
+const unsigned char _binary_assets_fonts_terminus_12x24_psf_end[] = {0};
+#endif
 
 static rix_tty_t ttys[RIX_TTY_COUNT];
 static struct { volatile uint32_t *pixels; uint32_t size, width, height, pitch, format; uint16_t columns, rows; } framebuffer;
+static uint8_t psf_ascii[128];
+static const rix_psf2_header_t *psf;
+static const uint8_t *psf_glyphs;
 
 #define FG_WHITE 0x00ffffffu
 #define BG_BLACK 0x00000000u
@@ -38,18 +46,43 @@ static void framebuffer_clear(void) {
 
 static void framebuffer_glyph(uint16_t column,uint16_t row,uint8_t ch,uint32_t fg,uint32_t bg) {
     if (!framebuffer.pixels || column>=framebuffer.columns || row>=framebuffer.rows) return;
-    uint32_t x0=(uint32_t)column*16u,y0=(uint32_t)row*16u;
-    const uint16_t *glyph=rix_font16x16[ch<128u?ch:(uint8_t)'?'];
-    for (uint32_t y=0;y<16u;++y) {
+    uint32_t glyph_index=psf_ascii[ch<128u?ch:(uint8_t)'?'];
+    if (!psf||glyph_index>=psf->glyph_count) glyph_index=0;
+    const uint8_t *glyph=psf_glyphs+(size_t)glyph_index*psf->bytes_per_glyph;
+    uint32_t bytes_per_line=(psf->width+7u)/8u;
+    uint32_t x0=(uint32_t)column*psf->width,y0=(uint32_t)row*psf->height;
+    for (uint32_t y=0;y<psf->height;++y) {
         uint32_t py=y0+y;
         if (py>=framebuffer.height) continue;
         volatile uint32_t *pixels=(volatile uint32_t *)((uint8_t *)framebuffer.pixels+(size_t)py*framebuffer.pitch);
-        uint16_t row_bits=glyph[y];
-        for (uint32_t x=0;x<16u;++x) {
+        for (uint32_t x=0;x<psf->width;++x) {
             uint32_t px=x0+x;
             if (px>=framebuffer.width) continue;
-            framebuffer_pixel(&pixels[px],row_bits&(1u<<(15u-x))?fg:bg);
+            uint8_t bits=glyph[(size_t)y*bytes_per_line+(x/8u)];
+            framebuffer_pixel(&pixels[px],bits&(uint8_t)(0x80u>>(x%8u))?fg:bg);
         }
+    }
+}
+
+static void psf_init(void) {
+    psf=(const rix_psf2_header_t *)_binary_assets_fonts_terminus_12x24_psf_start;
+    psf_glyphs=_binary_assets_fonts_terminus_12x24_psf_start+psf->header_size;
+    for (unsigned i=0;i<128u;i++) psf_ascii[i]=0;
+    if (psf->magic!=RIX_PSF2_MAGIC||psf->header_size<sizeof(*psf)||
+       !psf->glyph_count||!psf->bytes_per_glyph||!psf->width||!psf->height) return;
+    for (unsigned i=0;i<128u&&i<psf->glyph_count;i++) psf_ascii[i]=(uint8_t)i;
+    if (!(psf->flags&1u)) return;
+    const uint8_t *p=psf_glyphs+(size_t)psf->glyph_count*psf->bytes_per_glyph;
+    const uint8_t *end=_binary_assets_fonts_terminus_12x24_psf_end;
+    unsigned glyph=0;
+    while (p<end&&glyph<psf->glyph_count) {
+        if (*p==0xffu){++glyph;++p;continue;}
+        if (*p==0xfeu){++p;continue;}
+        uint32_t cp=*p++;
+        if (cp>=0xc0u&&cp<0xe0u&&p<end) cp=((cp&0x1fu)<<6u)|(*p++&0x3fu);
+        else if (cp>=0xe0u&&cp<0xf0u&&p+1<end) { uint32_t b1=*p++; uint32_t b2=*p++; cp=((cp&0x0fu)<<12u)|((b1&0x3fu)<<6u)|(b2&0x3fu); }
+        else if (cp>=0xf0u&&p+2<end) { uint32_t b1=*p++; uint32_t b2=*p++; uint32_t b3=*p++; cp=((cp&7u)<<18u)|((b1&0x3fu)<<12u)|((b2&0x3fu)<<6u)|(b3&0x3fu); }
+        if (cp<128u) psf_ascii[cp]=(uint8_t)glyph;
     }
 }
 
@@ -313,6 +346,7 @@ static rix_tty_t *tty_valid(unsigned id) {
 }
 
 void tty_init(void) {
+    psf_init();
     for (unsigned i = 0; i < RIX_TTY_COUNT; ++i) {
         rix_tty_t *t = &ttys[i];
         t->head = 0;
@@ -353,8 +387,10 @@ void tty_set_framebuffer(uint64_t base,uint32_t size,uint32_t width,uint32_t hei
     framebuffer.pixels=(volatile uint32_t *)(uintptr_t)base; framebuffer.size=size;
     framebuffer.width=width; framebuffer.height=height; framebuffer.pitch=pitch;
     framebuffer.format=format;
-    framebuffer.columns=(uint16_t)(width/16u);
-    framebuffer.rows=(uint16_t)(height/16u);
+    uint32_t cell_width=(psf&&psf->width)?psf->width:8u;
+    uint32_t cell_height=(psf&&psf->height)?psf->height:16u;
+    framebuffer.columns=(uint16_t)(width/cell_width);
+    framebuffer.rows=(uint16_t)(height/cell_height);
     if(framebuffer.columns>RIX_TTY_MAX_COLUMNS) framebuffer.columns=RIX_TTY_MAX_COLUMNS;
     if(framebuffer.rows>RIX_TTY_MAX_ROWS) framebuffer.rows=RIX_TTY_MAX_ROWS;
     framebuffer_clear();
