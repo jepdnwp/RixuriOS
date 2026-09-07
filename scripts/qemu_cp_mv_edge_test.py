@@ -50,7 +50,7 @@ def command(line: bytes) -> None:
         proc.stdin.write(bytes((byte,)))
         proc.stdin.flush()
         time.sleep(0.01)
-    if not read_until(b"rixuri$ ", 30.0):
+    if not read_until(b"\x1b[1;37m:\x1b[0m ", 30.0):
         raise RuntimeError(f"prompt not observed after {line!r}")
 
 

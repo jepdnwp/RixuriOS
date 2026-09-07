@@ -21,7 +21,7 @@ def until(marker,timeout=30):
  return False
 def command(line):
  for b in line+b'\n': proc.stdin.write(bytes((b,))); proc.stdin.flush(); time.sleep(.005)
- if not until(b'rixuri$ '): raise RuntimeError('prompt missing after '+line.decode())
+ if not until(b'\x1b[1;37m:\x1b[0m '): raise RuntimeError('prompt missing after '+line.decode())
 try:
  if not until(b'USER: init returned to kernel'): raise RuntimeError('init did not return')
  time.sleep(1)

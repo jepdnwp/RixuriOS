@@ -51,7 +51,7 @@ with tempfile.TemporaryDirectory(prefix="rixurios-session-") as temporary:
         for command in (b"/usr/bin/sessiontest\n", b"/usr/bin/sessionlisttest\n"):
             process.stdin.write(command)
             process.stdin.flush()
-            if not until(b"rixuri$ ", 20):
+            if not until(b"\x1b[1;37m:\x1b[0m ", 20):
                 raise RuntimeError("prompt")
     finally:
         process.terminate()

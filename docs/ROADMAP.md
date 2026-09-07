@@ -1389,3 +1389,8 @@ The set-ID exec regression now supplies a deliberately tainted environment and r
 ### Current evidence — 2026-09-07
 
 Authentication now verifies the password, creates a session, transitions the session leader to the account UID/GID, verifies that identity, and logs out without requiring retained administrative capabilities. The QEMU regression requires a separate login-identity marker. The permission matrix also validates group-owned directory child creation, readback and unlink through supplementary-group search/write/execute access. Full rmdir policy coverage remains a distinct filesystem boundary; hardware and crash-injection gates remain unavailable in this environment.
+
+
+### Current evidence — 2026-09-07
+
+The shell prompt is now active as a colored dynamic `username@hostname directory :` presentation. It derives the username from the process UID, uses the `rixurios` machine label and reads cwd at each redraw. The Phase 19 QEMU regression requires both the colored root/hostname marker and the colored `/p19ext` marker after directory change; prompt text is not used as an authorization source.

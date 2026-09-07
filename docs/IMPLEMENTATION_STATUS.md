@@ -588,3 +588,8 @@ The set-ID credential regression now passes a deliberately tainted environment c
 The authentication login path now performs the account’s actual UID/GID transition inside the session leader before logout. The unprivileged session leader may close its own session without retaining the session-administration capability; arbitrary non-leaders remain rejected. The QEMU auth harness requires a distinct `login-identity=PASS` marker in addition to `login=PASS`.
 
 The credential matrix also creates a group-owned directory with group search/write/execute permissions and validates child creation, readback and unlink through the real VFS path after the process adopts UID 1000 with supplementary group 2000. The full Phase 20 target passed with no fault, panic, timeout or prompt loss. A complete rmdir policy matrix remains a separate RixFS directory-mutation boundary rather than being falsely marked complete.
+
+
+## Colored shell prompt — 2026-09-07
+
+The shell now renders a dynamic colored prompt in the requested form: `username@hostname directory :`. Root sessions display the actual `root` identity, the machine label is `rixurios`, and the current working directory is read from the process cwd on every prompt. ANSI colors distinguish the username, hostname, directory and separator. The prompt remains presentation-only; credential and permission decisions continue to use kernel identity state. QEMU validation now requires the colored root/hostname marker and a colored `/p19ext` cwd marker after `cd`.

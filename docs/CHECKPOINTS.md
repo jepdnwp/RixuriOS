@@ -172,3 +172,8 @@ CP7 and CP8 remain open for the phase as a whole. The remaining blockers are inj
 ## Phase 20 latest evidence — 2026-09-07
 
 The final bounded QEMU run passed real login UID/GID transition, unprivileged self-logout, account lock/unlock, invalid-account no-mutation, group-owned directory child mutation, tainted privileged-environment sanitization, ACL/capability/audit/set-ID checks, session lifecycle and account rotation. Strict host tests also pass. Full Phase 20 CP7/CP8 closure remains blocked by physical hardware evidence, injected power-loss/crash recovery, a complete interactive login manager and the remaining filesystem policy matrix.
+
+
+## Colored prompt checkpoint — 2026-09-07
+
+The requested colored `username@hostname directory :` prompt is implemented. Root QEMU output contains colored `root@rixurios`, colored `/` and colored `/p19ext` after `cd /p19ext`, followed by the colored separator colon. All updated QEMU harnesses use the ANSI prompt marker and the Phase 19 extended test requires the new prompt evidence.

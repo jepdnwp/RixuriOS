@@ -40,7 +40,7 @@ def read_until(marker: bytes, timeout: float = 30.0) -> bool:
 def command(line: bytes) -> None:
     proc.stdin.write(line + b"\n")
     proc.stdin.flush()
-    if not read_until(b"rixuri$ ", 20.0):
+    if not read_until(b"\x1b[1;37m:\x1b[0m ", 20.0):
         raise RuntimeError(f"prompt missing after {line!r}")
 
 try:
@@ -81,7 +81,10 @@ finally:
 
 text = output.decode("utf-8", "replace")
 required = (b"/p19ext", b"seq.txt", b"uid=0 gid=0\n", b"root\n",
-            b"cd: no such directory", b"rmdir: failed")
+            b"cd: no such directory", b"rmdir: failed",
+            b"\x1b[1;32mroot\x1b[0m@\x1b[1;34mrixurios\x1b[0m",
+            b"\x1b[1;36m/p19ext\x1b[0m",
+            b"\x1b[1;37m:\x1b[0m ")
 if any(marker not in output for marker in required):
     raise RuntimeError("required positive/negative evidence missing")
 if any(marker in output for marker in (b"PAGE FAULT", b"CPU exception", b"PANIC")):

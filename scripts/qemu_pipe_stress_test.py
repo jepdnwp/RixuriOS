@@ -55,7 +55,7 @@ try:
     send(b"/usr/bin/pipe-stress")
     if not read_until(b"pipe-stress:PASS", 40.0):
         raise RuntimeError("pipe stress PASS marker not observed")
-    if not read_until(b"rixuri$ ", 10.0):
+    if not read_until(b"\x1b[1;37m:\x1b[0m ", 10.0):
         raise RuntimeError("shell prompt did not return after pipe stress")
 finally:
     proc.terminate()

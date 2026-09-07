@@ -281,6 +281,18 @@ static int shell_cd_builtin(const rix_shell_pipeline_t *pipeline, int *handled) 
     return 0;
 }
 
+static void shell_prompt(void) {
+    char cwd[256];
+    const char *user = getuid() == 0u ? "root" : "user";
+    if (getcwd(cwd, sizeof(cwd)) < 0) cwd[0] = 0;
+    (void)write_text(1, "\033[1;32m");
+    (void)write_text(1, user);
+    (void)write_text(1, "\033[0m@\033[1;34mrixurios\033[0m ");
+    (void)write_text(1, "\033[1;36m");
+    (void)write_text(1, cwd);
+    (void)write_text(1, "\033[0m \033[1;37m:\033[0m ");
+}
+
 static int shell_read_line(char *line, size_t capacity) {
     size_t used = 0;
     if (!line || capacity < 2u) return -1;
@@ -322,7 +334,7 @@ void _start(void) {
     (void)write_text(1, "RixuriOS shell ready\r\n");
     for (;;) {
         reap_background_jobs();
-        (void)write_text(1, "rixuri$ ");
+        shell_prompt();
         if (shell_read_line(line, sizeof(line)) != 0) break;
         (void)shell_execute_line(line, &history);
     }

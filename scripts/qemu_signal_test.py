@@ -58,7 +58,7 @@ def run_scenario(name, control):
         send_bytes(proc, b"/bin/cat\n")
         time.sleep(2.0)
         send_bytes(proc, bytes((control,)))
-        cursor = read_until(proc, output, cursor, b"rixuri$ ", 10.0)
+        cursor = read_until(proc, output, cursor, b"\x1b[1;37m:\x1b[0m ", 10.0)
         if cursor is None:
             raise RuntimeError(f"{name}: shell prompt did not return")
     finally:
