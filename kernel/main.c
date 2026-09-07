@@ -141,7 +141,7 @@ static void xhci_hotplug_worker(void *arg){
      (void)xhci_device_detach(controller,device.slot_id);
     }
    }
-  } else if(rc<0){
+   } else if(rc<0){
    klog_write("xHCI: hotplug service error=");klog_write_dec((uint64_t)(-rc));
    klog_write(" controller=");klog_write_dec(controller);klog_write("\r\n");
    }

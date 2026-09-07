@@ -168,7 +168,11 @@ static int reset_controller(volatile uint8_t *op) {
     volatile uint32_t *cmd = (volatile uint32_t *)(op + XHCI_USBCMD);
     volatile uint32_t *sts = (volatile uint32_t *)(op + XHCI_USBSTS);
     *cmd &= ~XHCI_CMD_RS;
-    if (wait_halted(op, 1) != 0) return -1;
+    if (wait_halted(op, 1) != 0) {
+        /* QEMU's xHCI model can report zero in USBSTS before its first reset
+           even though the controller is already stopped. */
+        if (*cmd != 0u || *sts != 0u) return -1;
+    }
     *cmd |= XHCI_CMD_HCRST;
     for (uint32_t i = 0; i < XHCI_POLL_LIMIT; ++i) {
         uint32_t v = *cmd;
@@ -448,6 +452,20 @@ int xhci_service_hotplug(size_t controller, rix_xhci_device_t *device, uint8_t *
     uint8_t port = 0;
     uint8_t is_connected = 0;
     int rc = xhci_poll_port_status_change(controller, &port, &is_connected);
+    if (rc == 0) {
+        /* A device already present before the controller starts may not
+           generate a port-status event. Scan connected ports once per poll. */
+        const rix_xhci_controller_t *c = &controllers[controller];
+        for (uint8_t candidate = 1; candidate <= c->max_ports; ++candidate) {
+            rix_xhci_port_status_t status;
+            if (xhci_port_status(controller, candidate, &status) != 0 || !status.connected) continue;
+            int occupied = 0;
+            for (uint16_t slot_id = 1; slot_id <= c->max_slots; ++slot_id)
+                if (runtimes[controller].slots[slot_id].allocated &&
+                    runtimes[controller].slots[slot_id].port == candidate) { occupied = 1; break; }
+            if (!occupied) { port = candidate; is_connected = 1; rc = 1; break; }
+        }
+    }
     if (rc <= 0) return rc;
     *connected = is_connected;
     if (is_connected) {
