@@ -1384,3 +1384,8 @@ The bounded account store now supports reversible lock and unlock operations. A 
 ### Current evidence — 2026-09-07
 
 The set-ID exec regression now supplies a deliberately tainted environment and requires the privileged target to receive an empty environment while still completing the UID/GID transition. This provides real QEMU evidence for the privileged-environment sanitization branch; a complete environment-management subsystem and physical security qualification remain outside the bounded Phase 20 model.
+
+
+### Current evidence — 2026-09-07
+
+Authentication now verifies the password, creates a session, transitions the session leader to the account UID/GID, verifies that identity, and logs out without requiring retained administrative capabilities. The QEMU regression requires a separate login-identity marker. The permission matrix also validates group-owned directory child creation, readback and unlink through supplementary-group search/write/execute access. Full rmdir policy coverage remains a distinct filesystem boundary; hardware and crash-injection gates remain unavailable in this environment.

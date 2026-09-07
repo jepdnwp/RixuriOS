@@ -70,3 +70,8 @@ The bounded account-store slice now includes reversible lock/unlock markers and 
 ## Privileged environment evidence — 2026-09-07
 
 The set-ID QEMU fixture now passes a non-empty tainted environment and requires the privileged executable to observe no environment entries. This verifies the kernel’s privileged-transition sanitization path through execve rather than relying on an already-empty test environment. Ordinary environment mutation and a full login-service policy remain outside this bounded contract.
+
+
+## Login identity evidence — 2026-09-07
+
+The bounded login path now verifies the account record, creates a session, transitions the session leader to the account UID/GID, verifies the new identity and permits that session leader to close its own session without retaining the session-administration capability. The real QEMU test requires the dedicated identity marker. This remains a bounded login/session contract, not a complete multi-user login manager or lockout policy.

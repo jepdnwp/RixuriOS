@@ -581,3 +581,10 @@ This closes the implemented bounded account lock/unlock and failed-input rollbac
 ## Phase 20 privileged-environment sanitization continuation — 2026-09-07
 
 The set-ID credential regression now passes a deliberately tainted environment containing `SECRET=must-not-reach-setid` and `PATH=/tmp` into the setuid/setgid executable. The executable still reports `uid=0 gid=0` only when the kernel has replaced the environment with an empty privileged environment; ordinary non-set-ID execution remains outside this sanitization branch. The complete Phase 20 QEMU target and strict host tests passed after this addition.
+
+
+## Phase 20 login identity and directory mutation continuation — 2026-09-07
+
+The authentication login path now performs the account’s actual UID/GID transition inside the session leader before logout. The unprivileged session leader may close its own session without retaining the session-administration capability; arbitrary non-leaders remain rejected. The QEMU auth harness requires a distinct `login-identity=PASS` marker in addition to `login=PASS`.
+
+The credential matrix also creates a group-owned directory with group search/write/execute permissions and validates child creation, readback and unlink through the real VFS path after the process adopts UID 1000 with supplementary group 2000. The full Phase 20 target passed with no fault, panic, timeout or prompt loss. A complete rmdir policy matrix remains a separate RixFS directory-mutation boundary rather than being falsely marked complete.

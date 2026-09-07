@@ -104,6 +104,7 @@ for marker in (
     b"account-lock=PASS",
     b"account-unlock=PASS",
     b"password-rotate=PASS",
+    b"login-identity=PASS",
     b"login=PASS",
     b"account-remove=PASS",
     b"accounts=3",

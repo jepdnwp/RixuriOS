@@ -211,11 +211,14 @@ int program_main(int argc, char **argv, char **envp) {
             rix_pid_t observed = 0;
             if (login_session(0, &session) != 0 || session != getpid() ||
                 get_session(0, &observed) != 0 || observed != session ||
+                setgid(gid) != 0 || setuid(uid) != 0 ||
+                getuid() != uid || getgid() != gid ||
                 logout_session() != 0 || get_session(0, &observed) != 0 || observed != 0)
                 _exit(1);
             _exit(0);
         }
         if (wait(child, &status) != child || status != 0) return 1;
+        out("login-identity=PASS\n");
         out("login=PASS\n");
         return 0;
     }

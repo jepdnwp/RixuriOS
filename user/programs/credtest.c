@@ -89,6 +89,7 @@ int program_main(int argc, char **argv, char **envp) {
         return 1;
     if (setgid(2000u) != 0 ||
         create_byte_file("/phase20-group", 0640u, 'g') != 0 ||
+        mkdir("/usr/phase20-group-dir", 0730u) != 0 ||
         setgid(3000u) != 0 ||
         create_byte_file("/phase20-other", 0004u, 'o') != 0 ||
         setgid(1000u) != 0)
@@ -164,6 +165,10 @@ int program_main(int argc, char **argv, char **envp) {
     if (read_byte_file("/phase20-other", 'o') != 0 ||
         expect_error(openat(RIX_VFS_AT_FDCWD, "/phase20-other",
                             RIX_VFS_O_WRONLY, 0u), RIX_EACCES) != 0)
+        return 1;
+    if (create_byte_file("/usr/phase20-group-dir/child", 0600u, 'd') != 0 ||
+        read_byte_file("/usr/phase20-group-dir/child", 'd') != 0 ||
+        unlink("/usr/phase20-group-dir/child") != 0)
         return 1;
     if (expect_error(openat(RIX_VFS_AT_FDCWD, "/phase20-mode/secret",
                             0u, 0u), RIX_EACCES) != 0 ||

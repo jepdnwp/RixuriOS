@@ -167,3 +167,8 @@ The Phase 13/20 credential gate also passed `make phase20-test CROSS=x86_64-linu
 The bounded Phase 20 implementation now has QEMU evidence for owner/group/other access, path-search denial, supplementary groups, saved IDs, ACLs, capabilities and delegation, audit identity, set-ID transitions, tainted-environment sanitization, session lifecycle, account lock/unlock, invalid-account no-mutation behavior, password rotation and login. Strict build and host regressions pass.
 
 CP7 and CP8 remain open for the phase as a whole. The remaining blockers are injected mid-commit power-loss/crash testing for the account store and journal, physical NVMe/security-target evidence, a complete interactive login/lockout service, and a final review of the broader authorization matrix. These cannot be honestly claimed from the current disposable QEMU environment; the shell prompt therefore remains unchanged.
+
+
+## Phase 20 latest evidence — 2026-09-07
+
+The final bounded QEMU run passed real login UID/GID transition, unprivileged self-logout, account lock/unlock, invalid-account no-mutation, group-owned directory child mutation, tainted privileged-environment sanitization, ACL/capability/audit/set-ID checks, session lifecycle and account rotation. Strict host tests also pass. Full Phase 20 CP7/CP8 closure remains blocked by physical hardware evidence, injected power-loss/crash recovery, a complete interactive login manager and the remaining filesystem policy matrix.
