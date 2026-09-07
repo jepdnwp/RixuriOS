@@ -2,6 +2,7 @@
 #include "../arch/x86_64/irq.h"
 #include "../process/process.h"
 #include "../arch/x86_64/user_entry.h"
+#include "kernel.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -29,6 +30,8 @@ static volatile uint64_t ticks;
 static rix_task_t tasks[RIX_MAX_TASKS];
 static uint32_t current_index;
 static rix_task_id_t next_id;
+static uint8_t switch_debug;
+static uint8_t bootstrap_debug;
 
 static uint64_t read_rflags(void){uint64_t v;__asm__ volatile("pushfq; popq %0":"=r"(v)::"memory");return v;}
 static void cli(void){__asm__ volatile("cli" ::: "memory");}
@@ -38,10 +41,14 @@ static void task_returned(void){ tasks[current_index].state=TASK_DEAD; for(;;) s
 static void task_bootstrap(void){
     rix_task_t *t=&tasks[current_index];
     if(t->process_pid){
+        if(!bootstrap_debug){bootstrap_debug=1;kernel_log("DEBUG: task bootstrap pid=1\r\n");}
         rix_process_t *p=process_lookup(t->process_pid);
-        if(!p||process_activate(t->process_pid)!=0)task_returned();
+        if(!p){kernel_log("DEBUG: bootstrap process lookup FAILED\r\n");task_returned();}
+        if(process_activate(t->process_pid)!=0){kernel_log("DEBUG: bootstrap process_activate FAILED\r\n");task_returned();}
+        kernel_log("DEBUG: user CR3 active, entering ring3\r\n");
         if(t->user_context_valid)x86_enter_user_context(p->address_space.pml4_phys,&t->user_context);
         if(t->user_return==UINT64_MAX)x86_enter_user(p->address_space.pml4_phys,t->user_entry,t->user_stack);
+        kernel_log("DEBUG: ring3 entry returned unexpectedly\r\n");
         x86_enter_user_return(p->address_space.pml4_phys,t->user_entry,t->user_stack,t->user_return);
     }
     sti();
@@ -126,8 +133,9 @@ void scheduler_yield(void){
     uint32_t old=current_index,next=old;
     for(uint32_t n=1;n<RIX_MAX_TASKS;n++){uint32_t i=(old+n)%RIX_MAX_TASKS;if(tasks[i].state==TASK_RUNNABLE){next=i;break;}}
     if(next==old){if(flags&0x200ULL)sti();return;}
+    if(!switch_debug){switch_debug=1;kernel_log("DEBUG: scheduler switching kernel->user task\r\n");}
     if(tasks[old].state==TASK_RUNNING)tasks[old].state=TASK_RUNNABLE;
-    if(tasks[next].process_pid){if(process_activate(tasks[next].process_pid)!=0){tasks[next].state=TASK_DEAD;if(flags&0x200ULL)sti();return;}}
+    if(tasks[next].process_pid){if(process_activate(tasks[next].process_pid)!=0){kernel_log("DEBUG: scheduler process_activate FAILED\r\n");tasks[next].state=TASK_DEAD;if(flags&0x200ULL)sti();return;}}
     else if(tasks[next].id==0){if(process_activate(0)!=0){if(flags&0x200ULL)sti();return;}}
     tasks[next].state=TASK_RUNNING;current_index=next;
     rix_context_switch(&tasks[old].rsp,tasks[next].rsp);
