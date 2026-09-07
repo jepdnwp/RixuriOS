@@ -28,6 +28,11 @@ typedef struct {
     uint8_t vt_state;
     uint8_t vt_value_index;
     uint8_t screen[RIX_TTY_MAX_ROWS * RIX_TTY_MAX_COLUMNS];
+    uint8_t screen_fg[RIX_TTY_MAX_ROWS * RIX_TTY_MAX_COLUMNS];
+    uint8_t screen_bg[RIX_TTY_MAX_ROWS * RIX_TTY_MAX_COLUMNS];
+    uint8_t fg_color;
+    uint8_t bg_color;
+    uint8_t bold;
     uint8_t canonical;
     uint8_t echo;
     uint8_t isig;
@@ -38,6 +43,8 @@ typedef struct {
     uint32_t utf8_codepoint;
     uint8_t utf8_expected;
     uint8_t utf8_seen;
+    uint8_t vt_param_count;
+    uint8_t vt_params[8];
 } rix_tty_t;
 
 void tty_init(void);

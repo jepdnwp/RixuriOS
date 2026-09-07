@@ -320,6 +320,13 @@ static int shell_execute_line(const char *line, rix_shell_history_t *history) {
     }
     if (history) (void)rix_shell_history_add(history, line);
     { int handled = 0; int cd_status = shell_cd_builtin(&pipeline, &handled); if (handled) return cd_status; }
+    if (pipeline.command_count == 1u && !pipeline.background) {
+        const rix_shell_command_t *cmd = &pipeline.command[0];
+        if (cmd->argc == 1u && cmd->argv[0][0]=='c' && cmd->argv[0][1]=='l' && cmd->argv[0][2]=='e' && cmd->argv[0][3]=='a' && cmd->argv[0][4]=='r' && cmd->argv[0][5]==0) {
+            (void)write_text(1, "\033[2J\033[H");
+            return 0;
+        }
+    }
     if (run_command(&pipeline, &status) != 0) {
         (void)write_text(2, "rixuri: command execution failed\n");
         return 125;

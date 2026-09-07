@@ -1,13 +1,33 @@
 #include "tty.h"
-#include "font8x8.h"
+#include "font16x16.h"
 
 static rix_tty_t ttys[RIX_TTY_COUNT];
 static struct { volatile uint32_t *pixels; uint32_t size, width, height, pitch, format; uint16_t columns, rows; } framebuffer;
+
+#define FG_WHITE 0x00ffffffu
+#define BG_BLACK 0x00000000u
+
+static const uint32_t ansi_colors[16] = {
+    0x00000000u, 0x00aa0000u, 0x0000aa00u, 0x00aa5500u,
+    0x000000aau, 0x00aa00aau, 0x0000aaaau, 0x00aaaaaau,
+    0x00555555u, 0x00ff5555u, 0x0055ff55u, 0x00ffff55u,
+    0x005555ffu, 0x00ff55ffu, 0x0055ffffu, 0x00ffffffu,
+};
+
+static uint32_t get_fg_color(rix_tty_t *t) {
+    return ansi_colors[t->bold ? (t->fg_color < 8u ? t->fg_color + 8u : t->fg_color) : t->fg_color];
+}
+
+static uint32_t get_bg_color(rix_tty_t *t) {
+    return ansi_colors[t->bg_color];
+}
+
 static void framebuffer_pixel(volatile uint32_t *pixel, uint32_t color) {
     if (!pixel) return;
     *pixel = framebuffer.format == 1u ? ((color & 0x0000ffu) << 16) |
              (color & 0x00ff00u) | ((color & 0xff0000u) >> 16) : color;
 }
+
 static void framebuffer_clear(void) {
     if (!framebuffer.pixels || !framebuffer.pitch) return;
     for (uint32_t y=0; y<framebuffer.height; ++y) {
@@ -15,14 +35,21 @@ static void framebuffer_clear(void) {
         for (uint32_t x=0; x<framebuffer.width; ++x) row[x]=0;
     }
 }
-static void framebuffer_glyph(uint16_t column,uint16_t row,uint8_t ch) {
+
+static void framebuffer_glyph(uint16_t column,uint16_t row,uint8_t ch,uint32_t fg,uint32_t bg) {
     if (!framebuffer.pixels || column>=framebuffer.columns || row>=framebuffer.rows) return;
-    uint32_t x0=(uint32_t)column*8u,y0=(uint32_t)row*8u;
-    const uint8_t *glyph=rix_font8x8[ch<128u?ch:(uint8_t)'?'];
-    for (uint32_t y=0;y<8u&&y0+y<framebuffer.height;++y) {
-        volatile uint32_t *pixels=(volatile uint32_t *)((uint8_t *)framebuffer.pixels+(size_t)(y0+y)*framebuffer.pitch);
-        for (uint32_t x=0;x<8u&&x0+x<framebuffer.width;++x)
-            framebuffer_pixel(&pixels[x0+x],glyph[y]&(1u<<x)?0x00ffffffu:0u);
+    uint32_t x0=(uint32_t)column*16u,y0=(uint32_t)row*16u;
+    const uint16_t *glyph=rix_font16x16[ch<128u?ch:(uint8_t)'?'];
+    for (uint32_t y=0;y<16u;++y) {
+        uint32_t py=y0+y;
+        if (py>=framebuffer.height) continue;
+        volatile uint32_t *pixels=(volatile uint32_t *)((uint8_t *)framebuffer.pixels+(size_t)py*framebuffer.pitch);
+        uint16_t row_bits=glyph[y];
+        for (uint32_t x=0;x<16u;++x) {
+            uint32_t px=x0+x;
+            if (px>=framebuffer.width) continue;
+            framebuffer_pixel(&pixels[px],row_bits&(1u<<(15u-x))?fg:bg);
+        }
     }
 }
 
@@ -52,24 +79,70 @@ static uint16_t vt_clamp(uint16_t value, uint16_t limit) {
     return value >= limit ? (uint16_t)(limit - 1u) : value;
 }
 
+static void vt_scroll_up(rix_tty_t *t) {
+    uint16_t cols = t->columns;
+    uint16_t rows = t->rows;
+    for (uint16_t r = 0; r + 1u < rows; ++r) {
+        for (uint16_t c = 0; c < cols; ++c) {
+            size_t dst = (size_t)r * RIX_TTY_MAX_COLUMNS + c;
+            size_t src = (size_t)(r + 1u) * RIX_TTY_MAX_COLUMNS + c;
+            t->screen[dst] = t->screen[src];
+            t->screen_fg[dst] = t->screen_fg[src];
+            t->screen_bg[dst] = t->screen_bg[src];
+        }
+    }
+    for (uint16_t c = 0; c < cols; ++c) {
+        size_t idx = (size_t)(rows - 1u) * RIX_TTY_MAX_COLUMNS + c;
+        t->screen[idx] = ' ';
+        t->screen_fg[idx] = t->fg_color;
+        t->screen_bg[idx] = t->bg_color;
+    }
+    for (uint16_t r = 0; r < rows; ++r) {
+        for (uint16_t c = 0; c < cols; ++c) {
+            size_t idx = (size_t)r * RIX_TTY_MAX_COLUMNS + c;
+            framebuffer_glyph(c, r, t->screen[idx], ansi_colors[t->screen_fg[idx] < 16u ? t->screen_fg[idx] : 7u], ansi_colors[t->screen_bg[idx] < 16u ? t->screen_bg[idx] : 0u]);
+        }
+    }
+}
+
 static void vt_move(rix_tty_t *t, int row_delta, int column_delta) {
     int row = (int)t->cursor_row + row_delta;
     int column = (int)t->cursor_column + column_delta;
-    if (row < 0) row = 0;
     if (column < 0) column = 0;
-    t->cursor_row = vt_clamp((uint16_t)row, t->rows);
-    t->cursor_column = vt_clamp((uint16_t)column, t->columns);
+    if ((uint16_t)column >= t->columns) column = (int)t->columns - 1;
+    t->cursor_column = (uint16_t)column;
+    if (row >= (int)t->rows) {
+        vt_scroll_up(t);
+        t->cursor_row = t->rows - 1u;
+    } else if (row < 0) {
+        t->cursor_row = 0;
+    } else {
+        t->cursor_row = (uint16_t)row;
+    }
 }
 
 static void vt_clear_screen(rix_tty_t *t) {
-    for (size_t i = 0; i < (size_t)RIX_TTY_MAX_ROWS * RIX_TTY_MAX_COLUMNS; ++i)
+    uint16_t rows = t->rows;
+    uint16_t cols = t->columns;
+    size_t count = (size_t)RIX_TTY_MAX_ROWS * RIX_TTY_MAX_COLUMNS;
+    for (size_t i = 0; i < count; ++i) {
         t->screen[i] = ' ';
+        t->screen_fg[i] = t->fg_color;
+        t->screen_bg[i] = t->bg_color;
+    }
+    for (uint16_t r = 0; r < rows; ++r) {
+        for (uint16_t c = 0; c < cols; ++c) {
+            framebuffer_glyph(c, r, ' ', get_fg_color(t), get_bg_color(t));
+        }
+    }
 }
 
 static void vt_print(rix_tty_t *t, uint8_t ch) {
     size_t index = (size_t)t->cursor_row * RIX_TTY_MAX_COLUMNS + t->cursor_column;
     t->screen[index] = ch;
-    framebuffer_glyph(t->cursor_column, t->cursor_row, ch);
+    t->screen_fg[index] = t->fg_color;
+    t->screen_bg[index] = t->bg_color;
+    framebuffer_glyph(t->cursor_column, t->cursor_row, ch, get_fg_color(t), get_bg_color(t));
     if (t->cursor_column + 1u >= t->columns) {
         t->cursor_column = 0;
         if (t->cursor_row + 1u < t->rows) t->cursor_row++;
@@ -83,8 +156,11 @@ static void vt_erase_line(rix_tty_t *t, uint16_t mode) {
     uint16_t end = mode == 1u ? t->cursor_column : t->columns;
     if (mode == 2u) { start = 0u; end = t->columns; }
     for (uint16_t column = start; column < end; ++column) {
-        t->screen[(size_t)t->cursor_row * RIX_TTY_MAX_COLUMNS + column] = ' ';
-        framebuffer_glyph(column, t->cursor_row, ' ');
+        size_t idx = (size_t)t->cursor_row * RIX_TTY_MAX_COLUMNS + column;
+        t->screen[idx] = ' ';
+        t->screen_fg[idx] = t->fg_color;
+        t->screen_bg[idx] = t->bg_color;
+        framebuffer_glyph(column, t->cursor_row, ' ', get_fg_color(t), get_bg_color(t));
     }
 }
 
@@ -93,14 +169,24 @@ static void vt_erase_display(rix_tty_t *t, uint16_t mode) {
     if (mode == 0u) {
         for (uint16_t row = t->cursor_row; row < t->rows; ++row) {
             uint16_t start = row == t->cursor_row ? t->cursor_column : 0u;
-            for (uint16_t column = start; column < t->columns; ++column)
-                t->screen[(size_t)row * RIX_TTY_MAX_COLUMNS + column] = ' ';
+            for (uint16_t column = start; column < t->columns; ++column) {
+                size_t idx = (size_t)row * RIX_TTY_MAX_COLUMNS + column;
+                t->screen[idx] = ' ';
+                t->screen_fg[idx] = t->fg_color;
+                t->screen_bg[idx] = t->bg_color;
+                framebuffer_glyph(column, row, ' ', get_fg_color(t), get_bg_color(t));
+            }
         }
     } else if (mode == 1u) {
         for (uint16_t row = 0; row <= t->cursor_row; ++row) {
             uint16_t end = row == t->cursor_row ? t->cursor_column + 1u : t->columns;
-            for (uint16_t column = 0; column < end; ++column)
-                t->screen[(size_t)row * RIX_TTY_MAX_COLUMNS + column] = ' ';
+            for (uint16_t column = 0; column < end; ++column) {
+                size_t idx = (size_t)row * RIX_TTY_MAX_COLUMNS + column;
+                t->screen[idx] = ' ';
+                t->screen_fg[idx] = t->fg_color;
+                t->screen_bg[idx] = t->bg_color;
+                framebuffer_glyph(column, row, ' ', get_fg_color(t), get_bg_color(t));
+            }
         }
     }
 }
@@ -153,6 +239,7 @@ static void vt_consume(rix_tty_t *t, uint8_t ch) {
         if (ch == 0x1bu) {
             t->vt_state = VT_ESC;
         } else if (ch == '\n') {
+            t->cursor_column = 0;
             vt_move(t, 1, 0);
         } else if (ch == '\r') {
             t->cursor_column = 0;
@@ -166,44 +253,59 @@ static void vt_consume(rix_tty_t *t, uint8_t ch) {
     if (t->vt_state == VT_ESC) {
         if (ch == '[') {
             t->vt_state = VT_CSI;
-            t->vt_value[0] = 0;
-            t->vt_value[1] = 0;
             t->vt_value_index = 0;
+            for (uint8_t i = 0; i < 8u; ++i) t->vt_params[i] = 0;
         } else {
             t->vt_state = VT_NORMAL;
         }
         return;
     }
-    if (ch >= '0' && ch <= '9') {
-        uint16_t *value = &t->vt_value[t->vt_value_index];
-        if (*value <= 999u) *value = (uint16_t)(*value * 10u + (ch - '0'));
+    if (t->vt_state == VT_CSI) {
+        if (ch >= '0' && ch <= '9') {
+            if (t->vt_value_index < 8u) {
+                t->vt_params[t->vt_value_index] = (uint8_t)(t->vt_params[t->vt_value_index] * 10u + (ch - '0'));
+            }
+            return;
+        }
+        if (ch == ';') {
+            if (t->vt_value_index < 7u) t->vt_value_index++;
+            return;
+        }
+        uint8_t param0 = t->vt_params[0];
+        uint8_t param1 = t->vt_params[1];
+        switch (ch) {
+            case 'A': vt_move(t, -(int)(param0 ? param0 : 1u), 0); break;
+            case 'B': vt_move(t, (int)(param0 ? param0 : 1u), 0); break;
+            case 'C': vt_move(t, 0, (int)(param0 ? param0 : 1u)); break;
+            case 'D': vt_move(t, 0, -(int)(param0 ? param0 : 1u)); break;
+            case 'G': t->cursor_column = vt_clamp((uint16_t)(param0 - 1u), t->columns); break;
+            case 'H':
+            case 'f':
+                t->cursor_row = vt_clamp((uint16_t)(param0 ? param0 - 1u : 0u), t->rows);
+                t->cursor_column = vt_clamp((uint16_t)(param1 ? param1 - 1u : 0u), t->columns);
+                break;
+            case 'J': vt_erase_display(t, param0); break;
+            case 'K': vt_erase_line(t, param0); break;
+            case 'm':
+                for (uint8_t i = 0; i <= t->vt_value_index; ++i) {
+                    uint8_t p = t->vt_params[i];
+                    if (p == 0u) { t->fg_color = 7u; t->bg_color = 0u; t->bold = 0u; }
+                    else if (p == 1u) { t->bold = 1u; }
+                    else if (p == 22u) { t->bold = 0u; }
+                    else if (p >= 30u && p <= 37u) { t->fg_color = p - 30u; }
+                    else if (p >= 40u && p <= 47u) { t->bg_color = p - 40u; }
+                    else if (p >= 90u && p <= 97u) { t->fg_color = p - 90u + 8u; }
+                    else if (p >= 100u && p <= 107u) { t->bg_color = p - 100u + 8u; }
+                }
+                break;
+            default:
+                break;
+        }
+        t->vt_state = VT_NORMAL;
+        t->vt_value_index = 0;
+        for (uint8_t i = 0; i < 8u; ++i) t->vt_params[i] = 0;
         return;
     }
-    if (ch == ';') {
-        if (t->vt_value_index == 0u) t->vt_value_index = 1u;
-        return;
-    }
-    uint16_t first = t->vt_value[0] ? t->vt_value[0] : 1u;
-    uint16_t second = t->vt_value[1] ? t->vt_value[1] : 1u;
-    switch (ch) {
-        case 'A': vt_move(t, -(int)first, 0); break;
-        case 'B': vt_move(t, (int)first, 0); break;
-        case 'C': vt_move(t, 0, (int)first); break;
-        case 'D': vt_move(t, 0, -(int)first); break;
-        case 'G': t->cursor_column = vt_clamp((uint16_t)(first - 1u), t->columns); break;
-        case 'H':
-        case 'f':
-            t->cursor_row = vt_clamp((uint16_t)(first - 1u), t->rows);
-            t->cursor_column = vt_clamp((uint16_t)(second - 1u), t->columns);
-            break;
-        case 'J': vt_erase_display(t, t->vt_value[0]); break;
-        case 'K': vt_erase_line(t, t->vt_value[0]); break;
-        case 'm':
-            break;
-        default:
-            break;
-    }
-    t->vt_state = VT_NORMAL;
 }
 
 static rix_tty_t *tty_valid(unsigned id) {
@@ -227,11 +329,13 @@ void tty_init(void) {
         t->cursor_column = 0;
         t->vt_state = VT_NORMAL;
         t->vt_value_index = 0;
-        t->vt_value[0] = 0;
-        t->vt_value[1] = 0;
+        t->vt_params[0] = 0; t->vt_params[1] = 0;
         t->utf8_codepoint = 0;
         t->utf8_expected = 0;
         t->utf8_seen = 0;
+        t->fg_color = 7u;
+        t->bg_color = 0u;
+        t->bold = 0u;
         vt_clear_screen(t);
         t->canonical = 1;
         t->echo = 1;
@@ -248,8 +352,9 @@ void tty_set_framebuffer(uint64_t base,uint32_t size,uint32_t width,uint32_t hei
                          uint32_t pitch,uint32_t format) {
     framebuffer.pixels=(volatile uint32_t *)(uintptr_t)base; framebuffer.size=size;
     framebuffer.width=width; framebuffer.height=height; framebuffer.pitch=pitch;
-    framebuffer.format=format; framebuffer.columns=(uint16_t)(width/8u);
-    framebuffer.rows=(uint16_t)(height/8u);
+    framebuffer.format=format;
+    framebuffer.columns=(uint16_t)(width/16u);
+    framebuffer.rows=(uint16_t)(height/16u);
     if(framebuffer.columns>RIX_TTY_MAX_COLUMNS) framebuffer.columns=RIX_TTY_MAX_COLUMNS;
     if(framebuffer.rows>RIX_TTY_MAX_ROWS) framebuffer.rows=RIX_TTY_MAX_ROWS;
     framebuffer_clear();
@@ -323,13 +428,16 @@ int tty_input(unsigned id, uint8_t ch) {
     t->input[t->tail] = ch;
     t->tail = (t->tail + 1u) % RIX_TTY_INPUT;
     t->count++;
-    if (ch == '\n') {
+    if (ch == '\n' || ch == '\r') {
         if (t->canonical) t->canonical_ready++;
         t->line_chars = 0;
     } else {
         t->line_chars++;
     }
-    if (t->echo) return echo_bytes(t, &ch, 1u);
+    if (t->echo) {
+        if (ch == '\r') { static const uint8_t crlf[] = {'\r','\n'}; return echo_bytes(t, crlf, 2u); }
+        return echo_bytes(t, &ch, 1u);
+    }
     return 0;
 }
 
@@ -342,9 +450,10 @@ int tty_read(unsigned id, void *buf, size_t n, size_t *out) {
     size_t done = 0;
     while (done < n && t->count) {
         uint8_t ch = t->input[t->head];
-        dst[done++] = ch;
         t->head = (t->head + 1u) % RIX_TTY_INPUT;
         t->count--;
+        if (ch == '\r') ch = '\n';
+        dst[done++] = ch;
         if (t->canonical && ch == '\n') {
             t->canonical_ready--;
             break;
@@ -494,8 +603,11 @@ int tty_recover(unsigned id) {
     t->line_chars = t->canonical_ready = 0;
     t->vt_state = VT_NORMAL;
     t->vt_value_index = 0;
-    t->vt_value[0] = t->vt_value[1] = 0;
+    for (uint8_t i = 0; i < 8u; ++i) t->vt_params[i] = 0;
     t->cursor_row = t->cursor_column = 0;
+    t->fg_color = 7u;
+    t->bg_color = 0u;
+    t->bold = 0u;
     vt_clear_screen(t);
     static const uint8_t banner[] = "RixuriOS recovery console\r\n";
     size_t written = 0;
@@ -542,11 +654,14 @@ int tty_pty_open(unsigned *pty_id) {
         ptys[i].slave.cursor_column = 0;
         ptys[i].slave.vt_state = VT_NORMAL;
         ptys[i].slave.vt_value_index = 0;
-        ptys[i].slave.vt_value[0] = 0;
-        ptys[i].slave.vt_value[1] = 0;
+        ptys[i].slave.vt_params[0] = 0;
+        ptys[i].slave.vt_params[1] = 0;
         ptys[i].slave.utf8_codepoint = 0;
         ptys[i].slave.utf8_expected = 0;
         ptys[i].slave.utf8_seen = 0;
+        ptys[i].slave.fg_color = 7u;
+        ptys[i].slave.bg_color = 0u;
+        ptys[i].slave.bold = 0u;
         vt_clear_screen(&ptys[i].slave);
         ptys[i].slave.canonical = 1;
         ptys[i].slave.echo = 1;
