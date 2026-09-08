@@ -9,12 +9,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 IMAGE = ROOT / "build" / "rixfs-external-net.img"
 ESP = ROOT / "build" / "uefi" / "esp-external-net"
+DUMP = ROOT / "build" / "phase21-external-net.pcap"
 shutil.copyfile(ROOT / "build" / "rixfs.img", IMAGE)
 shutil.copytree(ROOT / "build" / "uefi" / "esp", ESP)
+DUMP.unlink(missing_ok=True)
 env = os.environ.copy()
 env["RIXURI_RIXFS_IMAGE"] = str(IMAGE)
 env["RIXURI_ESP"] = str(ESP)
 env["RIXURI_QEMU_NET"] = "1"
+env["RIXURI_QEMU_NET_DUMP"] = str(DUMP)
 proc = subprocess.Popen(["bash", "./scripts/run-qemu.sh"], cwd=ROOT,
                         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                         stderr=subprocess.STDOUT, env=env)
@@ -51,7 +54,8 @@ def command(line: bytes) -> None:
     proc.stdin.write(line + b"\n")
     proc.stdin.flush()
     if not until_after(b"\x1b[1;37m:\x1b[0m ", start, 20):
-        raise RuntimeError("prompt missing after command")
+        raise RuntimeError("prompt missing after command; tail=" +
+                           out[start:].decode("utf-8", "replace")[-2000:])
 
 try:
     if not until(b"RIXURI: SHELL READY", 30):
@@ -74,6 +78,8 @@ if b"CPU exception" in out or b"PAGE FAULT" in out or b"PANIC" in out:
 print(out.decode("utf-8", "replace"))
 if b"ping: DNS/network path unavailable" not in out:
     raise SystemExit("external ping result missing")
-if b"curl: DNS/network path unavailable" not in out:
+curl_markers = (b"curl: DNS query failed", b"curl: DNS resolved; external TCP unavailable",
+                b"curl: DNS/network path unavailable")
+if not any(marker in out for marker in curl_markers):
     raise SystemExit("external curl result missing")
-print("qemu external network attempt: EXPECTED DNS/stack limitation")
+print("qemu external network attempt: DNS/TCP boundary observed")

@@ -652,3 +652,8 @@ NET: device link=1 ip=0x000000000a00020f gateway=0x000000000a000202 dns=0x000000
 ```
 
 This is an interface boundary only. Ethernet frame dispatch, on-wire ARP, DHCP/static configuration negotiation, DNS transport and external TCP are not yet connected to process sockets.
+
+
+## External ARP evidence and RX DMA blocker — 2026-09-08
+
+The QEMU user-net packet capture proves that RixuriOS emits a valid ARP request for `10.0.2.3` and that QEMU emits the matching ARP reply to `52:54:00:12:34:56`. The E1000 software ring still observes every RX descriptor with `DD=0`, `RDH=0` and `RDT=63`. The remaining device-layer blocker is therefore RX DMA delivery into the descriptor/buffer memory. DNS, external UDP, TCP and Google HTML remain intentionally unclaimed until this RX DMA issue is resolved.

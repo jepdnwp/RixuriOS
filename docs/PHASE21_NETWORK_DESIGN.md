@@ -45,3 +45,8 @@ The next required implementation slice is a network-device boundary that connect
 The E1000 boundary now uses the exact legacy 16-byte descriptor ABI. Descriptor rings and buffers are allocated below 4 GiB, TX descriptors are submitted with EOP/IFCS/RS and completed by polling TDH, and RX descriptors are consumed from the device-owned ring with DD/EOP and RDT return. QEMU reports link-up and the emulated MAC. ARP request/reply wire serialization and parsing is also available beside the cache, with strict Ethernet/IPv4/length/opcode checks.
 
 The next gate is attaching this device boundary to the per-process socket path: Ethernet frame transmit/receive dispatch, static/DHCP interface configuration, ARP resolution on wire, IPv4 delivery, UDP DNS exchange and external TCP. Until that integration is complete, `curl google.com` must continue to fail closed rather than report fabricated HTML.
+
+
+## External ARP and RX DMA gate — 2026-09-08
+
+The device-to-stack path now emits a valid ARP request through E1000 and receives a QEMU user-net ARP reply on the virtual wire. Packet capture confirms request `10.0.2.15 -> 10.0.2.3` and reply `10.0.2.3 -> 10.0.2.15`. The remaining gate is delivery of the received frame into the E1000 RX descriptor ring; the current software observation remains `DD=0`, `RDH=0`, `RDT=63`. DNS parsing and external TCP are intentionally blocked behind this RX DMA gate.

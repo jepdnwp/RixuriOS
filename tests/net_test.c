@@ -6,9 +6,24 @@
 #include "kernel/net/socket.h"
 #include "kernel/net/tcp.h"
 #include "kernel/net/udp.h"
+#include "kernel/net/device.h"
+#include "kernel/net/stack.h"
 #include <assert.h>
 #include <stdint.h>
 #include <string.h>
+
+const rix_net_device_info_t *rix_net_device_info(void) { return 0; }
+rix_net_stack_t *rix_net_stack_default(void) { return 0; }
+int rix_net_stack_send_ipv4(rix_net_stack_t *stack, rix_net_packet_t *packet,
+                            uint32_t destination_ip) {
+    (void)stack; (void)packet; (void)destination_ip; return -1;
+}
+int rix_net_stack_poll(rix_net_stack_t *stack, uint64_t now) {
+    (void)stack; (void)now; return -1;
+}
+int rix_net_stack_take_ipv4(rix_net_stack_t *stack, rix_net_packet_t *packet) {
+    (void)stack; (void)packet; return 0;
+}
 
 static int contains_bytes(const uint8_t *data, size_t length, const char *needle) {
     size_t needle_length = strlen(needle);

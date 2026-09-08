@@ -1,6 +1,7 @@
 #include "socket.h"
 #include "ipv4.h"
 #include "udp.h"
+#include "stack.h"
 
 static int packet_copy(rix_net_packet_t *destination, const void *data, size_t length) {
     if (!destination || (length && !data) || length > RIX_NET_FRAME_CAPACITY) return -1;
@@ -196,6 +197,22 @@ static int send_udp(rix_net_socket_table_t *table, rix_net_socket_t *sender,
     return -4;
 }
 
+static int send_udp_external(rix_net_socket_t *sender, const void *data, size_t length,
+                             rix_net_endpoint_t destination) {
+    const rix_net_device_info_t *info = rix_net_device_info();
+    rix_net_stack_t *stack = rix_net_stack_default();
+    rix_net_packet_t packet;
+    if (!info || !stack || !sender || !data || !length) return -1;
+    rix_net_packet_init(&packet);
+    if (rix_net_udp_push(&packet, info->address, destination.address,
+                         sender->local.port, destination.port, data, length) != 0 ||
+        rix_net_ipv4_push(&packet, info->address, destination.address,
+                          RIX_NET_IP_PROTO_UDP, 64, 0, RIX_NET_IP_FLAG_DF) != 0)
+        return -1;
+    int result = rix_net_stack_send_ipv4(stack, &packet, destination.address);
+    return result == 0 || result == -2 ? (int)length : -1;
+}
+
 static int send_tcp(rix_net_socket_t *sender, const void *data, size_t length,
                     rix_net_endpoint_t destination) {
     if (!sender->connected || !rix_tcp_is_connected(&sender->tcp) ||
@@ -242,14 +259,39 @@ int rix_net_socket_send(rix_net_socket_table_t *table, int descriptor,
         return -1;
     rix_net_socket_t *sender = &table->sockets[descriptor];
     if (sender->connected) destination = sender->peer;
-    if (destination.address != RIX_NET_SOCKET_LOOPBACK || destination.port == 0) return -2;
+    if (destination.port == 0 ||
+        (destination.address != RIX_NET_SOCKET_LOOPBACK &&
+         !(sender->type == RIX_NET_SOCKET_UDP && rix_net_stack_default()))) return -2;
     if (sender->type == RIX_NET_SOCKET_RAW_ICMP)
         return send_raw_icmp(table, sender, data, length, destination);
     if (sender->type == RIX_NET_SOCKET_UDP)
-        return send_udp(table, sender, data, length, destination);
+        return destination.address == RIX_NET_SOCKET_LOOPBACK
+                   ? send_udp(table, sender, data, length, destination)
+                   : send_udp_external(sender, data, length, destination);
     if (sender->type == RIX_NET_SOCKET_TCP)
         return send_tcp(sender, data, length, destination);
     return -1;
+}
+
+static void dispatch_external_ipv4(rix_net_socket_table_t *table) {
+    rix_net_stack_t *stack = rix_net_stack_default();
+    rix_net_packet_t packet;
+    rix_net_ipv4_header_t ip;
+    rix_net_udp_header_t udp;
+    if (!table || !stack) return;
+    (void)rix_net_stack_poll(stack, 0);
+    if (rix_net_stack_take_ipv4(stack, &packet) != 1 ||
+        rix_net_ipv4_pull(&packet, &ip) != 0 || ip.protocol != RIX_NET_IP_PROTO_UDP ||
+        rix_net_udp_pull(&packet, ip.source, ip.destination, &udp) != 0) return;
+    rix_net_endpoint_t source = {ip.source, udp.source_port};
+    for (size_t i = 0; i < RIX_NET_SOCKET_MAX; ++i) {
+        rix_net_socket_t *receiver = &table->sockets[i];
+        if (!receiver->used || receiver->type != RIX_NET_SOCKET_UDP ||
+            receiver->local.port != udp.destination_port) continue;
+        (void)queue_packet(receiver, rix_net_packet_data(&packet),
+                           rix_net_packet_length(&packet), source);
+        return;
+    }
 }
 
 int rix_net_socket_receive(rix_net_socket_table_t *table, int descriptor,
@@ -257,6 +299,8 @@ int rix_net_socket_receive(rix_net_socket_table_t *table, int descriptor,
                            rix_net_endpoint_t *source) {
     if (!valid_descriptor(table, descriptor) || !data || !capacity) return -1;
     rix_net_socket_t *socket = &table->sockets[descriptor];
+    if (!socket->receive.count && socket->type == RIX_NET_SOCKET_UDP)
+        dispatch_external_ipv4(table);
     if (!socket->receive.count) return (socket->flags & RIX_NET_SOCKET_NONBLOCK) ? -2 : -3;
     size_t head = socket->receive.head;
     size_t length = rix_net_packet_length(&socket->receive.packets[head]);

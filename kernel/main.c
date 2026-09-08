@@ -27,8 +27,10 @@
 #include "time/time.h"
 #include "net/e1000.h"
 #include "net/device.h"
+#include "net/stack.h"
 
 static uint8_t klog_ready;
+static rix_net_stack_t net_stack;
 static size_t klog_strlen(const char *s) { size_t n = 0; while (s[n]) n++; return n; }
 static void klog_write(const char *s) {
     serial_write(s);
@@ -177,6 +179,13 @@ static void keyboard_poll_worker(void *arg){
   scheduler_yield();
  }
 }
+static void network_poll_worker(void *arg){
+ (void)arg;
+ for(;;){
+  (void)rix_net_stack_poll(&net_stack,time_monotonic_ns()/1000000000ULL);
+  scheduler_yield();
+ }
+}
 static void try_mount_root(void){const char *names[]={"nvme0n1","nvme0n1p1","nvme1n1","nvme1n1p1"};for(size_t i=0;i<sizeof(names)/sizeof(names[0]);i++){rix_block_device_t*d=block_find(names[i]);if(!d)continue;int rc=vfs_mount_root(d);klog_write("VFS: mount ");klog_write(names[i]);klog_write(" rc=");klog_write_dec((uint64_t)(rc<0?-rc:rc));klog_write("\r\n");if(rc==0)return;}}
 
 void kernel_main(const rixuri_boot_info_t *boot){
@@ -228,7 +237,7 @@ void kernel_main(const rixuri_boot_info_t *boot){
  if(pci_init()!=0)panic("PCI initialization failed");
  klog_write("PCI: devices=");klog_write_dec(pci_device_count());klog_write("\r\n");
  (void)rix_e1000_init();
- if(rix_net_device_init()==0){const rix_net_device_info_t *net=rix_net_device_info();klog_write("NET: device link=");klog_write_dec(net->link_up);klog_write(" ip=");klog_write_hex(net->address);klog_write(" gateway=");klog_write_hex(net->gateway);klog_write(" dns=");klog_write_hex(net->dns);klog_write("\r\n");}
+ if(rix_net_device_init()==0){const rix_net_device_info_t *net=rix_net_device_info();klog_write("NET: device link=");klog_write_dec(net->link_up);klog_write(" ip=");klog_write_hex(net->address);klog_write(" gateway=");klog_write_hex(net->gateway);klog_write(" dns=");klog_write_hex(net->dns);klog_write("\r\n");if(rix_net_stack_init(&net_stack)!=0)klog_write("NET: stack init failed\r\n");}
  else klog_write("NET: no usable network device\r\n");
  if(block_init()!=0)panic("block subsystem initialization failed");
  if(vfs_init()!=0)panic("VFS initialization failed");
@@ -256,6 +265,8 @@ void kernel_main(const rixuri_boot_info_t *boot){
  if(scheduler_create_kernel_thread(serial_tty_worker,0,&serial_worker_task)!=0)panic("failed to create serial TTY worker");
  rix_task_id_t kbd_poll_task=0;
  if(scheduler_create_kernel_thread(keyboard_poll_worker,0,&kbd_poll_task)!=0)panic("failed to create keyboard poll worker");
+ rix_task_id_t network_poll_task=0;
+ if(scheduler_create_kernel_thread(network_poll_worker,0,&network_poll_task)!=0)panic("failed to create network poll worker");
 	 klog_write("USER: embedded init prepared, pid=");klog_write_dec(user_pid);klog_write(" task=");klog_write_dec(user_task);klog_write("\r\n");
 	 klog_write("BOOT: ps2 init begin\r\n");
 	 ps2_keyboard_init();
@@ -266,6 +277,6 @@ void kernel_main(const rixuri_boot_info_t *boot){
  if(io_ready){idt_enable();klog_write("IRQ: PIT routed through IOAPIC; interrupts enabled\r\n");}
  else if(pic_init()==0){lapic_enable_pic_extint();idt_enable();klog_write("IRQ: IOAPIC unavailable; LAPIC ExtINT/PIC fallback enabled\r\n");}
  else klog_write("IRQ: no usable interrupt controller; interrupts remain disabled\r\n");
- klog_write("xHCI: hotplug worker task=");klog_write_dec(xhci_worker_task);klog_write(" serial TTY worker task=");klog_write_dec(serial_worker_task);klog_write(" kbd poll task=");klog_write_dec(kbd_poll_task);klog_write("\r\n");
+         klog_write("xHCI: hotplug worker task=");klog_write_dec(xhci_worker_task);klog_write(" serial TTY worker task=");klog_write_dec(serial_worker_task);klog_write(" kbd poll task=");klog_write_dec(kbd_poll_task);klog_write(" net poll task=");klog_write_dec(network_poll_task);klog_write("\r\n");
  klog_write("Core services: timer/scheduler/process/syscall/PCI/NVMe/xHCI/HID/block/VFS/time initialized\r\n");klog_write("LAPIC: initialized, id=");klog_write_dec(lapic_id());klog_write("\r\n");klog_write("RIXURI:KERNEL_READY\r\n");for(;;)scheduler_yield();
 }

@@ -1419,3 +1419,8 @@ The deterministic network slice now has bounded UDP and TCP wire-segment seriali
 ### Phase 21 network-device checkpoint — 2026-09-08
 
 E1000 now has a correct legacy descriptor ABI, below-4GiB DMA allocation, TX/RX completion polling, link/MAC discovery and host/QEMU evidence. ARP Ethernet/IPv4 wire request/reply parsing and construction is implemented and tested. The next required gate is device-to-socket dispatch with on-wire ARP/IPv4, DHCP or static interface configuration, DNS and external TCP. `curl google.com` remains expected to fail closed until that gate is passed.
+
+
+### Phase 21 external-network gate — 2026-09-08
+
+External QEMU user-net now sees valid RixuriOS ARP requests and emits the expected gateway ARP replies, proven by pcap. The next gate is E1000 RX DMA descriptor delivery (`DD` remains clear despite the reply). DNS, TCP and Google HTML remain after this hardware boundary.

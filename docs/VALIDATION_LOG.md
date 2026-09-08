@@ -667,3 +667,17 @@ qemu ping test: PASS
 ```
 
 The adapter exposes E1000 frame transmit/receive to the upper layers, but no external packet success is claimed yet. ARP, IPv4 dispatch, DNS and external TCP still need to be connected to this adapter and to process sockets.
+
+
+## 2026-09-08 — External ARP boundary and RX DMA blocker
+
+The external QEMU harness produced a packet capture proving that RixuriOS transmitted an ARP request and QEMU user-net generated the expected gateway reply:
+
+```text
+frame=3 len=42 dst=ff:ff:ff:ff:ff:ff src=52:54:00:12:34:56 ethertype=0x0806
+  arp_op=1 sender_ip=10.0.2.15 target_ip=10.0.2.3
+frame=4 len=64 dst=52:54:00:12:34:56 src=52:55:0a:00:02:03 ethertype=0x0806
+  arp_op=2 sender_ip=10.0.2.3 target_ip=10.0.2.15
+```
+
+The E1000 software RX ring nevertheless remained at `DD=0`, `RDH=0`, `RDT=63` for all descriptors. Therefore the current blocker is E1000 RX DMA delivery, not DNS parsing or HTTP. The external test correctly remains fail-closed with `curl: DNS query failed`; no Google HTML success is claimed.
