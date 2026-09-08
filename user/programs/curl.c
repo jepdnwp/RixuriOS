@@ -1,4 +1,5 @@
 #include "unistd.h"
+#include "hosts.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -17,113 +18,187 @@ static size_t header_end(const char *response, size_t size) {
             response[i + 2] == '\r' && response[i + 3] == '\n') return i + 4;
     return 0;
 }
-static uint16_t get_be16(const uint8_t *bytes) {
-    return (uint16_t)(((uint16_t)bytes[0] << 8) | bytes[1]);
+static int dns_resolve_name(const char *name, uint32_t *address) {
+    if (!name || !address || rix_dns_valid_name(name) != 0) return -1;
+    if (rix_hosts_lookup(name, address) == 0) return 0;
+    return rix_dns_query(name, rix_resolv_server(RIX_NET_DEVICE_DNS), address);
 }
-static uint32_t get_be32(const uint8_t *bytes) {
-    return ((uint32_t)bytes[0] << 24) | ((uint32_t)bytes[1] << 16) |
-           ((uint32_t)bytes[2] << 8) | bytes[3];
-}
-static int same_text(const char *left, const char *right) {
+
+static int parse_endpoint(const char *text, uint32_t *ip, uint16_t *port,
+                            char *host, size_t *hostlen) {
+    /* Strict A.B.C.D:P form used for deterministic testing without DNS. */
+    uint32_t parts[4] = {0, 0, 0, 0};
     size_t i = 0;
-    while (left && right && left[i] && right[i] && left[i] == right[i]) ++i;
-    return left && right && left[i] == 0 && right[i] == 0;
-}
-
-static int dns_skip_name(const uint8_t *packet, size_t length, size_t *offset) {
-    size_t cursor = *offset;
-    while (cursor < length) {
-        uint8_t label = packet[cursor++];
-        if (!label) { *offset = cursor; return 0; }
-        if ((label & 0xc0u) == 0xc0u) {
-            if (cursor >= length) return -1;
-            *offset = cursor + 1;
-            return 0;
+    int part = 0, digits = 0;
+    if (!text || !ip || !port || !host || !hostlen) return -1;
+    while (text[i] && text[i] != ':') {
+        if (text[i] == '.') {
+            if (!digits || part >= 3) return -1;
+            ++part;
+            digits = 0;
+        } else if (text[i] >= '0' && text[i] <= '9') {
+            parts[part] = parts[part] * 10u + (uint32_t)(text[i] - '0');
+            if (++digits > 3 || parts[part] > 255u) return -1;
+        } else {
+            return -1;
         }
-        if (label > 63u || label > length - cursor) return -1;
-        cursor += label;
+        ++i;
     }
-    return -1;
-}
-
-static int dns_resolve_google(uint32_t *address) {
-    static const uint8_t query[] = {
-        0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 6, 'g', 'o', 'o', 'g', 'l', 'e',
-        3, 'c', 'o', 'm', 0, 0, 1, 0, 1
-    };
-    uint8_t response[512] = {0};
-    int fd = socket_open(RIX_NET_SOCKET_UDP);
-    if (fd < 0 || socket_send(fd, query, sizeof(query),
-                              (rix_net_endpoint_t){0x0a000203u, 53}) != (int)sizeof(query))
-        return -1;
-    for (unsigned attempt = 0; attempt < 10000; ++attempt) {
-        int received = socket_receive(fd, response, sizeof(response), 0);
-        if (received >= 12 && get_be16(response) == 0x1234u) {
-            uint16_t flags = get_be16(response + 2);
-            uint16_t answers = get_be16(response + 6);
-            if ((flags & 0x8000u) && !(flags & 0x000fu) && answers) {
-                size_t offset = 12;
-                if (dns_skip_name(response, (size_t)received, &offset) == 0 &&
-                    offset + 4 <= (size_t)received) {
-                    offset += 4;
-                    for (uint16_t answer = 0; answer < answers; ++answer) {
-                        if (dns_skip_name(response, (size_t)received, &offset) != 0 ||
-                            offset + 10 > (size_t)received) break;
-                        uint16_t type = get_be16(response + offset);
-                        uint16_t class_code = get_be16(response + offset + 2);
-                        uint16_t data_length = get_be16(response + offset + 8);
-                        offset += 10;
-                        if (offset + data_length > (size_t)received) break;
-                        if (type == 1 && class_code == 1 && data_length == 4) {
-                            *address = get_be32(response + offset);
-                            return 0;
-                        }
-                        offset += data_length;
-                    }
-                }
-            }
-        }
+    if (!digits || part != 3 || text[i] != ':') return -1;
+    size_t host_end = i;
+    ++i;
+    uint32_t port_value = 0;
+    int port_digits = 0;
+    while (text[i]) {
+        if (text[i] < '0' || text[i] > '9') return -1;
+        port_value = port_value * 10u + (uint32_t)(text[i] - '0');
+        if (++port_digits > 5 || port_value > 65535u) return -1;
+        ++i;
     }
-    return -1;
+    if (!port_digits || !port_value) return -1;
+    if (host_end >= 64) return -1;
+    for (size_t k = 0; k < host_end; ++k) host[k] = text[k];
+    host[host_end] = 0;
+    *ip = (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3];
+    *port = (uint16_t)port_value;
+    *hostlen = host_end;
+    return *ip ? 0 : -1;
 }
 
 int program_main(int argc, char **argv, char **envp) {
     (void)envp;
-    if (argc > 1 && argv && argv[1] && !same_text(argv[1], "google.com")) {
-        say("curl: DNS/network path unavailable\n");
-        return 2;
-    }
     uint32_t destination_ip = RIX_NET_SOCKET_LOOPBACK;
-    if (argc > 1 && dns_resolve_google(&destination_ip) != 0) {
-        say("curl: DNS query failed\n");
-        return 2;
+    uint16_t destination_port = 80;
+    char host_buffer[256];
+    size_t host_length = 9;
+    const char *host_header = "localhost";
+    int external = 0;
+    if (argc > 1 && argv && argv[1]) {
+        if (parse_endpoint(argv[1], &destination_ip, &destination_port,
+                           host_buffer, &host_length) == 0) {
+            external = 1;
+            host_header = host_buffer;
+        } else {
+            size_t namelen = length(argv[1]);
+            if (!namelen || namelen > 128 || rix_dns_valid_name(argv[1]) != 0) {
+                say("curl: DNS/network path unavailable\n");
+                return 2;
+            }
+            external = 1;
+            if (dns_resolve_name(argv[1], &destination_ip) != 0) {
+                say("curl: DNS query failed\n");
+                return 2;
+            }
+            host_header = argv[1];
+            host_length = namelen;
+        }
     }
+    if (!external) {
     int fd = socket_open(RIX_NET_SOCKET_TCP);
     if (fd < 0 || socket_connect(fd, (rix_net_endpoint_t){destination_ip, 80}) != 0) {
-        say(argc > 1 ? "curl: DNS resolved; external TCP unavailable\n" : "curl: connect failed\n");
+        say("curl: connect failed\n");
         return 1;
     }
-    static const char request[] = "GET / HTTP/1.0\r\nHost: localhost\r\n\r\n";
-    if (socket_send(fd, request, sizeof(request) - 1,
-                    (rix_net_endpoint_t){destination_ip, 80}) < 0) {
-        say("curl: send failed\n");
+        static const char request[] = "GET / HTTP/1.0\r\nHost: localhost\r\n\r\n";
+        if (socket_send(fd, request, sizeof(request) - 1,
+                        (rix_net_endpoint_t){destination_ip, 80}) < 0) {
+            say("curl: send failed\n");
+            return 1;
+        }
+        char response[256] = {0};
+        int received = socket_receive(fd, response, sizeof(response) - 1, 0);
+        size_t body = received > 0 ? header_end(response, (size_t)received) : 0;
+        static const char html[] = "<html><body><h1>Hello RixuriOS</h1></body></html>\n";
+        if (received <= 0 || !has_prefix(response, (size_t)received, "HTTP/1.0 200 OK\r\n") ||
+            !body || (size_t)received - body != sizeof(html) - 1 ||
+            !has_prefix(response + body, (size_t)received - body, html)) {
+            say("curl: invalid HTTP response\n");
+            return 1;
+        }
+        if (write(1, response + body, (size_t)received - body) < 0) {
+            say("curl: output failed\n");
+            return 1;
+        }
+        say("curl: HTTP 200 loopback PASS\n");
+        return 0;
+    }
+    int efd = socket_open(RIX_NET_SOCKET_TCP);
+    if (efd < 0 || socket_connect(efd, (rix_net_endpoint_t){destination_ip, destination_port}) != 0) {
+        say(host_header == host_buffer ? "curl: external TCP unavailable\n" : "curl: DNS resolved; external TCP unavailable\n");
         return 1;
     }
-    char response[256] = {0};
-    int received = socket_receive(fd, response, sizeof(response) - 1, 0);
-    size_t body = received > 0 ? header_end(response, (size_t)received) : 0;
-    static const char html[] = "<html><body><h1>Hello RixuriOS</h1></body></html>\n";
-    if (received <= 0 || !has_prefix(response, (size_t)received, "HTTP/1.0 200 OK\r\n") ||
-        !body || (size_t)received - body != sizeof(html) - 1 ||
-        !has_prefix(response + body, (size_t)received - body, html)) {
+    char eget[512];
+    size_t eget_length = 0;
+    {
+        static const char prefix[] = "GET / HTTP/1.0\r\nHost: ";
+        static const char suffix[] = "\r\n\r\n";
+        size_t i = 0, k;
+        for (k = 0; k < sizeof(prefix) - 1 && i < sizeof(eget); ++k) eget[i++] = prefix[k];
+        for (k = 0; k < host_length && i < sizeof(eget); ++k) eget[i++] = host_header[k];
+        for (k = 0; k < sizeof(suffix) - 1 && i < sizeof(eget); ++k) eget[i++] = suffix[k];
+        eget_length = i;
+    }
+    static char eresponse[4096];
+    size_t total = 0;
+    rix_timespec_t epause = {0, 250000000u};
+    for (unsigned round = 0; round < 60; ++round) {
+        if (!total) {
+            if (socket_send(efd, eget, eget_length,
+                            (rix_net_endpoint_t){destination_ip, destination_port}) !=
+                (int)eget_length) {
+                say("curl: send failed\n");
+                return 1;
+            }
+        }
+        for (unsigned attempt = 0; attempt < 200; ++attempt) {
+            if (total >= sizeof(eresponse)) break;
+            int got = socket_receive(efd, eresponse + total,
+                                     sizeof(eresponse) - total, 0);
+            if (got < 0) break;
+            if (got == 0) break;
+            total += (size_t)got;
+            if (header_end(eresponse, total)) break;
+        }
+        if (header_end(eresponse, total)) break;
+        (void)nanosleep(&epause, NULL);
+    }
+    size_t ebody = header_end(eresponse, total);
+    if (total < 12 || !has_prefix(eresponse, total, "HTTP/") || !ebody) {
+        say("curl: invalid HTTP response bytes=");
+        {
+            char number[22];
+            size_t position = sizeof(number);
+            uint64_t value = total;
+            number[--position] = '\n';
+            if (!value) number[--position] = '0';
+            while (value && position) {
+                number[--position] = (char)('0' + value % 10u);
+                value /= 10u;
+            }
+            (void)write(1, number + position, sizeof(number) - position);
+        }
+        return 1;
+    }
+    size_t sp = 5;
+    while (sp < total && eresponse[sp] != ' ' && eresponse[sp] != '\r' &&
+           eresponse[sp] != '\n') ++sp;
+    if (sp + 4 >= total || eresponse[sp] != ' ' ||
+        eresponse[sp + 1] < '0' || eresponse[sp + 1] > '9' ||
+        eresponse[sp + 2] < '0' || eresponse[sp + 2] > '9' ||
+        eresponse[sp + 3] < '0' || eresponse[sp + 3] > '9') {
         say("curl: invalid HTTP response\n");
         return 1;
     }
-    if (write(1, response + body, (size_t)received - body) < 0) {
+    if (write(1, eresponse, total) < 0) {
         say("curl: output failed\n");
         return 1;
     }
-    say("curl: HTTP 200 loopback PASS\n");
+    {
+        char message[30] = "curl: HTTP 000 external PASS\n";
+        message[11] = eresponse[sp + 1];
+        message[12] = eresponse[sp + 2];
+        message[13] = eresponse[sp + 3];
+        say(message);
+    }
     return 0;
 }

@@ -15,6 +15,7 @@ typedef struct {
     uint8_t ttl;
     uint16_t identification;
     uint16_t flags_fragment;
+    uint16_t total_length;
 } rix_net_ipv4_header_t;
 
 int rix_net_ipv4_push(rix_net_packet_t *packet, uint32_t source,

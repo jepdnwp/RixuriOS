@@ -74,6 +74,17 @@ try:
         b"/bin/rmdir /usr/nonempty",
         b"/bin/rmdir /usr/nonempty/child",
         b"/bin/rmdir /usr/nonempty",
+        b"/bin/ls -l /bin",
+        b"/bin/cat -n /etc/hostname",
+        b"/bin/mkdir -p /tmp/deep/nest",
+        b"/bin/ls /tmp/deep",
+        b"/bin/rmdir /tmp/deep/nest",
+        b"/bin/rmdir /tmp/deep",
+        b"/usr/bin/hostname",
+        b"history",
+        b"help ps",
+        b"echo -n abc",
+        b"uname -a",
         ]
     for line in commands:
         command(line)
@@ -95,6 +106,22 @@ if b"mv: read failed" in output or b"mv: write failed" in output:
     raise SystemExit("mv runtime failure observed")
 if b"rmdir: failed" not in output:
     raise SystemExit("non-empty rmdir rejection was not observed")
+if b" 0 0 " not in output or b" echo\n" not in output:
+    raise SystemExit("ls -l output not observed")
+if b"     1\trixurios\n" not in output:
+    raise SystemExit("cat -n output not observed")
+if b"nest\n" not in output:
+    raise SystemExit("mkdir -p output not observed")
+if b"rixurios\n" not in output:
+    raise SystemExit("hostname output not observed")
+if b"/bin/ls /usr\n" not in output:
+    raise SystemExit("history output not observed")
+if b"ps: list processes" not in output:
+    raise SystemExit("help topic output not observed")
+if b"abc\x1b[1;32m" not in output:
+    raise SystemExit("echo -n output not observed")
+if b"x86_64" not in output:
+    raise SystemExit("uname -a output not observed")
 if b"command execution failed" in output:
     raise SystemExit("shell command execution failure observed")
 print("qemu file utilities test: PASS")

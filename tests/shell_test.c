@@ -116,6 +116,20 @@ int main(void) {
                                       &handled, &exec_status) == 0 && handled && exec_status == 0 &&
                 strcmp(builtin_output, "hello world\n") == 0,
                 "echo builtin output")) return 1;
+    memset(builtin_output, 0, sizeof(builtin_output));
+    if (expect(rix_shell_lex("echo -n hi there", &tokens) == 0 &&
+                rix_shell_parse_pipeline(&tokens, &pipeline) == 0 &&
+                rix_shell_run_builtin(&pipeline.command[0], write_buffer, builtin_output,
+                                      &handled, &exec_status) == 0 && handled && exec_status == 0 &&
+                strcmp(builtin_output, "hi there") == 0,
+                "echo -n omits trailing newline")) return 1;
+    memset(builtin_output, 0, sizeof(builtin_output));
+    if (expect(rix_shell_lex("echo -n", &tokens) == 0 &&
+                rix_shell_parse_pipeline(&tokens, &pipeline) == 0 &&
+                rix_shell_run_builtin(&pipeline.command[0], write_buffer, builtin_output,
+                                      &handled, &exec_status) == 0 && handled && exec_status == 0 &&
+                strcmp(builtin_output, "") == 0,
+                "echo -n alone prints nothing")) return 1;
     if (expect(rix_shell_lex("unknown", &tokens) == 0 &&
                 rix_shell_parse_pipeline(&tokens, &pipeline) == 0 &&
                 rix_shell_run_builtin(&pipeline.command[0], NULL, NULL, &handled, &exec_status) == 0 &&

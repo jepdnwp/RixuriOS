@@ -1424,3 +1424,13 @@ E1000 now has a correct legacy descriptor ABI, below-4GiB DMA allocation, TX/RX 
 ### Phase 21 external-network gate — 2026-09-08
 
 External QEMU user-net now sees valid RixuriOS ARP requests and emits the expected gateway ARP replies, proven by pcap. The next gate is E1000 RX DMA descriptor delivery (`DD` remains clear despite the reply). DNS, TCP and Google HTML remain after this hardware boundary.
+
+
+### Phase 21 TCP handshake and external HTTP evidence — 2026-09-08
+
+The RX gate is closed: the descriptor Length field is programmed and restored, and descriptor completion is observed on ARP, DNS and TCP frames. Device-to-socket dispatch now serves UDP and wire TCP (SYN-ACK accept, in-order data queueing, FIN EOF, RST abort) with a bounded RX queue, ARP pending timeout/retransmit and a blocking connect with timeout. `curl google.com` completes DNS, TCP handshake, HTTP GET and a validated external HTTP response (`curl: HTTP 301 external PASS`), cross-checked between serial diagnostics and packet capture. Remaining Phase 21 scope is DHCP (unneeded for static QEMU parameters), IPv6 architecture, firewall/filtering architecture, TCP retransmission timers and close semantics, interrupt-driven RX, and RTL8125 plus full physical-hardware qualification. `curl google.com` no longer fails closed on a working virtual network.
+
+
+### Phase 21 DHCP evidence — 2026-09-08
+
+The DHCP item is closed on QEMU user-net: bounded DISCOVER/OFFER/REQUEST/ACK with XID/type/magic validation, `rix_net_device_configure()` applying the learned address/netmask/gateway/DNS, a boot-time attempt with static fallback, and host unit tests. Quirk documented: explicit `-device e1000,netdev=net0` under TCG delays SLIRP-to-guest delivery ~1s at boot, absorbed by the 12-round window (round 10 accepts; stale queued OFFERs are correctly discarded by type check); default-NIC boots succeed in round 0. Remaining Phase 21 scope is userspace propagation of the learned DNS, lease renewal, IPv6 architecture, firewall/filtering architecture, TCP retransmission timers and close semantics, interrupt-driven RX, and RTL8125 plus full physical-hardware qualification.

@@ -77,7 +77,8 @@ int rix_e1000_configure(rix_e1000_t *driver) {
         zero_bytes((void *)(uintptr_t)driver->rx_buffers[i], RIXURI_PAGE_SIZE);
         zero_bytes((void *)(uintptr_t)driver->tx_buffers[i], RIXURI_PAGE_SIZE);
         rix_e1000_descriptor_t rx_descriptor = {
-            .address = driver->rx_buffers[i], .status = 0
+            .address = driver->rx_buffers[i], .length = RIX_E1000_RX_BUFFER_SIZE,
+            .status = 0
         };
         rix_e1000_descriptor_t tx_descriptor = {
             .address = driver->tx_buffers[i], .status = RIX_E1000_TX_STATUS_DD
@@ -214,6 +215,17 @@ int rix_e1000_receive(rix_e1000_t *driver, void *data, size_t capacity, size_t *
         (volatile rix_e1000_descriptor_t *)(uintptr_t)driver->rx_ring_phys;
     uint16_t slot = driver->rx_head;
     uint8_t status = descriptors[slot].status;
+    if (status & RIX_E1000_RX_STATUS_DD) {
+        static unsigned dd_seq = 0;
+        if (dd_seq < 8) {
+            serial_write("E1000 RX DD #"); serial_write_dec(dd_seq);
+            serial_write(" status="); serial_write_hex(status);
+            serial_write(" len="); serial_write_dec(descriptors[slot].length);
+            serial_write(" slot="); serial_write_dec(slot);
+            serial_write("\r\n");
+        }
+        ++dd_seq;
+    }
     if (!(status & RIX_E1000_RX_STATUS_DD)) return 0;
     if (!(status & RIX_E1000_RX_STATUS_EOP)) return -2;
     size_t received = descriptors[slot].length;
@@ -221,9 +233,9 @@ int rix_e1000_receive(rix_e1000_t *driver, void *data, size_t capacity, size_t *
     uint8_t *buffer = (uint8_t *)(uintptr_t)driver->rx_buffers[slot];
     for (size_t i = 0; i < received; ++i) ((uint8_t *)data)[i] = buffer[i];
     descriptors[slot].status = 0;
-    descriptors[slot].length = 0;
+    descriptors[slot].length = RIX_E1000_RX_BUFFER_SIZE;
     driver->rx_ring[slot].status = 0;
-    driver->rx_ring[slot].length = 0;
+    driver->rx_ring[slot].length = RIX_E1000_RX_BUFFER_SIZE;
     driver->rx_head = (uint16_t)((slot + 1u) % RIX_E1000_RING_SIZE);
     volatile uint32_t *regs = (volatile uint32_t *)(uintptr_t)driver->mmio_base;
     regs[RIX_E1000_REG_RDT / 4] = slot;

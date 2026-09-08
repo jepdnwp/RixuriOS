@@ -40,6 +40,7 @@ int detach_tty(uint32_t tty_id){return(int)rix_sys(123,(long)tty_id,0,0);}
 int login_session(uint32_t tty_id,rix_pid_t *out_session){return(int)rix_sys(124,(long)tty_id,(long)out_session,0);}
 int logout_session(void){return(int)rix_sys(125,0,0,0);}
 int list_sessions(rix_session_info_t*sessions,size_t capacity,size_t*count){return(int)rix_sys(126,(long)sessions,(long)capacity,(long)count);}
+int list_processes(rix_process_info_t*procs,size_t capacity,size_t*count){return(int)rix_sys(138,(long)procs,(long)capacity,(long)count);}
 int get_capabilities(uint64_t*out){return(int)rix_sys(132,(long)out,0,0);}
 int drop_capabilities(uint64_t mask){return(int)rix_sys(133,(long)mask,0,0);}
 int get_audit_uid(uint32_t*out){return(int)rix_sys(135,(long)out,0,0);}

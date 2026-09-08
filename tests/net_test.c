@@ -6,6 +6,7 @@
 #include "kernel/net/socket.h"
 #include "kernel/net/tcp.h"
 #include "kernel/net/udp.h"
+#include "kernel/net/dhcp.h"
 #include "kernel/net/device.h"
 #include "kernel/net/stack.h"
 #include <assert.h>
@@ -13,7 +14,8 @@
 #include <string.h>
 
 const rix_net_device_info_t *rix_net_device_info(void) { return 0; }
-rix_net_stack_t *rix_net_stack_default(void) { return 0; }
+static rix_net_stack_t host_stack;
+rix_net_stack_t *rix_net_stack_default(void) { return &host_stack; }
 int rix_net_stack_send_ipv4(rix_net_stack_t *stack, rix_net_packet_t *packet,
                             uint32_t destination_ip) {
     (void)stack; (void)packet; (void)destination_ip; return -1;
@@ -21,8 +23,14 @@ int rix_net_stack_send_ipv4(rix_net_stack_t *stack, rix_net_packet_t *packet,
 int rix_net_stack_poll(rix_net_stack_t *stack, uint64_t now) {
     (void)stack; (void)now; return -1;
 }
+static rix_net_packet_t stub_frame;
+static int stub_frame_valid = 0;
 int rix_net_stack_take_ipv4(rix_net_stack_t *stack, rix_net_packet_t *packet) {
-    (void)stack; (void)packet; return 0;
+    (void)stack;
+    if (!packet || !stub_frame_valid) return 0;
+    *packet = stub_frame;
+    stub_frame_valid = 0;
+    return 1;
 }
 
 static int contains_bytes(const uint8_t *data, size_t length, const char *needle) {
@@ -198,9 +206,192 @@ int main(void) {
                            "<html><body><h1>Hello RixuriOS</h1></body></html>\n"));
     assert(peer_endpoint.port == 80);
     assert(rix_net_socket_close(&sockets, http) == 0);
+    /* Wire TCP dispatch: SYN-ACK accept on a SYN_SENT socket. */
+    int wire = rix_net_socket_open(&sockets, RIX_NET_SOCKET_TCP);
+    assert(wire >= 0);
+    rix_net_socket_t *wsock = &sockets.sockets[wire];
+    wsock->local = (rix_net_endpoint_t){0xc0a80102u, 40000};
+    wsock->peer = (rix_net_endpoint_t){0xc0a80101u, 80};
+    assert(rix_tcp_transition(&wsock->tcp, RIX_TCP_EVENT_ACTIVE_OPEN) == 0);
+    wsock->tcp.sequence = 7;
+    wsock->tcp.acknowledgment = 0;
+    rix_net_packet_init(&packet);
+    assert(rix_net_tcp_push(&packet, 0xc0a80101u, 0xc0a80102u, 80, 40000,
+                            100, 8,
+                            RIX_NET_TCP_FLAG_SYN | RIX_NET_TCP_FLAG_ACK,
+                            4096, 0, 0) == 0);
+    assert(rix_net_ipv4_push(&packet, 0xc0a80101u, 0xc0a80102u,
+                             RIX_NET_IP_PROTO_TCP, 64, 0, RIX_NET_IP_FLAG_DF) == 0);
+    stub_frame = packet;
+    stub_frame_valid = 1;
+    uint8_t wireout[64] = {0};
+    /* No data queued yet; the SYN-ACK carries none, so receive still waits. */
+    assert(rix_net_socket_receive(&sockets, wire, wireout, sizeof(wireout), 0) == -3);
+    assert(wsock->tcp.state == RIX_TCP_ESTABLISHED);
+    assert(wsock->tcp.state == RIX_TCP_ESTABLISHED);
+    assert(wsock->connected == 1);
+    assert(wsock->tcp.sequence == 8 && wsock->tcp.acknowledgment == 101);
+    /* Wire TCP dispatch: in-order data is queued and acknowledged. */
+    rix_net_packet_init(&packet);
+    static const uint8_t hello[] = {'h', 'i'};
+    assert(rix_net_tcp_push(&packet, 0xc0a80101u, 0xc0a80102u, 80, 40000,
+                            101, 8,
+                            RIX_NET_TCP_FLAG_ACK | RIX_NET_TCP_FLAG_PSH,
+                            4096, hello, sizeof(hello)) == 0);
+    assert(rix_net_ipv4_push(&packet, 0xc0a80101u, 0xc0a80102u,
+                             RIX_NET_IP_PROTO_TCP, 64, 0, RIX_NET_IP_FLAG_DF) == 0);
+    stub_frame = packet;
+    stub_frame_valid = 1;
+    assert(rix_net_socket_receive(&sockets, wire, wireout, sizeof(wireout),
+                                  &peer_endpoint) == 2);
+    assert(memcmp(wireout, "hi", 2) == 0);
+    assert(peer_endpoint.address == 0xc0a80101u && peer_endpoint.port == 80);
+    assert(wsock->tcp.acknowledgment == 103);
+    /* Out-of-order data is dropped, not queued. */
+    rix_net_packet_init(&packet);
+    assert(rix_net_tcp_push(&packet, 0xc0a80101u, 0xc0a80102u, 80, 40000,
+                            999, 8,
+                            RIX_NET_TCP_FLAG_ACK | RIX_NET_TCP_FLAG_PSH,
+                            4096, hello, sizeof(hello)) == 0);
+    assert(rix_net_ipv4_push(&packet, 0xc0a80101u, 0xc0a80102u,
+                             RIX_NET_IP_PROTO_TCP, 64, 0, RIX_NET_IP_FLAG_DF) == 0);
+    stub_frame = packet;
+    stub_frame_valid = 1;
+    assert(rix_net_socket_receive(&sockets, wire, wireout, sizeof(wireout), 0) == -3);
+    assert(wsock->tcp.acknowledgment == 103);
+    /* FIN moves to CLOSE_WAIT and a drained socket reads EOF. */
+    rix_net_packet_init(&packet);
+    assert(rix_net_tcp_push(&packet, 0xc0a80101u, 0xc0a80102u, 80, 40000,
+                            103, 8, RIX_NET_TCP_FLAG_FIN,
+                            4096, 0, 0) == 0);
+    assert(rix_net_ipv4_push(&packet, 0xc0a80101u, 0xc0a80102u,
+                             RIX_NET_IP_PROTO_TCP, 64, 0, RIX_NET_IP_FLAG_DF) == 0);
+    stub_frame = packet;
+    stub_frame_valid = 1;
+    assert(rix_net_socket_receive(&sockets, wire, wireout, sizeof(wireout), 0) == 0);
+    assert(wsock->tcp.state == RIX_TCP_CLOSE_WAIT);
+    assert(rix_net_socket_receive(&sockets, wire, wireout, sizeof(wireout), 0) == 0);
+    assert(rix_net_socket_close(&sockets, wire) == 0);
+    /* Wire ICMP dispatch: an echo reply is queued to raw sockets. */
+    int pinger = rix_net_socket_open(&sockets, RIX_NET_SOCKET_RAW_ICMP);
+    assert(pinger >= 0);
+    rix_net_packet_init(&packet);
+    assert(rix_net_icmp_echo_push(&packet, RIX_NET_ICMP_ECHO_REPLY, 0x1234, 7,
+                                 0, 0) == 0);
+    assert(rix_net_ipv4_push(&packet, 0xc0a80101u, 0xc0a80102u,
+                             RIX_NET_IP_PROTO_ICMP, 64, 0, RIX_NET_IP_FLAG_DF) == 0);
+    stub_frame = packet;
+    stub_frame_valid = 1;
+    assert(rix_net_socket_receive(&sockets, pinger, wireout, sizeof(wireout),
+                                  &peer_endpoint) == 8);
+    assert(wireout[0] == 0 && wireout[1] == 0);
+    assert(wireout[4] == 0x12 && wireout[5] == 0x34 && wireout[7] == 7);
+    assert(peer_endpoint.address == 0xc0a80101u);
+    /* A corrupted echo reply is dropped, not queued. */
+    rix_net_packet_init(&packet);
+    assert(rix_net_icmp_echo_push(&packet, RIX_NET_ICMP_ECHO_REPLY, 0x1234, 7,
+                                 0, 0) == 0);
+    assert(rix_net_ipv4_push(&packet, 0xc0a80101u, 0xc0a80102u,
+                             RIX_NET_IP_PROTO_ICMP, 64, 0, RIX_NET_IP_FLAG_DF) == 0);
+    ((uint8_t *)rix_net_packet_data(&packet))[23] ^= 1u;
+    stub_frame = packet;
+    stub_frame_valid = 1;
+    assert(rix_net_socket_receive(&sockets, pinger, wireout, sizeof(wireout),
+                                  0) == -3);
+    assert(rix_net_socket_close(&sockets, pinger) == 0);
     assert(rix_net_socket_close(&sockets, udp_client) == 0);
     assert(rix_net_socket_close(&sockets, udp_server) == 0);
     assert(rix_net_socket_close(&sockets, client) == 0);
     assert(rix_net_socket_close(&sockets, server) == 0);
+    /* DHCP: discover/request build + offer parse round-trip. */
+    static const uint8_t test_mac[6] = {0x52, 0x55, 0x0a, 0x00, 0x02, 0x0f};
+    rix_net_packet_init(&packet);
+    assert(rix_net_dhcp_build_discover(&packet, 0x12345678u, test_mac) == 0);
+    assert(rix_net_packet_length(&packet) == RIX_DHCP_MIN_SIZE);
+    {
+        const uint8_t *dhcp = rix_net_packet_data(&packet);
+        assert(dhcp[0] == RIX_DHCP_OP_REQUEST && dhcp[1] == 1 && dhcp[2] == 6);
+        assert(dhcp[4] == 0x12 && dhcp[5] == 0x34 && dhcp[6] == 0x56 && dhcp[7] == 0x78);
+        assert(dhcp[10] == 0x80);
+        assert(memcmp(dhcp + 28, test_mac, 6) == 0);
+        assert(dhcp[236] == 99 && dhcp[237] == 130 && dhcp[238] == 83 && dhcp[239] == 99);
+        assert(dhcp[240] == 53 && dhcp[241] == 1 && dhcp[242] == RIX_DHCP_MSG_DISCOVER);
+    }
+    assert(rix_net_dhcp_build_discover(0, 0x12345678u, test_mac) != 0);
+    assert(rix_net_dhcp_build_discover(&packet, 0, test_mac) != 0);
+    assert(rix_net_dhcp_build_request(0, 1, test_mac, 1) != 0);
+    assert(rix_net_dhcp_build_request(&packet, 1, 0, 1) != 0);
+    rix_dhcp_offer_t offer;
+    rix_net_packet_init(&packet);
+    assert(rix_net_dhcp_build_discover(&packet, 0x9abcdef0u, test_mac) == 0);
+    {
+        uint8_t *dhcp = (uint8_t *)rix_net_packet_data(&packet);
+        dhcp[0] = RIX_DHCP_OP_REPLY;
+        dhcp[16] = 10;
+        dhcp[17] = 0;
+        dhcp[18] = 2;
+        dhcp[19] = 15;
+        uint8_t *opt = dhcp + 240;
+        opt[0] = 53;
+        opt[1] = 1;
+        opt[2] = RIX_DHCP_MSG_OFFER;
+        opt[3] = 1;
+        opt[4] = 4;
+        opt[5] = 255;
+        opt[6] = 255;
+        opt[7] = 255;
+        opt[8] = 0;
+        opt[9] = 3;
+        opt[10] = 4;
+        opt[11] = 10;
+        opt[12] = 0;
+        opt[13] = 2;
+        opt[14] = 2;
+        opt[15] = 6;
+        opt[16] = 4;
+        opt[17] = 10;
+        opt[18] = 0;
+        opt[19] = 2;
+        opt[20] = 3;
+        opt[21] = 54;
+        opt[22] = 4;
+        opt[23] = 10;
+        opt[24] = 0;
+        opt[25] = 2;
+        opt[26] = 2;
+        opt[27] = 51;
+        opt[28] = 4;
+        opt[29] = 0;
+        opt[30] = 0;
+        opt[31] = 0x0e;
+        opt[32] = 0x10;
+        opt[33] = 255;
+        assert(rix_net_dhcp_parse_reply(&packet, 0x9abcdef0u, RIX_DHCP_MSG_OFFER, &offer) == 0);
+        assert(offer.address == 0x0a00020fu);
+        assert(offer.has_netmask && offer.netmask == 0xffffff00u);
+        assert(offer.has_gateway && offer.gateway == 0x0a000202u);
+        assert(offer.has_dns && offer.dns == 0x0a000203u);
+        assert(offer.server == 0x0a000202u);
+        assert(offer.lease_seconds == 3600u);
+        assert(rix_net_dhcp_parse_reply(&packet, 0x11111111u, RIX_DHCP_MSG_OFFER, &offer) != 0);
+        assert(rix_net_dhcp_parse_reply(&packet, 0x9abcdef0u, RIX_DHCP_MSG_ACK, &offer) != 0);
+        dhcp[237] ^= 1u;
+        assert(rix_net_dhcp_parse_reply(&packet, 0x9abcdef0u, RIX_DHCP_MSG_OFFER, &offer) != 0);
+        dhcp[237] ^= 1u;
+        dhcp[16] = 0;
+        dhcp[17] = 0;
+        dhcp[18] = 0;
+        dhcp[19] = 0;
+        assert(rix_net_dhcp_parse_reply(&packet, 0x9abcdef0u, RIX_DHCP_MSG_OFFER, &offer) != 0);
+    }
+    rix_net_packet_init(&packet);
+    assert(rix_net_dhcp_build_request(&packet, 0x9abcdef0u, test_mac, 0x0a00020fu) == 0);
+    {
+        const uint8_t *dhcp = rix_net_packet_data(&packet);
+        assert(dhcp[240] == 53 && dhcp[241] == 1 && dhcp[242] == RIX_DHCP_MSG_REQUEST);
+        assert(dhcp[243] == 50 && dhcp[244] == 4 && dhcp[245] == 10 &&
+               dhcp[246] == 0 && dhcp[247] == 2 && dhcp[248] == 15);
+        assert(rix_net_packet_length(&packet) == RIX_DHCP_MIN_SIZE);
+    }
     return 0;
 }

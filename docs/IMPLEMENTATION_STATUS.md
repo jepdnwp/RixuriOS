@@ -662,3 +662,28 @@ The QEMU user-net packet capture proves that RixuriOS emits a valid ARP request 
 ## RX DMA follow-up — 2026-09-08
 
 Controller reset, explicit PCI memory/bus-master enablement, receive-address-valid programming and a broad receive filter were tested. None changed the observed QEMU boundary: the ARP reply is visible in the pcap but RX descriptors remain `DD=0`. External DNS and TCP therefore remain pending behind RX ring ownership/DMA investigation.
+
+
+## Generic DNS resolver and second-domain external evidence — 2026-09-08
+
+`curl` no longer carries a hardcoded `google.com` query: `dns_resolve_name()` validates any hostname (labels, lengths), builds the query with an incrementing transaction ID, retries over UDP to the configured resolver and accepts only matching TXID/response/rcode with a real A record (CNAME chains skipped per record). Non-name input still fails closed with `DNS/network path unavailable`; unresolvable names fail with `DNS query failed`. `RIX_NET_DEVICE_DNS` is exposed to userspace libc (currently the QEMU user-net resolver; a DHCP-learned address is future work).
+
+QEMU user-net evidence now covers two real domains in one run: `curl google.com` and `curl facebook.com` each print `curl: HTTP 301 external PASS` after wire-validated status line, headers terminator and status code, with the full SYN/SYN-ACK/ACK/GET/response exchange confirmed in the packet capture. The external harness requires both PASS markers plus the fail-closed ping marker and still rejects fault markers. Strict build, host suites, ISO boot, loopback ping/curl and the external run all pass in this environment. Open: DHCP-learned DNS, IPv6, firewall/filtering, TCP retransmission timers and close semantics, interrupt-driven RX, RTL8125-on-hardware and physical-hardware evidence.
+
+
+## RX DMA root cause and external TCP slice — 2026-09-08
+
+The `DD=0` boundary was an unprogrammed RX descriptor Length field: zero at ring setup and zeroed again on recycle, and hardware never completes a zero-length descriptor. `RIX_E1000_RX_BUFFER_SIZE` (2048, matching the programmed RCTL BSIZE) is now set at init and restored on recycle. The stack gained a bounded 8-frame RX queue with drop-oldest semantics, a one-second ARP pending timeout with retransmit, and wire-TCP dispatch (port/peer match, in-order acceptance, FIN-to-CLOSE_WAIT EOF, RST abort) with per-branch outcome codes. The syscall layer gained a bounded blocking TCP connect (250 ms pacing, 6 s deadline, `-110` timeout) and chunked receives above the 1500-byte bounce buffer, which had previously rejected larger userspace capacities with `-EINVAL`. `curl` retries DNS resolution and the HTTP exchange within bounded rounds.
+
+QEMU user-net evidence in one run shows ARP request/reply, DNS query/reply, TCP SYN/SYN-ACK/ACK, HTTP GET, the server ACK and a 773-byte HTTP response delivered to the socket, each step cross-checked between serial diagnostics and the packet capture. `curl google.com` prints `curl: HTTP 301 external PASS` after validating the status line, headers terminator and status code; the external harness now requires that marker plus the fail-closed ping marker and still rejects fault markers. Strict build, host USB/HID/TTY/shell/pipe/network/NIC tests, ISO boot, loopback ping/curl and the external run all pass in this environment.
+
+Open: DHCP (static QEMU parameters suffice here), IPv6, firewall/filtering, RTL8125-on-hardware TX/RX, interrupt-driven RX, TCP retransmission timers and close semantics beyond the single-outstanding-segment policy, and physical-hardware evidence. The bounded bringup diagnostics (RX completion, ARP/stack outcomes, TCP dispatch outcomes) intentionally remain for hardware qualification.
+
+
+## DHCP client slice — 2026-09-08
+
+`kernel/net/dhcp.c`/`dhcp.h` implement a bounded DHCPv4 client (DISCOVER/OFFER/REQUEST/ACK) over the existing packet/UDP/IPv4/Ethernet path: 300-byte padded messages, broadcast flag, parameter-request list (mask/router/DNS), XID matching, magic-cookie and contiguous-netmask validation, and option parsing with unknown-option skip. `rix_net_device_configure()` applies the learned address/netmask/gateway/DNS (zero fields keep the static defaults); `kernel_main` runs the exchange after stack init when link is up and logs `NET: dhcp ip=...`, otherwise `NET: dhcp failed, using static config`. Host `net-test` covers discover/request construction and offer accept/reject (wrong XID/type, bad magic, zero yiaddr).
+
+QEMU user-net evidence: the default-NIC boot accepts the first OFFER/ACK in round 0 (`NET: dhcp ip=0x0a00020f gateway=0x0a000202 dns=0x0a000203`). The explicit `-device e1000,netdev=net0` harness needs the extended window (12 rounds x 1M polls): SLIRP-to-guest delivery stalls for ~1s at boot (six DISCOVERs answered on the wire while the guest ring observes zero frames), then resumes — round 10 accepts the OFFER and the REQUEST round correctly discards ten stale queued OFFERs (`parse=10`) before accepting the ACK. The external run still prints both `curl: HTTP 301 external PASS` markers. Per-round `DHCP: ... frames/eth/ip/udp/port/parse/accept` serial diagnostics remain for hardware qualification.
+
+Open: userspace resolver propagation of the learned DNS (curl still uses the `RIX_NET_DEVICE_DNS` constant, equal to the SLIRP value here), lease renewal timers, IPv6, firewall/filtering, RTL8125-on-hardware TX/RX, interrupt-driven RX, TCP retransmission timers and close semantics beyond the single-outstanding-segment policy, and physical-hardware evidence.

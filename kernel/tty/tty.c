@@ -411,14 +411,22 @@ int tty_output(unsigned id, const void *buf, size_t n, size_t *written) {
     if (!t || (!buf && n)) return -1;
     const uint8_t *src = (const uint8_t *)buf;
     size_t done = 0;
-    while (done < n && t->output_count < RIX_TTY_OUTPUT) {
+    /* The output ring has no consumer (tty_read_output is currently
+     * unreferenced); rendering happens synchronously in vt_consume, so a
+     * full ring must drop the oldest byte rather than wedge or silence
+     * all stdio once 4096 bytes have accumulated. */
+    while (done < n) {
+        if (t->output_count >= RIX_TTY_OUTPUT) {
+            t->output_head = (t->output_head + 1u) % RIX_TTY_OUTPUT;
+            t->output_count--;
+        }
         t->output[t->output_tail] = src[done++];
         t->output_tail = (t->output_tail + 1u) % RIX_TTY_OUTPUT;
         t->output_count++;
         vt_consume(t, src[done - 1u]);
     }
     if (written) *written = done;
-    return done == n ? 0 : -2;
+    return 0;
 }
 
 int tty_read_output(unsigned id, void *buf, size_t n, size_t *out) {

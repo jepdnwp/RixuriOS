@@ -4,6 +4,12 @@
 typedef int64_t rix_ssize_t;
 typedef uint64_t rix_pid_t;
 typedef struct { rix_pid_t session; rix_pid_t leader; uint32_t uid; uint32_t controlling_tty; uint32_t flags; } rix_session_info_t;
+#define RIX_PROCESS_NAME_MAX 32u
+typedef struct { rix_pid_t pid; rix_pid_t parent; uint32_t uid; uint32_t gid; uint32_t state; rix_pid_t session; char name[RIX_PROCESS_NAME_MAX]; } rix_process_info_t;
+#define RIX_PROC_UNUSED 0u
+#define RIX_PROC_RUNNING 1u
+#define RIX_PROC_SLEEPING 2u
+#define RIX_PROC_ZOMBIE 3u
 typedef struct { uint64_t sec; uint64_t nsec; } rix_timespec_t;
 typedef struct { uint64_t inode; uint8_t type; char name[256]; } rix_dirent_t;
 typedef struct { uint64_t inode; uint8_t type; uint32_t mode; uint32_t uid; uint32_t gid; uint64_t size; } rix_stat_t;
@@ -26,6 +32,10 @@ typedef struct { uint32_t address; uint16_t port; } rix_net_endpoint_t;
 #define RIX_NET_SOCKET_RAW_ICMP 2
 #define RIX_NET_SOCKET_TCP 3
 #define RIX_NET_SOCKET_LOOPBACK 0x7f000001u
+/* QEMU user-net resolver/gateway (mirrors the kernel static interface
+   config; userspace resolution prefers /etc/hosts, then /etc/hostlist,
+   then the /etc/resolv.conf nameserver with this as fallback). */
+#define RIX_NET_DEVICE_DNS 0x0a000203u
 rix_ssize_t read(int fd, void *buf, size_t count);
 rix_ssize_t write(int fd,const void *buf,size_t count);
 int openat(int dirfd, const char *path, uint32_t flags, uint32_t mode);
@@ -65,6 +75,7 @@ int detach_tty(uint32_t tty_id);
 int login_session(uint32_t tty_id, rix_pid_t *out_session);
 int logout_session(void);
 int list_sessions(rix_session_info_t *sessions,size_t capacity,size_t *count);
+int list_processes(rix_process_info_t *procs,size_t capacity,size_t *count);
 int get_capabilities(uint64_t *out);
 int drop_capabilities(uint64_t mask);
 int get_audit_uid(uint32_t *out);

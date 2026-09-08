@@ -14,6 +14,12 @@
 #define RIX_INIT_PIDS_CAP RIX_SHELL_MAX_COMMANDS
 #define RIX_INIT_JOBS_CAP 8u
 #define RIX_WAITPID_NOHANG 1u
+#define RIX_INIT_USER_CAP 32u
+#define RIX_INIT_HOME_CAP 96u
+#define RIX_INIT_PASSWD_CAP 2048u
+
+static char shell_user[RIX_INIT_USER_CAP];
+static char shell_home[RIX_INIT_HOME_CAP];
 
 static size_t text_length(const char *text) {
     size_t length = 0;
@@ -37,6 +43,33 @@ static int write_text(int fd, const char *text) {
     return write_all(fd, text, text_length(text));
 }
 
+static void write_sdec(int fd, long value) {
+    char digits[24];
+    size_t used = 0;
+    unsigned long magnitude;
+    if (value < 0) {
+        (void)write_text(fd, "-");
+        magnitude = (unsigned long)(-(value + 1)) + 1u;
+    } else {
+        magnitude = (unsigned long)value;
+    }
+    if (!magnitude) {
+        (void)write_text(fd, "0");
+        return;
+    }
+    while (magnitude && used + 1u < sizeof(digits)) {
+        digits[used++] = (char)('0' + magnitude % 10u);
+        magnitude /= 10u;
+    }
+    for (size_t k = 0; k < used / 2u; ++k) {
+        char swap = digits[k];
+        digits[k] = digits[used - 1u - k];
+        digits[used - 1u - k] = swap;
+    }
+    digits[used] = 0;
+    (void)write_text(fd, digits);
+}
+
 static int fd_writer(const void *data, size_t length, void *context) {
     if (!context) return -1;
     return write_all(*(const int *)context, data, length);
@@ -47,6 +80,110 @@ static int path_exists(const char *path, void *context) {
     int fd = openat(RIX_AT_FDCWD, path, 0u, 0u);
     if (fd < 0) return -1;
     return close(fd);
+}
+
+static int read_whole_file(const char *path, char *buffer, size_t capacity,
+                           size_t *out_length) {    int fd;
+    size_t used = 0;
+    if (!path || !buffer || !out_length || capacity < 2u) return -1;
+    fd = openat(RIX_AT_FDCWD, path, 0u, 0u);
+    if (fd < 0) return -1;
+    for (;;) {
+        rix_ssize_t count = read(fd, buffer + used, capacity - used - 1u);
+        if (count < 0) {
+            (void)close(fd);
+            return -1;
+        }
+        if (count == 0) break;
+        used += (size_t)count;
+        if (used >= capacity - 1u) {
+            (void)close(fd);
+            return -1;
+        }
+    }
+    buffer[used] = 0;
+    *out_length = used;
+    return close(fd);
+}
+
+static int valid_user_name(const char *name, size_t length) {
+    if (!name || !length || length >= RIX_INIT_USER_CAP) return 0;
+    for (size_t i = 0; i < length; ++i) {
+        char c = name[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+              (c >= '0' && c <= '9') || c == '_' || c == '-'))
+            return 0;
+    }
+    return 1;
+}
+
+static void copy_text(char *destination, size_t capacity, const char *source,
+                      size_t length) {
+    size_t n = length < capacity - 1u ? length : capacity - 1u;
+    for (size_t i = 0; i < n; ++i) destination[i] = source[i];
+    destination[n] = 0;
+}
+
+/* Resolve our uid to a passwd login name. Falls back to root/user so the
+ * shell always has a usable identity for the prompt and home directory. */
+static void resolve_shell_user(void) {
+    char passwd[RIX_INIT_PASSWD_CAP];
+    size_t length = 0, i = 0;
+    uint32_t uid = getuid();
+    copy_text(shell_user, sizeof(shell_user), uid == 0u ? "root" : "user", 4u);
+    if (read_whole_file("/etc/passwd", passwd, sizeof(passwd), &length) != 0)
+        return;
+    while (i < length) {
+        size_t line = i, name_end, value = 0;
+        int digits = 0;
+        while (i < length && passwd[i] != '\n') ++i;
+        size_t end = i;
+        if (i < length) ++i;
+        if (end > line && passwd[end - 1] == '\r') --end;
+        name_end = line;
+        while (name_end < end && passwd[name_end] != ':') ++name_end;
+        size_t cursor = name_end;
+        if (cursor < end && passwd[cursor] == ':') ++cursor;
+        while (cursor < end && passwd[cursor] >= '0' && passwd[cursor] <= '9') {
+            value = value * 10u + (uint32_t)(passwd[cursor] - '0');
+            ++cursor;
+            ++digits;
+        }
+        if (!digits || value != uid) continue;
+        if (valid_user_name(passwd + line, name_end - line)) {
+            copy_text(shell_user, sizeof(shell_user), passwd + line,
+                      name_end - line);
+            return;
+        }
+    }
+}
+
+/* Build /home/<login>/desktop,/documents once per shell startup. Missing
+ * parents and existing directories are fine; failures are non-fatal. */
+static void ensure_home_skeleton(void) {
+    static const char *leaf_names[3] = {"", "/desktop", "/documents"};
+    copy_text(shell_home, sizeof(shell_home), "/home/", 6u);
+    {
+        size_t used = 6u, i = 0;
+        while (shell_user[i] && used + 1u < sizeof(shell_home)) {
+            shell_home[used++] = shell_user[i++];
+        }
+        shell_home[used] = 0;
+    }
+    (void)mkdir(shell_home, 0755u);
+    for (size_t leaf = 1; leaf < 3; ++leaf) {
+        char path[RIX_INIT_HOME_CAP];
+        size_t used = 0;
+        while (shell_home[used] && used + 1u < sizeof(path)) {
+            path[used] = shell_home[used];
+            ++used;
+        }
+        for (size_t k = 0; leaf_names[leaf][k] && used + 1u < sizeof(path); ++k)
+            path[used++] = leaf_names[leaf][k];
+        path[used] = 0;
+        (void)mkdir(path, 0755u);
+    }
+    (void)chdir(shell_home);
 }
 
 static int apply_redirections(const rix_shell_command_t *command) {
@@ -281,12 +418,33 @@ static int shell_cd_builtin(const rix_shell_pipeline_t *pipeline, int *handled) 
     return 0;
 }
 
+static int shell_history_builtin(const rix_shell_pipeline_t *pipeline,
+                                 rix_shell_history_t *history, int *handled) {
+    const rix_shell_command_t *command;
+    if (handled) *handled = 0;
+    if (!pipeline || pipeline->command_count != 1u || pipeline->background || !history) return 0;
+    command = &pipeline->command[0];
+    if (!command->argc || !command->argv[0]) return 0;
+    if (!(command->argv[0][0]=='h'&&command->argv[0][1]=='i'&&command->argv[0][2]=='s'&&
+          command->argv[0][3]=='t'&&command->argv[0][4]=='o'&&command->argv[0][5]=='r'&&
+          command->argv[0][6]=='y'&&command->argv[0][7]==0)) return 0;
+    if (handled) *handled = 1;
+    if (command->argc > 1u) { (void)write_text(2, "history: arguments unsupported\n"); return 2; }
+    for (size_t i = 0; i < history->count; ++i) {
+        (void)write_text(1, "  ");
+        write_sdec(1, (long)(i + 1u));
+        (void)write_text(1, "  ");
+        (void)write_text(1, history->entry[i]);
+        (void)write_text(1, "\n");
+    }
+    return 0;
+}
+
 static void shell_prompt(void) {
     static char cwd[256];
-    const char *user = getuid() == 0u ? "root" : "user";
     if (getcwd(cwd, sizeof(cwd)) < 0) cwd[0] = 0;
     (void)write_text(1, "\033[1;32m");
-    (void)write_text(1, user);
+    (void)write_text(1, shell_user[0] ? shell_user : "user");
     (void)write_text(1, "\033[0m@\033[1;34mrixurios\033[0m ");
     (void)write_text(1, "\033[1;36m");
     (void)write_text(1, cwd);
@@ -320,6 +478,7 @@ static int shell_execute_line(const char *line, rix_shell_history_t *history) {
     }
     if (history) (void)rix_shell_history_add(history, line);
     { int handled = 0; int cd_status = shell_cd_builtin(&pipeline, &handled); if (handled) return cd_status; }
+    { int handled = 0; int history_status = shell_history_builtin(&pipeline, history, &handled); if (handled) return history_status; }
     if (pipeline.command_count == 1u && !pipeline.background) {
         const rix_shell_command_t *cmd = &pipeline.command[0];
         if (cmd->argc == 1u && cmd->argv[0][0]=='c' && cmd->argv[0][1]=='l' && cmd->argv[0][2]=='e' && cmd->argv[0][3]=='a' && cmd->argv[0][4]=='r' && cmd->argv[0][5]==0) {
@@ -345,6 +504,8 @@ void _start(void) {
         _exit(127);
     }
     (void)write_text(1, "RIXURI:SYSCALL_OK\r\n");
+    resolve_shell_user();
+    ensure_home_skeleton();
     (void)write_text(1, "RIXURI: SHELL READY\r\n");
     (void)write_text(1, "RixuriOS shell ready\r\n");
     for (;;) {

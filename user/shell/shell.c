@@ -571,8 +571,15 @@ int rix_shell_run_builtin(const rix_shell_command_t *command,
         return 0;
     }
     if (is_echo && writer) {
-        for (size_t i = 1; i < command->argc; ++i) {
-            if (i != 1u) {
+        size_t first = 1u;
+        int trailing = 1;
+        if (command->argc > 1u && command->argv[1][0] == '-' &&
+            command->argv[1][1] == 'n' && command->argv[1][2] == 0) {
+            first = 2u;
+            trailing = 0;
+        }
+        for (size_t i = first; i < command->argc; ++i) {
+            if (i != first) {
                 static const char space = ' ';
                 if (writer(&space, 1u, context) != 0) return -2;
             }
@@ -580,8 +587,10 @@ int rix_shell_run_builtin(const rix_shell_command_t *command,
             size_t length = text_length(word);
             if (writer(word, length, context) != 0) return -3;
         }
-        static const char newline = '\n';
-        if (writer(&newline, 1u, context) != 0) return -4;
+        if (trailing) {
+            static const char newline = '\n';
+            if (writer(&newline, 1u, context) != 0) return -4;
+        }
     }
     *status = result;
     return 0;

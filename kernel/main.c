@@ -28,6 +28,7 @@
 #include "net/e1000.h"
 #include "net/device.h"
 #include "net/stack.h"
+#include "net/dhcp.h"
 
 static uint8_t klog_ready;
 static rix_net_stack_t net_stack;
@@ -182,6 +183,9 @@ static void keyboard_poll_worker(void *arg){
 static void network_poll_worker(void *arg){
  (void)arg;
  for(;;){
+  /* Full poll (timers + DMA consume into the bounded RX queue). Fast,
+     sub-millisecond consumes keep the e1000 descriptor ring turning;
+     socket paths drain via take. */
   (void)rix_net_stack_poll(&net_stack,time_monotonic_ns()/1000000000ULL);
   scheduler_yield();
  }
@@ -237,7 +241,7 @@ void kernel_main(const rixuri_boot_info_t *boot){
  if(pci_init()!=0)panic("PCI initialization failed");
  klog_write("PCI: devices=");klog_write_dec(pci_device_count());klog_write("\r\n");
  (void)rix_e1000_init();
- if(rix_net_device_init()==0){const rix_net_device_info_t *net=rix_net_device_info();klog_write("NET: device link=");klog_write_dec(net->link_up);klog_write(" ip=");klog_write_hex(net->address);klog_write(" gateway=");klog_write_hex(net->gateway);klog_write(" dns=");klog_write_hex(net->dns);klog_write("\r\n");if(rix_net_stack_init(&net_stack)!=0)klog_write("NET: stack init failed\r\n");}
+ if(rix_net_device_init()==0){const rix_net_device_info_t *net=rix_net_device_info();klog_write("NET: device link=");klog_write_dec(net->link_up);klog_write(" ip=");klog_write_hex(net->address);klog_write(" gateway=");klog_write_hex(net->gateway);klog_write(" dns=");klog_write_hex(net->dns);klog_write("\r\n");if(rix_net_stack_init(&net_stack)!=0)klog_write("NET: stack init failed\r\n");else if(!net->link_up)klog_write("NET: link down, keeping static config\r\n");else if(rix_net_dhcp_run()==0){net=rix_net_device_info();klog_write("NET: dhcp ip=");klog_write_hex(net->address);klog_write(" gateway=");klog_write_hex(net->gateway);klog_write(" dns=");klog_write_hex(net->dns);klog_write("\r\n");}else klog_write("NET: dhcp failed, using static config\r\n");}
  else klog_write("NET: no usable network device\r\n");
  if(block_init()!=0)panic("block subsystem initialization failed");
  if(vfs_init()!=0)panic("VFS initialization failed");

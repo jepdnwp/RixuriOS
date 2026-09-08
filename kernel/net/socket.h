@@ -50,6 +50,7 @@ int rix_net_socket_bind(rix_net_socket_table_t *table, int descriptor,
                         rix_net_endpoint_t endpoint);
 int rix_net_socket_connect(rix_net_socket_table_t *table, int descriptor,
                            rix_net_endpoint_t endpoint);
+int rix_net_socket_poll(rix_net_socket_table_t *table);
 int rix_net_socket_send(rix_net_socket_table_t *table, int descriptor,
                         const void *data, size_t length,
                         rix_net_endpoint_t destination);

@@ -1,0 +1,7 @@
+# RixuriOS static host table.
+# Lookup order for names is /etc/hosts, then /etc/hostlist, then DNS.
+# Format: <ipv4-address> <name> [aliases...]; '#' starts a comment.
+127.0.0.1 localhost
+# QEMU user-net examples (uncomment when needed):
+# 10.0.2.2 gateway qemu-gateway
+# 10.0.2.3 nameserver qemu-dns

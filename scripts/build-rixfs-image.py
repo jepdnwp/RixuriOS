@@ -130,7 +130,7 @@ def parent_path(path: str) -> str:
     return parent or "/"
 
 
-def build_image(output: Path, files: list[tuple[str, Path]], size_mib: int) -> None:
+def build_image(output: Path, files: list[tuple[str, Path]], dirs: list[str], size_mib: int) -> None:
     total_sectors = size_mib * 1024 * 1024 // SECTOR_SIZE
     if total_sectors < 128:
         raise ValueError("image is too small")
@@ -141,6 +141,12 @@ def build_image(output: Path, files: list[tuple[str, Path]], size_mib: int) -> N
     data_start = journal_sector + JOURNAL_SECTORS
 
     entries: dict[str, tuple[Path | None, bool]] = {"/": (None, True)}
+    for directory in dirs:
+        directory = normalize_path(directory)
+        current = ""
+        for component in directory.strip("/").split("/"):
+            current += "/" + component
+            entries.setdefault(current, (None, True))
     for image_path, host_path in files:
         image_path = normalize_path(image_path)
         if not host_path.is_file():
@@ -261,6 +267,13 @@ def main() -> int:
         metavar="/image/path=host/path",
         help="embed one file; may be repeated",
     )
+    parser.add_argument(
+        "--dir",
+        action="append",
+        default=[],
+        metavar="/image/dir",
+        help="create an empty directory (parents implied); may be repeated",
+    )
     args = parser.parse_args()
     files: list[tuple[str, Path]] = []
     for specification in args.file:
@@ -268,7 +281,7 @@ def main() -> int:
             parser.error(f"--file requires /image/path=host/path: {specification!r}")
         image_path, host_path = specification.split("=", 1)
         files.append((image_path, Path(host_path)))
-    build_image(args.output, files, args.size_mib)
+    build_image(args.output, files, args.dir, args.size_mib)
     return 0
 
 

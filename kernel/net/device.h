@@ -20,5 +20,9 @@ typedef struct {
 
 int rix_net_device_init(void);
 const rix_net_device_info_t *rix_net_device_info(void);
+/* Apply DHCP-learned configuration. Nonzero fields replace the static
+   defaults; zero netmask/gateway/dns keep the current values. */
+int rix_net_device_configure(uint32_t address, uint32_t netmask,
+                             uint32_t gateway, uint32_t dns);
 int rix_net_device_transmit(const rix_net_packet_t *packet);
 int rix_net_device_receive(rix_net_packet_t *packet);

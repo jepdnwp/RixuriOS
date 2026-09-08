@@ -71,8 +71,10 @@ finally:
 
 LOG.write_bytes(output)
 sys.stdout.buffer.write(output)
-if b"PID\n" not in output or b"184467440737095515" in output:
+if b"PID PPID UID STAT NAME\n" not in output or b"184467440737095515" in output:
     raise SystemExit("ps output not observed")
+if b"init\n" not in output or b"kernel\n" not in output:
+    raise SystemExit("ps process rows not observed")
 if b"RixuriOS\n" not in output:
     raise SystemExit("uname output not observed")
 if b"\t/bin/echo\n" not in output:

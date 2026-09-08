@@ -25,6 +25,12 @@
 #define RIX_E1000_REG_RAH 0x5404u
 #define RIX_E1000_RING_SIZE 64u
 
+/* Receive buffer size in bytes. Must match RCTL BSIZE=00 (2048) programmed
+   in rix_e1000_configure, and every RX descriptor Length field must carry
+   it: hardware never completes (DD) a descriptor with Length 0, and a
+   consumed descriptor must be re-armed with the same value. */
+#define RIX_E1000_RX_BUFFER_SIZE 2048u
+
 #define RIX_E1000_RX_STATUS_DD 0x01u
 #define RIX_E1000_RX_STATUS_EOP 0x02u
 #define RIX_E1000_TX_STATUS_DD 0x01u

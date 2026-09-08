@@ -21,6 +21,16 @@ const rix_net_device_info_t *rix_net_device_info(void) {
     return device.present ? &device : 0;
 }
 
+int rix_net_device_configure(uint32_t address, uint32_t netmask,
+                             uint32_t gateway, uint32_t dns) {
+    if (!device.present || !address) return -1;
+    device.address = address;
+    if (netmask) device.netmask = netmask;
+    if (gateway) device.gateway = gateway;
+    if (dns) device.dns = dns;
+    return 0;
+}
+
 int rix_net_device_transmit(const rix_net_packet_t *packet) {
     rix_e1000_t *controller = rix_e1000_default();
     if (!controller || !packet || !rix_net_packet_length(packet)) return -1;
