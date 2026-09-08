@@ -33,12 +33,24 @@ def until(marker: bytes, timeout: float) -> bool:
             out.extend(chunk)
     return marker in out
 
+def until_after(marker: bytes, start: int, timeout: float) -> bool:
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if marker in out[start:]:
+            return True
+        ready, _, _ = select.select([proc.stdout], [], [], 0.2)
+        if ready:
+            chunk = os.read(proc.stdout.fileno(), 4096)
+            if not chunk:
+                return False
+            out.extend(chunk)
+    return marker in out[start:]
+
 def command(line: bytes) -> None:
-    for byte in line + b"\n":
-        proc.stdin.write(bytes((byte,)))
-        proc.stdin.flush()
-        time.sleep(0.01)
-    if not until(b"\x1b[1;37m:\x1b[0m ", 20):
+    start = len(out)
+    proc.stdin.write(line + b"\n")
+    proc.stdin.flush()
+    if not until_after(b"\x1b[1;37m:\x1b[0m ", start, 20):
         raise RuntimeError("prompt missing after command")
 
 try:
@@ -46,7 +58,6 @@ try:
         raise RuntimeError("shell boot marker missing")
     if not until(b"\x1b[1;37m:\x1b[0m ", 10):
         raise RuntimeError("initial prompt missing")
-    time.sleep(1.0)
     command(b"/usr/bin/ping google.com")
     command(b"/usr/bin/curl google.com")
 finally:

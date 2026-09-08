@@ -29,3 +29,12 @@ The deterministic gate first validates loopback packet delivery, checksums, ARP 
 ## Current status
 
 At the start of Phase 21 the repository has PCI, DMA and storage infrastructure but no network, socket, NIC driver, `ping` or `curl` implementation. The first implementation milestone is therefore the packet/device abstraction plus host-testable checksum and loopback foundations; later milestones must not bypass that path.
+
+
+## Continuation status — 2026-09-08
+
+The deterministic loopback milestone now includes real UDP and TCP wire-segment helpers. UDP uses IPv4 pseudo-header checksums and strict length/port validation. TCP uses minimum-header segments with sequence/acknowledgment validation, explicit flags and checksum verification. The TCP loopback connection path performs SYN, SYN/ACK and ACK processing through those helpers before exposing an established socket. The loopback HTTP response is queued only after a validated ACK/PSH GET segment and a validated ACK/PSH response segment; it is not a direct string-triggered socket shortcut.
+
+Host tests and real QEMU serial-to-TTY tests pass for the bounded loopback path. The tested userspace commands are `/usr/bin/ping` against `127.0.0.1` and `/usr/bin/curl` against the loopback HTTP service. This is deterministic protocol evidence, not NIC or Internet evidence.
+
+The next required implementation slice is a network-device boundary that connects the same Ethernet/IP/socket path to a completed E1000 QEMU backend, including RX/TX completion polling, MAC/interface state, ARP requests/replies and IPv4 delivery. Only after that path is validated should DNS, DHCP, routing configuration and physical RTL8125 TX/RX work be claimed. The current E1000 code proves PCI discovery, BAR mapping and ring setup only; the current RTL8125 code is a probe/register/descriptor foundation. External-network and physical-hardware results remain `NOT TESTED` or `BLOCKED` until real packets and recovery behavior are observed.

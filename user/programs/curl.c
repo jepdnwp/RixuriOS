@@ -29,7 +29,7 @@ int program_main(int argc, char **argv, char **envp) {
     }
     char response[128] = {0};
     int received = socket_receive(fd, response, sizeof(response) - 1, 0);
-    if (received <= 0 || !has_prefix(response, (size_t)received, "HTTP/1.0 200 OK\r\n") ||
+    if (received < 15 || !has_prefix(response, (size_t)received, "HTTP/1.0 200 OK\r\n") ||
         !has_prefix(response + received - 15, 15, "Hello RixuriOS\n")) {
         say("curl: invalid HTTP response\n");
         return 1;

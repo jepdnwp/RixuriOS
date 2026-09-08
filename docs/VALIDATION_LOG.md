@@ -593,3 +593,35 @@ The complete `make phase20-test CROSS=` gate passed on the disposable NVMe-backe
 The run also reached `RIXURI:KERNEL_READY`, `RIXURI:USER_ENTER`, `RIXURI:SYSCALL_OK` and `RIXURI: SHELL READY` without a page fault, CPU exception, panic, timeout or prompt-loss failure. `git diff --check` passed.
 
 This closes the bounded Phase 20 credential, permission, capability, audit, session and account/authentication QEMU slice. It does **not** justify marking the entire Phase 20 complete: the existing fork/address-space/pipe-stress regression remains open, physical AMD hardware security evidence is unavailable here, and power-loss/hardware qualification remains outside this run.
+
+
+## 2026-09-08 — Phase 21 UDP/TCP composition and loopback evidence
+
+The Phase 21 protocol-composition increment added `kernel/net/udp.c` / `udp.h` and extended `kernel/net/tcp.c` / `tcp.h`. UDP now constructs and parses the eight-byte datagram header, validates the IPv4 pseudo-header checksum, rejects invalid lengths and zero ports, and bounds payload delivery. TCP now constructs and parses minimum-header segments with sequence/acknowledgment values, flags, window and checksum validation. TCP parsing rejects unsupported reserved bits and invalid data offsets.
+
+The socket loopback path was changed so `connect()` for TCP performs and validates a SYN/SYN-ACK/ACK exchange through the TCP wire helpers before entering `ESTABLISHED`. A `GET` request is serialized as ACK/PSH, parsed and validated, and the loopback HTTP response is likewise serialized as ACK/PSH and parsed before being queued. The old direct string-triggered response path was removed. UDP socket send serializes and parses a datagram before delivery; raw ICMP validates the request checksum and constructs a checked echo reply.
+
+The following commands passed with strict warnings:
+
+```text
+make HOST_CC=gcc test CROSS=
+make image CROSS=
+python3 scripts/qemu_ping_test.py
+python3 scripts/qemu_curl_test.py
+python3 scripts/qemu_external_net_test.py
+```
+
+The first three validation commands produced the following real QEMU markers:
+
+```text
+E1000: probe bus=0 ...
+NVMe: controllers=1
+VFS: mount nvme0n1 rc=0
+RIXURI:KERNEL_READY
+ping: 127.0.0.1: PASS
+qemu ping test: PASS
+curl: HTTP 200 loopback PASS
+qemu curl test: PASS
+```
+
+`net-test` additionally passed UDP checksum corruption rejection, UDP payload delivery, TCP SYN and ACK/PSH round trips, TCP sequence/acknowledgment checks, stateful loopback HTTP exchange, ICMP, ARP expiry and Ethernet framing. The external-network QEMU harness reached the shell and verified `ping: DNS/network path unavailable` and `curl: DNS/network path unavailable`; these are correct fail-closed results, not network success. The NIC tests remain boundary tests: QEMU E1000 shows PCI/MMIO/ring setup but no validated TX/RX completion. RTL8125 physical-driver qualification, on-wire ARP/IPv4/UDP/TCP, DNS/DHCP, routing, interrupt/recovery and physical hardware evidence remain open. No external-network success was claimed.

@@ -1409,3 +1409,8 @@ A native `/usr/bin/rixtest` C runner is now available directly from the RixuriOS
 ### Current evidence — 2026-09-07
 
 UEFI GOP output is now a real kernel TTY framebuffer console with embedded ASCII glyph rendering. The shell prompt and command output are visible on the device display, while canonical Backspace removes the character from both the input queue and rendered line. QEMU interactive verification passed.
+
+
+### Phase 21 continuation — 2026-09-08
+
+The deterministic network slice now has bounded UDP and TCP wire-segment serialization/parsing with IPv4 pseudo-header checksums. TCP loopback connect validates SYN/SYN-ACK/ACK sequence transitions, and loopback HTTP success requires a validated TCP GET and validated response rather than a direct string-triggered shortcut. QEMU serial-to-TTY evidence passes for loopback `ping` and `curl`; QEMU E1000 evidence remains limited to PCI/MMIO/ring setup. The next Phase 21 gate is completion-polled E1000 TX/RX integration with Ethernet/IP/ARP delivery, followed by DNS/DHCP/routing and physical RTL8125 qualification. No external-network or physical-hardware success is claimed.

@@ -1,5 +1,6 @@
 #pragma once
 #include "net.h"
+#include "tcp.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -34,6 +35,7 @@ typedef struct {
     rix_net_socket_type_t type;
     rix_net_endpoint_t local;
     rix_net_endpoint_t peer;
+    rix_tcp_control_t tcp;
     rix_net_socket_queue_t receive;
 } rix_net_socket_t;
 

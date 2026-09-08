@@ -42,11 +42,13 @@ int rix_net_ipv4_push(rix_net_packet_t *packet, uint32_t source,
 int rix_net_ipv4_pull(rix_net_packet_t *packet, rix_net_ipv4_header_t *header) {
     if (!packet || !header || rix_net_packet_length(packet) < sizeof(struct ipv4_wire)) return -1;
     const struct ipv4_wire *wire = 0;
-    if (rix_net_packet_data(packet)[0] >> 4 != 4 || (rix_net_packet_data(packet)[0] & 0xfu) != 5) return -1;
-    if (rix_net_checksum(rix_net_packet_data(packet), sizeof(*wire)) != 0) return -2;
-    uint16_t total = be16(*(const uint16_t *)(rix_net_packet_data(packet) + 2));
+    const uint8_t *bytes = rix_net_packet_data(packet);
+    if ((bytes[0] >> 4) != 4 || (bytes[0] & 0xfu) != 5) return -1;
+    if (rix_net_checksum(bytes, sizeof(*wire)) != 0) return -2;
+    uint16_t total = (uint16_t)(((uint16_t)bytes[2] << 8) | bytes[3]);
     if (total < sizeof(*wire) || total > rix_net_packet_length(packet)) return -3;
     if (rix_net_packet_pull(packet, sizeof(*wire), (void **)&wire) != 0) return -1;
+    packet->length = (size_t)total - sizeof(*wire);
     header->identification = be16(wire->identification);
     header->flags_fragment = be16(wire->flags_fragment);
     header->source = be32(wire->source);
