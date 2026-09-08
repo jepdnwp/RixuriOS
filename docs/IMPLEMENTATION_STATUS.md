@@ -641,3 +641,14 @@ qemu ping test: PASS
 ```
 
 This proves the E1000 DMA boundary and link/MAC discovery, not external networking. The E1000 driver is still not connected to Ethernet/IP/ARP dispatch or the process socket table. DHCP, DNS, routing, external TCP and real Google HTML remain open.
+
+
+## Network device adapter checkpoint — 2026-09-08
+
+An explicit `rix_net_device` adapter now exposes the E1000-backed interface to upper network layers. QEMU user-net static parameters are represented as `10.0.2.15/24`, gateway `10.0.2.2` and DNS `10.0.2.3`; transmit and receive calls are routed to the E1000 DMA driver. Kernel boot logs the discovered interface:
+
+```text
+NET: device link=1 ip=0x000000000a00020f gateway=0x000000000a000202 dns=0x000000000a000203
+```
+
+This is an interface boundary only. Ethernet frame dispatch, on-wire ARP, DHCP/static configuration negotiation, DNS transport and external TCP are not yet connected to process sockets.

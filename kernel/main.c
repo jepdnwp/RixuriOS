@@ -26,6 +26,7 @@
 #include "time/rtc.h"
 #include "time/time.h"
 #include "net/e1000.h"
+#include "net/device.h"
 
 static uint8_t klog_ready;
 static size_t klog_strlen(const char *s) { size_t n = 0; while (s[n]) n++; return n; }
@@ -227,6 +228,8 @@ void kernel_main(const rixuri_boot_info_t *boot){
  if(pci_init()!=0)panic("PCI initialization failed");
  klog_write("PCI: devices=");klog_write_dec(pci_device_count());klog_write("\r\n");
  (void)rix_e1000_init();
+ if(rix_net_device_init()==0){const rix_net_device_info_t *net=rix_net_device_info();klog_write("NET: device link=");klog_write_dec(net->link_up);klog_write(" ip=");klog_write_hex(net->address);klog_write(" gateway=");klog_write_hex(net->gateway);klog_write(" dns=");klog_write_hex(net->dns);klog_write("\r\n");}
+ else klog_write("NET: no usable network device\r\n");
  if(block_init()!=0)panic("block subsystem initialization failed");
  if(vfs_init()!=0)panic("VFS initialization failed");
  if(nvme_init()!=0)panic("NVMe initialization failed");

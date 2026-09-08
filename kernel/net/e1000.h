@@ -72,5 +72,5 @@ int rix_e1000_configure(rix_e1000_t *driver);
 int rix_e1000_transmit(rix_e1000_t *driver, const void *data, size_t length);
 int rix_e1000_poll_tx(rix_e1000_t *driver);
 int rix_e1000_receive(rix_e1000_t *driver, void *data, size_t capacity, size_t *length);
-const rix_e1000_t *rix_e1000_default(void);
+rix_e1000_t *rix_e1000_default(void);
 int rix_e1000_link_up(const rix_e1000_t *driver);

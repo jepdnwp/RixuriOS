@@ -212,7 +212,7 @@ int rix_e1000_receive(rix_e1000_t *driver, void *data, size_t capacity, size_t *
     return 1;
 }
 
-const rix_e1000_t *rix_e1000_default(void) {
+rix_e1000_t *rix_e1000_default(void) {
     return controller.present ? &controller : 0;
 }
 

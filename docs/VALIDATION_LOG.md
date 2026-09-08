@@ -653,3 +653,17 @@ qemu ping test: PASS
 ```
 
 The QEMU E1000 result is a driver-boundary result only. No external packet or Google HTML success is claimed because Ethernet/IP/ARP dispatch, DHCP, DNS, routing and external TCP are not yet connected to the socket path.
+
+
+## 2026-09-08 — Network device adapter
+
+The kernel now initializes a global E1000-backed network-device adapter with QEMU user-net static parameters: `10.0.2.15/24`, gateway `10.0.2.2`, DNS `10.0.2.3`. QEMU boot produced:
+
+```text
+E1000: probe ... link=1 mac=0x0000525400123456 ...
+NET: device link=1 ip=0x000000000a00020f gateway=0x000000000a000202 dns=0x000000000a000203
+ping: 127.0.0.1: PASS
+qemu ping test: PASS
+```
+
+The adapter exposes E1000 frame transmit/receive to the upper layers, but no external packet success is claimed yet. ARP, IPv4 dispatch, DNS and external TCP still need to be connected to this adapter and to process sockets.
