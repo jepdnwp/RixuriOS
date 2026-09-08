@@ -97,7 +97,6 @@ int rix_e1000_configure(rix_e1000_t *driver) {
     regs[RIX_E1000_REG_TDLEN / 4] = RIX_E1000_RING_SIZE * sizeof(rix_e1000_descriptor_t);
     regs[RIX_E1000_REG_TDH / 4] = 0;
     regs[RIX_E1000_REG_TDT / 4] = 0;
-    regs[RIX_E1000_REG_RCTL / 4] = 0x0400801eu;
     regs[RIX_E1000_REG_TCTL / 4] = 0x0103f0fau;
     uint32_t ral = regs[RIX_E1000_REG_RAL / 4];
     uint32_t rah = regs[RIX_E1000_REG_RAH / 4];
@@ -113,6 +112,7 @@ int rix_e1000_configure(rix_e1000_t *driver) {
     driver->mac[5] = (uint8_t)(rah >> 8);
     regs[RIX_E1000_REG_RAL / 4] = ral;
     regs[RIX_E1000_REG_RAH / 4] = rah | 0x80000000u;
+    regs[RIX_E1000_REG_RCTL / 4] = 0x0400801eu;
     driver->link_up = (regs[RIX_E1000_REG_STATUS / 4] & 2u) != 0;
     return 0;
 }

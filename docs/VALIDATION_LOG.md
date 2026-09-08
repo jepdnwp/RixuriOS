@@ -691,3 +691,8 @@ The E1000 configure path now performs a controller reset before ring setup, expl
 ## 2026-09-08 — E1000 ASDE/SLU follow-up
 
 Intel 8254x initialization guidance was compared against the driver. The configure path now enables `CTRL.ASDE|CTRL.SLU` after reset and rewrites RAL/RAH, with the QEMU default MAC fallback. QEMU external testing still shows ARP request/reply on the pcap but no RX descriptor completion; `curl` remains `DNS query failed`. The RX ownership issue remains open.
+
+
+## 2026-09-08 — RCTL ordering follow-up
+
+The receive-control enable write was moved after ring setup, MAC filter programming and TCTL setup, following the Intel 8254x initialization order. QEMU external testing remained unchanged: ARP reply appears on the pcap, RX descriptors remain uncompleted, and `curl google.com` reports `DNS query failed`.
