@@ -10,14 +10,67 @@ static int is_match(const char *a, const char *b) {
     while (a[i] && b[i] && a[i] == b[i]) ++i;
     return a[i] == 0 && b[i] == 0;
 }
+static void emit_escape(char c) {
+    if (c == 'a') out("\a");
+    else if (c == 'b') out("\b");
+    else if (c == 'f') out("\f");
+    else if (c == 'n') out("\n");
+    else if (c == 'r') out("\r");
+    else if (c == 't') out("\t");
+    else if (c == 'v') out("\v");
+    else if (c == '\\') out("\\");
+    else {
+        char b[2] = {'\\', c};
+        (void)write(1, b, 2);
+    }
+}
 
 int program_main(int argc, char **argv) {
-    int start = 1, trailing = 1;
-    if (argc > 1 && is_match(argv[1], "-n")) { start = 2; trailing = 0; }
-    for (int i = start; i < argc; ++i) {
-        if (i > start) out(" ");
-        out(argv[i]);
+    int interpret_escapes = 0;
+    int omit_newline = 0;
+    int arg_index = 1;
+    int options_done = 0;
+
+    while (arg_index < argc && !options_done) {
+        const char *arg = argv[arg_index];
+        if (arg[0] != '-') break;
+        if (is_match(arg, "--")) {
+            ++arg_index;
+            options_done = 1;
+            break;
+        }
+        if (is_match(arg, "-e")) {
+            interpret_escapes = 1;
+        } else if (is_match(arg, "-n")) {
+            omit_newline = 1;
+        } else if (is_match(arg, "-ne") || is_match(arg, "-en")) {
+            interpret_escapes = 1;
+            omit_newline = 1;
+        } else {
+            out(arg);
+            out(" ");
+        }
+        ++arg_index;
     }
-    if (trailing) out("\n");
+
+    for (; arg_index < argc; ++arg_index) {
+        const char *arg = argv[arg_index];
+        if (interpret_escapes) {
+            for (size_t i = 0; arg[i]; ++i) {
+                if (arg[i] == '\\' && arg[i + 1]) {
+                    ++i;
+                    emit_escape(arg[i]);
+                } else {
+                    char c = arg[i];
+                    (void)write(1, &c, 1);
+                }
+            }
+        } else {
+            out(arg);
+        }
+        if (arg_index + 1 < argc) out(" ");
+    }
+
+    if (!omit_newline) out("\n");
     return 0;
 }

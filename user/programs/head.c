@@ -4,22 +4,27 @@
 
 static size_t length(const char *s) { size_t n = 0; while (s && s[n]) ++n; return n; }
 static void err(const char *s) { (void)write(2, s, length(s)); }
+static int is_match(const char *a, const char *b) {
+    size_t i = 0;
+    if (!a || !b) return 0;
+    while (a[i] && b[i] && a[i] == b[i]) ++i;
+    return a[i] == 0 && b[i] == 0;
+}
 
-int program_main(int argc, char **argv, char **envp) {
-    (void)envp;
-    if (argc > 2) { err("head: expected path\n"); return 2; }
-    int fd = 0;
-    if (argc == 2) { fd = openat(-100, argv[1], 0u, 0u); if (fd < 0) { err("head: failed\n"); return 1; } }
-    uint8_t buffer[256]; size_t lines = 0; int status = 0;
+static int copy_fd(int input, size_t max_lines, const char *path) {
+    (void)path;
+    uint8_t buffer[256];
+    size_t lines = 0;
+    int status = 0;
     for (;;) {
-        rix_ssize_t n = read(fd, buffer, sizeof(buffer));
+        rix_ssize_t n = read(input, buffer, sizeof(buffer));
         if (n < 0) { if (lines != 0) break; status = 1; break; }
-        if (n == 0 || lines >= 10) break;
+        if (n == 0 || lines >= max_lines) break;
         size_t emit = (size_t)n;
         for (size_t i = 0; i < emit; ++i) {
             if (buffer[i] == '\n') {
                 ++lines;
-                if (lines == 10) { emit = i + 1; break; }
+                if (lines == max_lines) { emit = i + 1; break; }
             }
         }
         size_t done = 0;
@@ -30,6 +35,56 @@ int program_main(int argc, char **argv, char **envp) {
         }
         if (status != 0 || emit < (size_t)n) break;
     }
-    if (argc == 2) (void)close(fd);
+    return status;
+}
+
+static int parse_number(const char *text, size_t *value) {
+    size_t result = 0;
+    if (!text || !text[0]) return -1;
+    for (size_t i = 0; text[i]; ++i) {
+        if (text[i] < '0' || text[i] > '9') return -1;
+        size_t digit = (size_t)(text[i] - '0');
+        if (result > (SIZE_MAX - digit) / 10u) return -1;
+        result = result * 10u + digit;
+    }
+    *value = result;
+    return 0;
+}
+
+int program_main(int argc, char **argv, char **envp) {
+    (void)envp;
+    size_t max_lines = 10;
+    int arg_index = 1;
+    if (argc >= 3 && is_match(argv[1], "-n")) {
+        if (parse_number(argv[2], &max_lines) != 0) {
+            err("head: invalid line count\n");
+            return 2;
+        }
+        arg_index = 3;
+    }
+    if (argc == arg_index) {
+        return copy_fd(0, max_lines, 0);
+    }
+    int status = 0;
+    for (; arg_index < argc; ++arg_index) {
+        const char *path = argv[arg_index];
+        int fd = 0;
+        int close_fd = 0;
+        if (is_match(path, "-")) {
+            fd = 0;
+        } else {
+            fd = openat(-100, path, 0u, 0u);
+            if (fd < 0) {
+                err("head: cannot open '");
+                err(path);
+                err("'\n");
+                status = 1;
+                continue;
+            }
+            close_fd = 1;
+        }
+        if (copy_fd(fd, max_lines, path) != 0) status = 1;
+        if (close_fd) (void)close(fd);
+    }
     return status;
 }

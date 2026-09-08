@@ -11,10 +11,10 @@ int program_main(int argc, char **argv, char **envp) {
         return 2;
     }
     if (rmdir(argv[1]) != 0) {
-        out("rmdir: failed\n");
+        out("rmdir: cannot remove '");
+        out(argv[1]);
+        out("'\n");
         return 1;
     }
     return 0;
 }
-
-int main(int argc, char **argv, char **envp) { return program_main(argc, argv, envp); }

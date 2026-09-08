@@ -3,35 +3,89 @@
 #include <stdint.h>
 
 static size_t length(const char *s) { size_t n = 0; while (s && s[n]) ++n; return n; }
-static void err(const char *s) { (void)write(2, s, length(s)); }
+static void out(const char *s) { (void)write(2, s, length(s)); }
+
+static int parse_number(const char *text, size_t *value) {
+    size_t result = 0;
+    if (!text || !text[0]) return -1;
+    for (size_t i = 0; text[i]; ++i) {
+        if (text[i] < '0' || text[i] > '9') return -1;
+        size_t digit = (size_t)(text[i] - '0');
+        if (result > (SIZE_MAX - digit) / 10u) return -1;
+        result = result * 10u + digit;
+    }
+    *value = result;
+    return 0;
+}
+
+static int copy_fd(int input, size_t max_lines) {
+    uint8_t buffer[256];
+    size_t lines = 0;
+    int status = 0;
+    for (;;) {
+        rix_ssize_t n = read(input, buffer, sizeof(buffer));
+        if (n < 0) { if (lines != 0) break; status = 1; break; }
+        if (n == 0 || lines >= max_lines) break;
+        size_t emit = (size_t)n;
+        for (size_t i = 0; i < emit; ++i) {
+            if (buffer[i] == '\n') {
+                ++lines;
+                if (lines == max_lines) { emit = i + 1; break; }
+            }
+        }
+        size_t done = 0;
+        while (done < emit) {
+            rix_ssize_t w = write(1, buffer + done, emit - done);
+            if (w <= 0) { status = 1; break; }
+            done += (size_t)w;
+        }
+        if (status != 0 || emit < (size_t)n) break;
+    }
+    return status;
+}
 
 int program_main(int argc, char **argv, char **envp) {
     (void)envp;
-    if (argc > 2) { err("tail: expected path\n"); return 2; }
-    int fd = 0;
-    if (argc == 2) { fd = openat(-100, argv[1], 0u, 0u); if (fd < 0) { err("tail: failed\n"); return 1; } }
-    uint8_t buffer[8192]; size_t used = 0; int status = 0;
-    for (;;) {
-        if (used == sizeof(buffer)) { status = 1; break; }
-        size_t request = sizeof(buffer) - used;
-        if (request > 256u) request = 256u;
-        rix_ssize_t n = read(fd, buffer + used, request);
-        if (n < 0) { if (used != 0) break; status = 1; break; }
-        if (n == 0) break;
-        used += (size_t)n;
+    size_t max_lines = 10;
+    int arg_index = 1;
+
+    while (arg_index < argc && argv[arg_index][0] == '-') {
+        if (argv[arg_index][1] == 'n') {
+            if (parse_number(argv[arg_index] + 2, &max_lines) != 0) {
+                out("tail: invalid line count\n");
+                return 2;
+            }
+        } else {
+            out("tail: invalid option\n");
+            return 2;
+        }
+        ++arg_index;
     }
-    if (argc == 2) (void)close(fd);
-    if (status != 0) { err("tail: read failed\n"); return status; }
-    size_t lines = 1;
-    for (size_t i = 0; i < used; ++i) if (buffer[i] == '\n' && i + 1 < used) ++lines;
-    size_t skip = lines > 10 ? lines - 10 : 0; size_t first = 0;
-    for (size_t i = 0; i < used && skip != 0; ++i)
-        if (buffer[i] == '\n' && i + 1 < used) { first = i + 1; --skip; }
-    size_t done = 0;
-    while (first + done < used) {
-        rix_ssize_t n = write(1, buffer + first + done, used - first - done);
-        if (n <= 0) return 1;
-        done += (size_t)n;
+
+    if (arg_index == argc) {
+        return copy_fd(0, max_lines);
     }
-    return 0;
+
+    int status = 0;
+    for (; arg_index < argc; ++arg_index) {
+        const char *path = argv[arg_index];
+        int fd = 0;
+        int close_fd = 0;
+        if (path[0] == '-' && path[1] == '\0') {
+            fd = 0;
+        } else {
+            fd = openat(-100, path, 0u, 0u);
+            if (fd < 0) {
+                out("tail: cannot open '");
+                out(path);
+                out("'\n");
+                status = 1;
+                continue;
+            }
+            close_fd = 1;
+        }
+        if (copy_fd(fd, max_lines) != 0) status = 1;
+        if (close_fd) (void)close(fd);
+    }
+    return status;
 }

@@ -1,25 +1,9 @@
 #include "unistd.h"
-#include "copy_metadata.h"
 #include <stddef.h>
 #include <stdint.h>
 
-#define RIX_VFS_AT_FDCWD (-100)
-#define RIX_VFS_O_WRONLY 1u
-#define RIX_VFS_O_CREAT 4u
-#define RIX_VFS_O_TRUNC 8u
-#define RIX_EINVAL 22
-#define RIX_EEXIST 17
-
-static size_t length(const char *s) {
-    size_t n = 0;
-    while (s && s[n]) ++n;
-    return n;
-}
-
-static void out(const char *s) {
-    (void)write(2, s, length(s));
-}
-
+static size_t length(const char *s) { size_t n = 0; while (s && s[n]) ++n; return n; }
+static void out(const char *s) { (void)write(2, s, length(s)); }
 static int same_text(const char *left, const char *right) {
     size_t i = 0;
     if (!left || !right) return 0;
@@ -48,44 +32,102 @@ static int copy_fd(int input, int output) {
     }
 }
 
-int program_main(int argc, char **argv, char **envp) {
-    (void)envp;
-    if (argc != 3) {
-        out("mv: expected source and destination\n");
-        return 2;
+static int is_directory(const char *path) {
+    rix_stat_t st;
+    if (stat(path, &st) != 0) return 0;
+    return st.type == 1u;
+}
+
+static int join_path(const char *dir, const char *name, char *out_path, size_t capacity) {
+    size_t used = 0;
+    if (!dir || !name || !out_path || capacity < 2u) return -1;
+    while (dir[used] && used + 1u < capacity) { out_path[used] = dir[used]; ++used; }
+    if (dir[used]) return -1;
+    if (used == 0u || out_path[used - 1u] != '/') {
+        if (used + 1u >= capacity) return -1;
+        out_path[used++] = '/';
     }
-    if (same_text(argv[1], argv[2])) return 0;
-    int rename_status = rename(argv[1], argv[2]);
-    if (rename_status == 0) return 0;
-    if (rename_status != -RIX_EEXIST && rename_status != -RIX_EINVAL) {
-        out("mv: rename failed\n");
-        return 1;
+    for (size_t i = 0; name[i]; ++i) {
+        if (used + 1u >= capacity) return -1;
+        out_path[used++] = name[i];
     }
-    int input = openat(RIX_VFS_AT_FDCWD, argv[1], 0u, 0u);
-    if (input < 0) {
-        out("mv: source open failed\n");
-        return 1;
-    }
-    int output = openat(RIX_VFS_AT_FDCWD, argv[2],
-                        RIX_VFS_O_WRONLY | RIX_VFS_O_CREAT | RIX_VFS_O_TRUNC,
-                        0644u);
-    if (output < 0) {
-        (void)close(input);
-        out("mv: destination open failed\n");
-        return 1;
-    }
-    int status = copy_fd(input, output);
-    if (close(output) != 0) status = 1;
-    if (close(input) != 0) status = 1;
-    if (status == 0 && copy_metadata("mv", argv[1], argv[2]) != 0) status = 1;
-    if (status != 0) return status;
-    if (unlink(argv[1]) != 0) {
-        out("mv: source remove failed\n");
-        return 1;
-    }
+    out_path[used] = 0;
     return 0;
 }
 
-int main(int argc, char **argv, char **envp) {
-    return program_main(argc, argv, envp);
+int program_main(int argc, char **argv, char **envp) {
+    (void)envp;
+    int arg_index = 1;
+
+    while (arg_index < argc && argv[arg_index][0] == '-') {
+        out("mv: invalid option\n");
+        return 2;
+    }
+
+    if (arg_index + 1 >= argc) {
+        out("mv: expected source and destination\n");
+        return 2;
+    }
+
+    const char *source = argv[arg_index];
+    const char *dest = argv[arg_index + 1];
+    int is_multi = arg_index + 2 < argc;
+
+    if (is_multi && !is_directory(dest)) {
+        out("mv: target is not a directory\n");
+        return 1;
+    }
+
+    int status = 0;
+    for (; arg_index + 1 < argc; ++arg_index) {
+        source = argv[arg_index];
+        dest = argv[argc - 1];
+        char full_dest[512];
+        if (is_multi) {
+            const char *name = source;
+            size_t n = length(source);
+            while (n > 0 && source[n - 1] != '/') --n;
+            name = source + n;
+            if (join_path(dest, name, full_dest, sizeof(full_dest)) != 0) {
+                out("mv: path too long\n");
+                status = 1;
+                continue;
+            }
+            dest = full_dest;
+        }
+        if (same_text(source, dest)) continue;
+        int rename_status = rename(source, dest);
+        if (rename_status == 0) continue;
+        int input = openat(-100, source, 0u, 0u);
+        if (input < 0) {
+            out("mv: cannot open '");
+            out(source);
+            out("'\n");
+            status = 1;
+            continue;
+        }
+        int output = openat(-100, dest, 1u | 4u | 8u, 0644u);
+        if (output < 0) {
+            (void)close(input);
+            out("mv: cannot create '");
+            out(dest);
+            out("'\n");
+            status = 1;
+            continue;
+        }
+        int copy_status = copy_fd(input, output);
+        if (close(output) != 0) copy_status = 1;
+        (void)close(input);
+        if (copy_status != 0) {
+            status = 1;
+            continue;
+        }
+        if (unlink(source) != 0) {
+            out("mv: cannot remove source '");
+            out(source);
+            out("'\n");
+            status = 1;
+        }
+    }
+    return status;
 }

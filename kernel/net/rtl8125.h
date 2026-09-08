@@ -37,9 +37,14 @@ typedef struct {
     const rix_pci_device_t *pci;
     uint64_t mmio_base;
     uint64_t mmio_size;
+    volatile uint8_t *mmio;
     uint8_t mac[6];
     rix_dma_buffer_t tx_dma;
     rix_dma_buffer_t rx_dma;
+    uint64_t tx_ring_phys;
+    uint64_t rx_ring_phys;
+    uint64_t tx_buffers[RIX_RTL8125_TX_RING_SIZE];
+    uint64_t rx_buffers[RIX_RTL8125_RX_RING_SIZE];
     rix_rtl8125_descriptor_t tx_ring[RIX_RTL8125_TX_RING_SIZE];
     rix_rtl8125_descriptor_t rx_ring[RIX_RTL8125_RX_RING_SIZE];
     uint16_t tx_head;
@@ -55,15 +60,22 @@ int rix_rtl8125_ring_indices_valid(const rix_rtl8125_t *driver);
 int rix_rtl8125_validate_mmio(const rix_rtl8125_t *driver, uint32_t offset,
                               uint32_t width);
 int rix_rtl8125_prepare_descriptor(rix_rtl8125_descriptor_t *descriptor,
-                                   uint64_t buffer_address, uint32_t length,
-                                   uint32_t flags);
+                                    uint64_t buffer_address, uint32_t length,
+                                    uint32_t flags);
 int rix_rtl8125_init_rings(rix_rtl8125_t *driver);
 int rix_rtl8125_hw_reset(volatile uint8_t *mmio, size_t mmio_size);
 int rix_rtl8125_hw_enable(volatile uint8_t *mmio, size_t mmio_size,
                            uint32_t interrupt_mask);
 int rix_rtl8125_read_mac(volatile uint8_t *mmio, size_t mmio_size, uint8_t mac[6]);
 int rix_rtl8125_program_rings(rix_rtl8125_t *driver, volatile uint8_t *mmio,
-                              size_t mmio_size);
+                               size_t mmio_size);
 int rix_rtl8125_read_link(volatile uint8_t *mmio, size_t mmio_size, int *link_up);
 int rix_rtl8125_ack_interrupts(volatile uint8_t *mmio, size_t mmio_size,
                                uint32_t *pending);
+int rix_rtl8125_init(void);
+int rix_rtl8125_configure(rix_rtl8125_t *driver);
+int rix_rtl8125_transmit(rix_rtl8125_t *driver, const void *data, size_t length);
+int rix_rtl8125_poll_tx(rix_rtl8125_t *driver);
+int rix_rtl8125_receive(rix_rtl8125_t *driver, void *data, size_t capacity, size_t *length);
+rix_rtl8125_t *rix_rtl8125_default(void);
+int rix_rtl8125_link_up(const rix_rtl8125_t *driver);

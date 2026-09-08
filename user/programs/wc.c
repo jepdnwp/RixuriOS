@@ -30,7 +30,7 @@ static int is_space(uint8_t value) {
 }
 
 static int count_fd(int input, uint64_t *lines, uint64_t *words,
-                   uint64_t *bytes) {
+                    uint64_t *bytes) {
     uint8_t buffer[256];
     int in_word = 0;
 
@@ -55,57 +55,116 @@ static int count_fd(int input, uint64_t *lines, uint64_t *words,
 static int write_number(uint64_t value) {
     char digits[20];
     size_t count = 0;
-
     do {
         digits[count++] = (char)('0' + (value % 10u));
         value /= 10u;
     } while (value != 0);
-
-    while (count != 0) {
-        --count;
-        if (write_all(1, digits + count, 1) != 0) return 1;
+    while (count) {
+        if (write_all(1, digits + --count, 1) != 0) return 1;
     }
     return 0;
 }
 
 static int write_counts(uint64_t lines, uint64_t words, uint64_t bytes,
+                        int show_lines, int show_words, int show_bytes,
                         const char *path) {
-    if (write_number(lines) != 0 || write_text(1, " ") != 0 ||
-        write_number(words) != 0 || write_text(1, " ") != 0 ||
-        write_number(bytes) != 0) {
-        return 1;
+    int first = 1;
+    if (show_lines) {
+        if (!first) write_all(1, " ", 1);
+        if (write_number(lines) != 0) return 1;
+        first = 0;
     }
-    if (path && (write_text(1, " ") != 0 || write_text(1, path) != 0)) {
-        return 1;
+    if (show_words) {
+        if (!first) write_all(1, " ", 1);
+        if (write_number(words) != 0) return 1;
+        first = 0;
+    }
+    if (show_bytes) {
+        if (!first) write_all(1, " ", 1);
+        if (write_number(bytes) != 0) return 1;
+        first = 0;
+    }
+    if (path) {
+        if (!first) write_all(1, " ", 1);
+        if (write_text(1, path) != 0) return 1;
     }
     return write_text(1, "\n");
 }
 
-int program_main(int argc, char **argv) {
-    if (argc < 1 || argc > 2) {
-        (void)write_text(2, "wc: expected zero or one path\n");
-        return 2;
-    }
+static int is_match(const char *a, const char *b) {
+    size_t i = 0;
+    if (!a || !b) return 0;
+    while (a[i] && b[i] && a[i] == b[i]) ++i;
+    return a[i] == 0 && b[i] == 0;
+}
 
-    int input = 0;
-    const char *path = 0;
-    if (argc == 2) {
-        path = argv[1];
-        input = openat(-100, path, 0u, 0u);
-        if (input < 0) {
-            (void)write_text(2, "wc: failed to open path\n");
-            return 1;
+int program_main(int argc, char **argv) {
+    int show_lines = 0, show_words = 0, show_bytes = 0;
+    int arg_index = 1;
+
+    if (argc < 2) {
+        show_lines = show_words = show_bytes = 1;
+    } else {
+        while (arg_index < argc && argv[arg_index][0] == '-') {
+            if (is_match(argv[arg_index], "--")) {
+                ++arg_index;
+                break;
+            }
+            for (size_t i = 1; argv[arg_index][i]; ++i) {
+                if (argv[arg_index][i] == 'l') show_lines = 1;
+                else if (argv[arg_index][i] == 'w') show_words = 1;
+                else if (argv[arg_index][i] == 'c') show_bytes = 1;
+                else {
+                    write_text(2, "wc: invalid option\n");
+                    return 2;
+                }
+            }
+            ++arg_index;
+        }
+        if (!show_lines && !show_words && !show_bytes) {
+            show_lines = show_words = show_bytes = 1;
         }
     }
 
-    uint64_t lines = 0;
-    uint64_t words = 0;
-    uint64_t bytes = 0;
-    int status = count_fd(input, &lines, &words, &bytes);
-    if (argc == 2) (void)close(input);
-    if (status != 0) {
-        (void)write_text(2, "wc: read failed\n");
-        return 1;
+    if (arg_index == argc) {
+        uint64_t lines = 0, words = 0, bytes = 0;
+        if (count_fd(0, &lines, &words, &bytes) != 0) {
+            write_text(2, "wc: read failed\n");
+            return 1;
+        }
+        return write_counts(lines, words, bytes, show_lines, show_words, show_bytes, 0);
     }
-    return write_counts(lines, words, bytes, path);
+
+    int status = 0;
+    uint64_t total_lines = 0, total_words = 0, total_bytes = 0;
+    int has_paths = 0;
+    for (; arg_index < argc; ++arg_index) {
+        const char *path = argv[arg_index];
+        int fd = openat(-100, path, 0u, 0u);
+        if (fd < 0) {
+            write_text(2, "wc: cannot open '");
+            write_text(2, path);
+            write_text(2, "'\n");
+            status = 1;
+            continue;
+        }
+        uint64_t lines = 0, words = 0, bytes = 0;
+        if (count_fd(fd, &lines, &words, &bytes) != 0) {
+            write_text(2, "wc: read failed on '");
+            write_text(2, path);
+            write_text(2, "'\n");
+            status = 1;
+        } else {
+            write_counts(lines, words, bytes, show_lines, show_words, show_bytes, path);
+            total_lines += lines;
+            total_words += words;
+            total_bytes += bytes;
+            has_paths = 1;
+        }
+        (void)close(fd);
+    }
+    if (has_paths) {
+        write_counts(total_lines, total_words, total_bytes, show_lines, show_words, show_bytes, "total");
+    }
+    return status;
 }

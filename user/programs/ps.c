@@ -34,7 +34,7 @@ int program_main(int argc, char **argv, char **envp) {
     (void)argv;
     (void)envp;
     if (argc != 1) { out("ps: arguments unsupported\n"); return 2; }
-    if (list_processes(table, PS_MAX_PROCS, &count) != 0) { out("ps: failed\n"); return 1; }
+    if (list_processes(table, PS_MAX_PROCS, &count) < 0) { out("ps: failed\n"); return 1; }
     out("PID PPID UID STAT NAME\n");
     for (size_t i = 0; i < count; ++i) {
         padded_number(table[i].pid, 3);
