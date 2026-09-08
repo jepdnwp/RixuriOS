@@ -681,3 +681,8 @@ frame=4 len=64 dst=52:54:00:12:34:56 src=52:55:0a:00:02:03 ethertype=0x0806
 ```
 
 The E1000 software RX ring nevertheless remained at `DD=0`, `RDH=0`, `RDT=63` for all descriptors. Therefore the current blocker is E1000 RX DMA delivery, not DNS parsing or HTTP. The external test correctly remains fail-closed with `curl: DNS query failed`; no Google HTML success is claimed.
+
+
+## 2026-09-08 — E1000 reset and PCI bus-master follow-up
+
+The E1000 configure path now performs a controller reset before ring setup, explicitly enables PCI memory space and bus mastering, programs the receive address valid bit, and uses the broad receive filter. Repeated QEMU external tests still show the same boundary: ARP request/reply appears on the pcap, but the guest RX descriptors remain uncompleted and `curl` reports `DNS query failed`. The next investigation remains E1000 RX DMA/ring ownership rather than DNS or TCP.

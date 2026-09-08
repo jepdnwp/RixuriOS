@@ -657,3 +657,8 @@ This is an interface boundary only. Ethernet frame dispatch, on-wire ARP, DHCP/s
 ## External ARP evidence and RX DMA blocker — 2026-09-08
 
 The QEMU user-net packet capture proves that RixuriOS emits a valid ARP request for `10.0.2.3` and that QEMU emits the matching ARP reply to `52:54:00:12:34:56`. The E1000 software ring still observes every RX descriptor with `DD=0`, `RDH=0` and `RDT=63`. The remaining device-layer blocker is therefore RX DMA delivery into the descriptor/buffer memory. DNS, external UDP, TCP and Google HTML remain intentionally unclaimed until this RX DMA issue is resolved.
+
+
+## RX DMA follow-up — 2026-09-08
+
+Controller reset, explicit PCI memory/bus-master enablement, receive-address-valid programming and a broad receive filter were tested. None changed the observed QEMU boundary: the ARP reply is visible in the pcap but RX descriptors remain `DD=0`. External DNS and TCP therefore remain pending behind RX ring ownership/DMA investigation.

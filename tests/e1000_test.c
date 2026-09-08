@@ -11,6 +11,14 @@ int pci_bar_size(const rix_pci_device_t *device, unsigned bar, uint64_t *size,
                 uint64_t *base, int *is_io) {
     (void)device; (void)bar; (void)size; (void)base; (void)is_io; return -1;
 }
+uint32_t pci_config_read32(uint8_t bus, uint8_t device, uint8_t function,
+                           uint16_t offset) {
+    (void)bus; (void)device; (void)function; (void)offset; return 0;
+}
+int pci_config_write32(uint8_t bus, uint8_t device, uint8_t function,
+                       uint16_t offset, uint32_t value) {
+    (void)bus; (void)device; (void)function; (void)offset; (void)value; return 0;
+}
 int vmm_map_page(uint64_t virtual_address, uint64_t physical_address, uint64_t flags) {
     (void)virtual_address; (void)physical_address; (void)flags; return 0;
 }

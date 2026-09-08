@@ -40,7 +40,7 @@ QEMU_ARGS=(
 if [[ "${RIXURI_QEMU_NET:-0}" == "1" ]]; then
   QEMU_ARGS+=(
     -netdev "user,id=net0"
-    -device "e1000,netdev=net0"
+    -device "${RIXURI_QEMU_NIC:-e1000},netdev=net0"
   )
   if [[ -n "${RIXURI_QEMU_NET_DUMP:-}" ]]; then
     QEMU_ARGS+=( -object "filter-dump,id=f1,netdev=net0,file=${RIXURI_QEMU_NET_DUMP}" )

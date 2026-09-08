@@ -48,6 +48,11 @@ int rix_e1000_init_rings(rix_e1000_t *driver) {
 
 int rix_e1000_configure(rix_e1000_t *driver) {
     if (!driver || !driver->present || !driver->mmio_base) return -1;
+    volatile uint32_t *regs = (volatile uint32_t *)(uintptr_t)driver->mmio_base;
+    regs[RIX_E1000_REG_CTRL / 4] = 0x04000000u;
+    for (volatile unsigned wait = 0; wait < 100000u; ++wait) {
+        if (!(regs[RIX_E1000_REG_CTRL / 4] & 0x04000000u)) break;
+    }
     uint64_t rx = dma_page();
     uint64_t tx = dma_page();
     if (!rx || !tx) {
@@ -80,7 +85,6 @@ int rix_e1000_configure(rix_e1000_t *driver) {
         driver->rx_ring[i] = rx_descriptor;
         driver->tx_ring[i] = tx_descriptor;
     }
-    volatile uint32_t *regs = (volatile uint32_t *)(uintptr_t)driver->mmio_base;
     regs[RIX_E1000_REG_RDBAL / 4] = (uint32_t)rx;
     regs[(RIX_E1000_REG_RDBAL + 4) / 4] = (uint32_t)(rx >> 32);
     regs[RIX_E1000_REG_RDLEN / 4] = RIX_E1000_RING_SIZE * sizeof(rix_e1000_descriptor_t);
@@ -114,6 +118,13 @@ int rix_e1000_init(void) {
         uint64_t size = 0, base = 0; int is_io = 0;
         if (pci_bar_size(device, 0, &size, &base, &is_io) != 0 || is_io || !base) {
             serial_write("E1000: candidate rejected: invalid MMIO BAR\r\n");
+            continue;
+        }
+        uint32_t command = pci_config_read32(device->bus, device->device,
+                                             device->function, 0x04u);
+        if (pci_config_write32(device->bus, device->device, device->function,
+                               0x04u, command | 0x00000006u) != 0) {
+            serial_write("E1000: candidate rejected: PCI bus-master enable failed\r\n");
             continue;
         }
         volatile uint32_t *regs = map_regs(base, size);
