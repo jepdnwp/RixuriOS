@@ -53,6 +53,8 @@ int rix_e1000_configure(rix_e1000_t *driver) {
     for (volatile unsigned wait = 0; wait < 100000u; ++wait) {
         if (!(regs[RIX_E1000_REG_CTRL / 4] & 0x04000000u)) break;
     }
+    uint32_t control = regs[RIX_E1000_REG_CTRL / 4];
+    regs[RIX_E1000_REG_CTRL / 4] = control | 0x00000060u;
     uint64_t rx = dma_page();
     uint64_t tx = dma_page();
     if (!rx || !tx) {
@@ -99,6 +101,10 @@ int rix_e1000_configure(rix_e1000_t *driver) {
     regs[RIX_E1000_REG_TCTL / 4] = 0x0103f0fau;
     uint32_t ral = regs[RIX_E1000_REG_RAL / 4];
     uint32_t rah = regs[RIX_E1000_REG_RAH / 4];
+    if (!ral && !(rah & 0xffffu)) {
+        ral = 0x12005452u;
+        rah = 0x00005634u;
+    }
     driver->mac[0] = (uint8_t)ral;
     driver->mac[1] = (uint8_t)(ral >> 8);
     driver->mac[2] = (uint8_t)(ral >> 16);

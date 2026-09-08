@@ -686,3 +686,8 @@ The E1000 software RX ring nevertheless remained at `DD=0`, `RDH=0`, `RDT=63` fo
 ## 2026-09-08 — E1000 reset and PCI bus-master follow-up
 
 The E1000 configure path now performs a controller reset before ring setup, explicitly enables PCI memory space and bus mastering, programs the receive address valid bit, and uses the broad receive filter. Repeated QEMU external tests still show the same boundary: ARP request/reply appears on the pcap, but the guest RX descriptors remain uncompleted and `curl` reports `DNS query failed`. The next investigation remains E1000 RX DMA/ring ownership rather than DNS or TCP.
+
+
+## 2026-09-08 — E1000 ASDE/SLU follow-up
+
+Intel 8254x initialization guidance was compared against the driver. The configure path now enables `CTRL.ASDE|CTRL.SLU` after reset and rewrites RAL/RAH, with the QEMU default MAC fallback. QEMU external testing still shows ARP request/reply on the pcap but no RX descriptor completion; `curl` remains `DNS query failed`. The RX ownership issue remains open.
