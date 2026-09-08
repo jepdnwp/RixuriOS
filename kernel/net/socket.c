@@ -216,7 +216,8 @@ static int send_tcp(rix_net_socket_t *sender, const void *data, size_t length,
     sender->tcp.sequence += (uint32_t)length;
     if (destination.port != 80 || !has_prefix(data, length, "GET ")) return (int)length;
     static const uint8_t response[] =
-        "HTTP/1.0 200 OK\r\nContent-Length: 15\r\n\r\nHello RixuriOS\n";
+        "HTTP/1.0 200 OK\r\nContent-Type: text/html\r\nContent-Length: 50\r\n\r\n"
+        "<html><body><h1>Hello RixuriOS</h1></body></html>\n";
     rix_net_packet_t reply;
     rix_net_tcp_header_t reply_header;
     rix_net_packet_init(&reply);

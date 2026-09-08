@@ -39,6 +39,8 @@ try:
     proc.stdin.flush()
     if not until(b"curl: HTTP 200 loopback PASS", 20):
         raise RuntimeError("curl PASS marker missing")
+    if b"<html><body><h1>Hello RixuriOS</h1></body></html>" not in out:
+        raise RuntimeError("HTML body missing")
     if not until(b"\x1b[1;37m:\x1b[0m ", 10):
         raise RuntimeError("prompt missing after curl")
 finally:

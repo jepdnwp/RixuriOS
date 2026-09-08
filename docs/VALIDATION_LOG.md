@@ -625,3 +625,16 @@ qemu curl test: PASS
 ```
 
 `net-test` additionally passed UDP checksum corruption rejection, UDP payload delivery, TCP SYN and ACK/PSH round trips, TCP sequence/acknowledgment checks, stateful loopback HTTP exchange, ICMP, ARP expiry and Ethernet framing. The external-network QEMU harness reached the shell and verified `ping: DNS/network path unavailable` and `curl: DNS/network path unavailable`; these are correct fail-closed results, not network success. The NIC tests remain boundary tests: QEMU E1000 shows PCI/MMIO/ring setup but no validated TX/RX completion. RTL8125 physical-driver qualification, on-wire ARP/IPv4/UDP/TCP, DNS/DHCP, routing, interrupt/recovery and physical hardware evidence remain open. No external-network success was claimed.
+
+
+## 2026-09-08 — curl HTML body output
+
+The loopback HTTP response now includes `Content-Type: text/html` and a 50-byte HTML body. `user/programs/curl.c` parses the `\r\n\r\n` header separator, validates the HTTP status and exact HTML body length/content, then writes the body to stdout before the diagnostic PASS line. QEMU verification produced:
+
+```text
+<html><body><h1>Hello RixuriOS</h1></body></html>
+curl: HTTP 200 loopback PASS
+qemu curl test: PASS
+```
+
+This is still a loopback HTTP service. URLs outside the loopback path return `DNS/network path unavailable` because DNS, E1000 TX/RX integration, ARP-on-wire, routing and external TCP are not implemented yet. No external website HTML is claimed.

@@ -169,7 +169,9 @@ int main(void) {
                                                   &peer_endpoint);
     assert(received_length > 0);
     assert(contains_bytes(reply, (size_t)received_length, "HTTP/1.0 200 OK"));
-    assert(contains_bytes(reply, (size_t)received_length, "Hello RixuriOS\n"));
+    assert(contains_bytes(reply, (size_t)received_length, "Content-Type: text/html"));
+    assert(contains_bytes(reply, (size_t)received_length,
+                           "<html><body><h1>Hello RixuriOS</h1></body></html>\n"));
     assert(peer_endpoint.port == 80);
     assert(rix_net_socket_close(&sockets, http) == 0);
     assert(rix_net_socket_close(&sockets, udp_client) == 0);
