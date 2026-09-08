@@ -638,3 +638,18 @@ qemu curl test: PASS
 ```
 
 This is still a loopback HTTP service. URLs outside the loopback path return `DNS/network path unavailable` because DNS, E1000 TX/RX integration, ARP-on-wire, routing and external TCP are not implemented yet. No external website HTML is claimed.
+
+
+## 2026-09-08 — E1000 DMA completion and link evidence
+
+The E1000 descriptor layout was corrected to the Intel legacy 16-byte ABI. The driver now allocates ring/buffer pages below 4 GiB, programs RDLEN/TDLEN, reads the device-owned descriptor memory, submits TX descriptors with EOP/IFCS/RS, polls TDH for completion, and consumes RX descriptors with DD/EOP while returning buffers through RDT.
+
+Strict host `e1000-test` passed synthetic MMIO/DMA coverage for descriptor size, link state, ring lengths, TX submission/completion and RX consumption. QEMU boot passed with:
+
+```text
+E1000: probe bus=0 dev=2 bar=0x00000000810a0000 size=131072 link=1 mac=0x0000525400123456 status=0x0000000000080283
+ping: 127.0.0.1: PASS
+qemu ping test: PASS
+```
+
+The QEMU E1000 result is a driver-boundary result only. No external packet or Google HTML success is claimed because Ethernet/IP/ARP dispatch, DHCP, DNS, routing and external TCP are not yet connected to the socket path.

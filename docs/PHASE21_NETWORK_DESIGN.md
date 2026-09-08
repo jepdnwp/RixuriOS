@@ -38,3 +38,10 @@ The deterministic loopback milestone now includes real UDP and TCP wire-segment 
 Host tests and real QEMU serial-to-TTY tests pass for the bounded loopback path. The tested userspace commands are `/usr/bin/ping` against `127.0.0.1` and `/usr/bin/curl` against the loopback HTTP service. This is deterministic protocol evidence, not NIC or Internet evidence.
 
 The next required implementation slice is a network-device boundary that connects the same Ethernet/IP/socket path to a completed E1000 QEMU backend, including RX/TX completion polling, MAC/interface state, ARP requests/replies and IPv4 delivery. Only after that path is validated should DNS, DHCP, routing configuration and physical RTL8125 TX/RX work be claimed. The current E1000 code proves PCI discovery, BAR mapping and ring setup only; the current RTL8125 code is a probe/register/descriptor foundation. External-network and physical-hardware results remain `NOT TESTED` or `BLOCKED` until real packets and recovery behavior are observed.
+
+
+## E1000 and ARP continuation — 2026-09-08
+
+The E1000 boundary now uses the exact legacy 16-byte descriptor ABI. Descriptor rings and buffers are allocated below 4 GiB, TX descriptors are submitted with EOP/IFCS/RS and completed by polling TDH, and RX descriptors are consumed from the device-owned ring with DD/EOP and RDT return. QEMU reports link-up and the emulated MAC. ARP request/reply wire serialization and parsing is also available beside the cache, with strict Ethernet/IPv4/length/opcode checks.
+
+The next gate is attaching this device boundary to the per-process socket path: Ethernet frame transmit/receive dispatch, static/DHCP interface configuration, ARP resolution on wire, IPv4 delivery, UDP DNS exchange and external TCP. Until that integration is complete, `curl google.com` must continue to fail closed rather than report fabricated HTML.

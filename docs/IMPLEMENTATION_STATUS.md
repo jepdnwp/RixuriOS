@@ -626,3 +626,18 @@ The evidence boundary remains explicit. QEMU E1000 currently proves PCI discover
 ## curl output correction — 2026-09-08
 
 The loopback `curl` utility now behaves like a body-producing HTTP client within its supported boundary: it validates the HTTP status and header/body separator, verifies the HTML payload, and writes `<html><body><h1>Hello RixuriOS</h1></body></html>` to stdout before the test marker. This does not yet fetch arbitrary websites. Non-loopback URLs continue to fail closed until DNS, E1000 TX/RX completion, ARP, routing and external TCP are implemented.
+
+
+## Phase 21 E1000 DMA completion slice — 2026-09-08
+
+The E1000 legacy descriptor ABI was corrected to the exact 16-byte layout, including command, status and checksum-offset fields. Ring allocation now uses physical pages below 4 GiB, programs RDLEN/TDLEN, enables standard RX/TX control flags, reads link state and MAC registers, and uses the device-owned DMA descriptors rather than stale software mirrors. TX submission now sets EOP/IFCS/RS and polls TDH for completion. RX consumes DD/EOP descriptors from the physical ring, copies the frame, clears the descriptor and advances RDT.
+
+Host `e1000-test` now covers descriptor size, link state, ring lengths, TX descriptor command/completion and RX descriptor consumption. QEMU boot evidence after this change is:
+
+```text
+E1000: probe bus=0 dev=2 bar=0x00000000810a0000 size=131072 link=1 mac=0x0000525400123456 status=0x0000000000080283
+ping: 127.0.0.1: PASS
+qemu ping test: PASS
+```
+
+This proves the E1000 DMA boundary and link/MAC discovery, not external networking. The E1000 driver is still not connected to Ethernet/IP/ARP dispatch or the process socket table. DHCP, DNS, routing, external TCP and real Google HTML remain open.

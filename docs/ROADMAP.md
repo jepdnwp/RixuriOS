@@ -1414,3 +1414,8 @@ UEFI GOP output is now a real kernel TTY framebuffer console with embedded ASCII
 ### Phase 21 continuation — 2026-09-08
 
 The deterministic network slice now has bounded UDP and TCP wire-segment serialization/parsing with IPv4 pseudo-header checksums. TCP loopback connect validates SYN/SYN-ACK/ACK sequence transitions, and loopback HTTP success requires a validated TCP GET and validated response rather than a direct string-triggered shortcut. QEMU serial-to-TTY evidence passes for loopback `ping` and `curl`; QEMU E1000 evidence remains limited to PCI/MMIO/ring setup. The next Phase 21 gate is completion-polled E1000 TX/RX integration with Ethernet/IP/ARP delivery, followed by DNS/DHCP/routing and physical RTL8125 qualification. No external-network or physical-hardware success is claimed.
+
+
+### Phase 21 network-device checkpoint — 2026-09-08
+
+E1000 now has a correct legacy descriptor ABI, below-4GiB DMA allocation, TX/RX completion polling, link/MAC discovery and host/QEMU evidence. ARP Ethernet/IPv4 wire request/reply parsing and construction is implemented and tested. The next required gate is device-to-socket dispatch with on-wire ARP/IPv4, DHCP or static interface configuration, DNS and external TCP. `curl google.com` remains expected to fail closed until that gate is passed.

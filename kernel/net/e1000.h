@@ -14,20 +14,36 @@
 #define RIX_E1000_REG_RCTL 0x0100u
 #define RIX_E1000_REG_TCTL 0x0400u
 #define RIX_E1000_REG_RDBAL 0x2800u
-#define RIX_E1000_REG_TDBAL 0x3800u
+#define RIX_E1000_REG_RDLEN 0x2808u
 #define RIX_E1000_REG_RDH 0x2810u
 #define RIX_E1000_REG_RDT 0x2818u
+#define RIX_E1000_REG_TDBAL 0x3800u
+#define RIX_E1000_REG_TDLEN 0x3808u
 #define RIX_E1000_REG_TDH 0x3810u
 #define RIX_E1000_REG_TDT 0x3818u
+#define RIX_E1000_REG_RAL 0x5400u
+#define RIX_E1000_REG_RAH 0x5404u
 #define RIX_E1000_RING_SIZE 64u
 
+#define RIX_E1000_RX_STATUS_DD 0x01u
+#define RIX_E1000_RX_STATUS_EOP 0x02u
+#define RIX_E1000_TX_STATUS_DD 0x01u
+#define RIX_E1000_TX_CMD_EOP 0x01u
+#define RIX_E1000_TX_CMD_IFCS 0x02u
+#define RIX_E1000_TX_CMD_RS 0x08u
+
+/* Intel legacy 8254x descriptor: exactly 16 bytes on the DMA ring. */
 typedef struct {
     uint64_t address;
     uint16_t length;
+    uint8_t checksum_offset;
+    uint8_t command;
     uint8_t status;
-    uint8_t errors;
-    uint16_t checksum;
+    uint8_t checksum_start;
+    uint16_t special;
 } rix_e1000_descriptor_t;
+
+_Static_assert(sizeof(rix_e1000_descriptor_t) == 16, "E1000 descriptor ABI");
 
 typedef struct {
     const rix_pci_device_t *pci;
@@ -54,4 +70,7 @@ int rix_e1000_init_rings(rix_e1000_t *driver);
 int rix_e1000_init(void);
 int rix_e1000_configure(rix_e1000_t *driver);
 int rix_e1000_transmit(rix_e1000_t *driver, const void *data, size_t length);
+int rix_e1000_poll_tx(rix_e1000_t *driver);
 int rix_e1000_receive(rix_e1000_t *driver, void *data, size_t capacity, size_t *length);
+const rix_e1000_t *rix_e1000_default(void);
+int rix_e1000_link_up(const rix_e1000_t *driver);

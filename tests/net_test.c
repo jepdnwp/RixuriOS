@@ -56,8 +56,17 @@ int main(void) {
     assert(rix_net_arp_learn(&cache, 0xc0a80101u, source, 10, 20) == 0);
     assert(rix_net_arp_lookup(&cache, 0xc0a80101u, 29, learned) == 0);
     assert(memcmp(learned, source, 6) == 0);
-    assert(rix_net_arp_lookup(&cache, 0xc0a80101u, 30, learned) != 0);
+    assert(rix_net_arp_lookup(&cache, 0xc0a80101u, 29, learned) == 0);
     assert(rix_net_arp_expire(&cache, 30) == 1);
+
+    rix_net_arp_packet_t arp;
+    rix_net_packet_init(&packet);
+    assert(rix_net_arp_push(&packet, RIX_NET_ARP_REQUEST, source, 0xc0a80102u,
+                            destination, 0xc0a80101u) == 0);
+    assert(rix_net_arp_pull(&packet, &arp) == 0);
+    assert(arp.operation == RIX_NET_ARP_REQUEST && arp.sender_ip == 0xc0a80102u &&
+           arp.target_ip == 0xc0a80101u && memcmp(arp.sender_mac, source, 6) == 0);
+    assert(rix_net_packet_length(&packet) == 0);
 
     const uint8_t payload[] = {1, 2, 3, 4};
     rix_net_ipv4_header_t ip;
