@@ -377,17 +377,20 @@ int rix_rtl8125_transmit(rix_rtl8125_t *driver, const void *data, size_t length)
     driver->tx_ring[slot].length = (uint32_t)length;
     driver->tx_ring[slot].flags = descriptors[slot].flags;
     driver->tx_tail = (uint16_t)((slot + 1u) % RIX_RTL8125_TX_RING_SIZE);
-    /* Ring the TX doorbell: without TPPOLL/NPQ the NIC never fetches the
+    /* Ring the RTL8125 TX doorbell: without TxPoll the NIC never fetches the
      * handed-off descriptor. */
-    if (rix_rtl8125_validate_mmio(driver, RIX_RTL8125_REG_TPPOLL, 1u) != 0) return -3;
-    driver->mmio[RIX_RTL8125_REG_TPPOLL] = RIX_RTL8125_TPPOLL_NPQ;
+    if (rix_rtl8125_validate_mmio(driver, RIX_RTL8125_REG_TPPOLL, 2u) != 0) return -3;
+    /* RTL8125 uses a 16-bit TxPoll doorbell; bit 0 starts the normal queue.
+     * The legacy RTL8168 NPQ value (0x40) does not start TX on RTL8125. */
+    mmio_write16(driver->mmio, RIX_RTL8125_REG_TPPOLL,
+                 RIX_RTL8125_TPPOLL_DOORBELL);
     if (diagnostic_frames < 8u) {
         uint32_t isr = mmio_read16(driver->mmio, RIX_RTL8125_REG_ISR);
         serial_write("RTL8125: tx slot="); serial_write_dec(slot);
         serial_write(" len="); serial_write_dec(length);
         serial_write(" flags="); serial_write_hex(descriptors[slot].flags);
         serial_write(" isr="); serial_write_hex(isr);
-        serial_write(" poll=0x90\r\n");
+        serial_write(" poll=0x90/16=0x0001\r\n");
         ++diagnostic_frames;
     }
     return (int)length;

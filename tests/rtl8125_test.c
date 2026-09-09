@@ -127,7 +127,10 @@ int main(void) {
                (RIX_RTL8125_DESC_OWN | RIX_RTL8125_DESC_FS |
                 RIX_RTL8125_DESC_LS | sizeof(payload)));
         assert(memcmp(txbuf, payload, sizeof(payload)) == 0);
-        assert(txmmio[RIX_RTL8125_REG_TPPOLL] == RIX_RTL8125_TPPOLL_NPQ);
+        assert(txmmio[RIX_RTL8125_REG_TPPOLL] ==
+               (uint8_t)(RIX_RTL8125_TPPOLL_DOORBELL & 0xffu));
+        assert(txmmio[RIX_RTL8125_REG_TPPOLL + 1u] ==
+               (uint8_t)(RIX_RTL8125_TPPOLL_DOORBELL >> 8));
         memcpy(rxbuf, payload, sizeof(payload));
         rxring[0].length = 0;
         rxring[0].flags = (uint32_t)(sizeof(payload) + 4u);
