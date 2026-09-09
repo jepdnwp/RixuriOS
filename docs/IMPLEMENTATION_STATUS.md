@@ -755,3 +755,8 @@ This is the first Phase 22 slice, not a musl-complete port. The allocator remain
 ## Phase 22 kernel-backed heap checkpoint — 2026-09-09
 
 The fixed userspace allocator arena has been replaced by a kernel-backed heap path. Each user process receives a bounded heap interval beginning at `RIX_USER_HEAP_BASE`; `process_brk()` maps and zeroes user-writable NX pages on growth, unmaps and returns pages on shrink, and rolls back partial growth on allocation failure. Syscall 12 exposes `brk`, while userspace `sbrk` and the libc allocator use that ABI. Strict kernel build, full host test suite and libc-test pass.
+
+
+## Phase 22 errno normalization checkpoint — 2026-09-09
+
+Userspace syscall wrappers now convert negative kernel results into the conventional `-1` return value and set the global `errno`. This applies to I/O, filesystem, process, session, capability, signal, socket and time wrappers; PID-returning functions use `(rix_pid_t)-1` on failure. `brk` and `sbrk` preserve the same error contract. The full strict host test suite, libc-test and userspace/kernel image build pass.

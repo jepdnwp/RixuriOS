@@ -1471,3 +1471,8 @@ The first Phase 22 slice adds freestanding memory/string APIs, errno storage, an
 ### Phase 22 kernel-backed heap checkpoint — 2026-09-09
 
 A bounded `brk` heap-growth syscall now backs the freestanding libc allocator. User processes receive mapped, zeroed, writable/NX heap pages with rollback on partial failure and page return on shrink. `sbrk`/`malloc` no longer depend on the previous fixed 64 KiB arena. The remaining Phase 22 work is broader POSIX/musl API coverage and syscall errno normalization.
+
+
+### Phase 22 errno normalization checkpoint — 2026-09-09
+
+The freestanding syscall wrappers now expose POSIX-style failure semantics: kernel negative error codes become `-1` (or `(rix_pid_t)-1` for PID APIs) and update `errno`. This covers file, process, session, capability, signal, socket and clock wrappers. Remaining Phase 22 work is broader header/API coverage and conformance testing.
