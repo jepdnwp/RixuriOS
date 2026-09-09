@@ -12,6 +12,7 @@ extern int errno;
 #define RIX_EBUSY 16
 #define RIX_EEXIST 17
 #define RIX_EINVAL 22
+#define RIX_ENOTTY 25
 #define RIX_ENOSPC 28
 #define RIX_ENOSYS 38
 #define RIX_EPIPE 32

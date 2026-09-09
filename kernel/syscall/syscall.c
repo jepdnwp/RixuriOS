@@ -14,12 +14,14 @@
 #include <stdint.h>
 #define RIX_ENOSYS 38
 #define RIX_EINVAL 22
+#define RIX_EBADF 9
 #define RIX_EACCES 13
 #define RIX_EEXIST 17
 #define RIX_EFAULT 14
 #define RIX_ENOMEM 12
 #define RIX_EINTR 4
 #define RIX_ESRCH 3
+#define RIX_ENOTTY 25
 #define RIX_MAX_IO 4096
 #define RIX_IO_CHUNK 256
 #define RIX_MAX_EXEC_IMAGE 131072u
@@ -108,6 +110,7 @@ void syscall_dispatch(rix_syscall_frame_t*frame){
  case RIX_SYS_KILL:{pid_t target=(pid_t)frame->rdi;if(process_uid(target)!=process_uid(self)&&!process_has_capability(self,RIX_CAP_KILL)){result=-RIX_EACCES;break;}if(process_signal_send(target,(unsigned)frame->rsi)!=0)result=-RIX_ESRCH;else result=0;break;}
  case RIX_SYS_GETPID:result=(int64_t)self;break;
  case RIX_SYS_GETPPID:{rix_process_t *process=process_lookup(self);result=(int64_t)(process?process->parent:0);break;}
+ case RIX_SYS_ISATTY:{int fd=(int)frame->rdi;if(fd<0||fd>2){result=-RIX_EBADF;break;}result=vfs_fd_is_open(self,fd)?-RIX_ENOTTY:1;break;}
  case RIX_SYS_SIGMASK:if(process_signal_mask(self,frame->rdi)!=0)result=-RIX_EINVAL;else result=0;break;
  case RIX_SYS_SIGPENDING:{uint64_t pending;if(process_signal_pending(self,&pending)!=0||copy_to_user(frame->rdi,&pending,sizeof(pending))!=0)result=-RIX_EFAULT;else result=0;break;}
  case RIX_SYS_CHDIR:{char input[RIX_VFS_PATH_MAX],resolved[RIX_VFS_PATH_MAX];rix_vfs_path_t path;int rc=0;if(user_string(frame->rdi,input,sizeof(input))!=0){result=-RIX_EFAULT;break;}if(vfs_normalize_path(input,resolved,sizeof(resolved))!=0||(rc=vfs_lookup(resolved,&path))!=0||!path.node||path.node->type!=RIX_VFS_DIR||process_setcwd(self,resolved)!=0)result=rc==RIX_VFS_ERR_PERMISSION?-RIX_EACCES:-RIX_EINVAL;else result=0;break;}

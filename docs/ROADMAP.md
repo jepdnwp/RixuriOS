@@ -1528,6 +1528,8 @@ Integer formatting now accepts `%i` as a signed-decimal alias and supports octal
 The POSIX-facing unistd layer now exposes `sleep` and `usleep` wrappers over the real kernel `nanosleep` syscall, with interrupted-second accounting and microsecond range validation. The userspace libc dependency rule was also corrected so the new time header is tracked without turning the target line into a shell recipe. Full libc, kernel and whitespace checks pass.
 ### Phase 22 process identity checkpoint — 2026-09-09
 The process ABI now includes `RIX_SYS_GETPPID` and a libc `getppid` wrapper. The kernel resolves the current process record and returns its recorded parent PID, while PID errors use the existing wrapper normalization path. Full libc, kernel image and whitespace checks pass.
+### Phase 22 terminal detection checkpoint — 2026-09-09
+The process I/O ABI now includes `RIX_SYS_ISATTY` and a libc `isatty` wrapper. Standard descriptors 0–2 are recognized as terminal streams when they are not occupied by VFS file descriptors; invalid descriptors return `EBADF`, while non-terminal open descriptors return `ENOTTY`. The libc error table now includes the corresponding diagnostic string. Full libc, kernel image and whitespace checks pass.
 ### Phase 22 stdlib search/allocation checkpoint — 2026-09-09
 The freestanding libc now provides comparator-based `bsearch`, complementing `qsort`. The allocator rejects size-plus-header and alignment-rounding overflow before invoking `sbrk`; sorted lookup tests cover hits and misses, while existing heap tests continue to cover zeroing and reallocation. Strict libc, complete host-suite, kernel image and whitespace checks pass.
 ### Phase 22 ctype compatibility checkpoint — 2026-09-09

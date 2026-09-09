@@ -90,7 +90,7 @@ char *strerror(int error) {
     case RIX_EIO: return "I/O error"; case RIX_EBADF: return "Bad file descriptor";
     case RIX_ENOMEM: return "Out of memory"; case RIX_EACCES: return "Permission denied";
     case RIX_EFAULT: return "Bad address"; case RIX_EEXIST: return "File exists";
-    case RIX_EINVAL: return "Invalid argument"; case RIX_ENOSPC: return "No space left";
+    case RIX_EINVAL: return "Invalid argument"; case RIX_ENOTTY: return "Inappropriate ioctl for device"; case RIX_ENOSPC: return "No space left";
     case RIX_ENOSYS: return "Function not implemented"; case RIX_EPIPE: return "Broken pipe";
     case RIX_EINTR: return "Interrupted system call"; case RIX_ERANGE: return "Result out of range";
     default: return "Unknown error";

@@ -64,6 +64,7 @@ int setgroups(size_t count,const uint32_t *groups){return(int)rix_int_result(rix
 int execve(const char *path,char *const argv[],char *const envp[]){return(int)rix_int_result(rix_sys(59,(long)path,(long)argv,(long)envp));}
 rix_pid_t getpid(void){return(rix_pid_t)rix_sys(39,0,0,0);}
 rix_pid_t getppid(void){return rix_pid_result(rix_sys(140,0,0,0));}
+int isatty(int fd){return(int)rix_int_result(rix_sys(141,fd,0,0));}
 int kill(rix_pid_t pid,uint32_t signal){return(int)rix_int_result(rix_sys(62,(long)pid,(long)signal,0));}
 int socket_open(int type){return(int)rix_int_result(rix_sys(41,type,0,0));}
 int socket_bind(int fd,rix_net_endpoint_t endpoint){return(int)rix_int_result(rix_sys(42,fd,(long)&endpoint,0));}

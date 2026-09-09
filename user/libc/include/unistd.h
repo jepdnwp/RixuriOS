@@ -94,6 +94,7 @@ int setgroups(size_t count, const uint32_t *groups);
 int execve(const char *path, char *const argv[], char *const envp[]);
 rix_pid_t getpid(void);
 rix_pid_t getppid(void);
+int isatty(int fd);
 int kill(rix_pid_t pid, uint32_t signal);
 int socket_open(int type);
 int socket_bind(int fd, rix_net_endpoint_t endpoint);
