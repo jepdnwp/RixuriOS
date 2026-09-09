@@ -65,7 +65,9 @@ int main(void) {
     free(a); free(b);
     assert(malloc((size_t)-1) == 0 && errno == RIX_ENOMEM);
     char formatted[32];
-    assert(isalpha('R') && isdigit('7') && isspace('\n') && toupper('a') == 'A' && tolower('Z') == 'z');
+    assert(isalpha('R') && isdigit('7') && isblank('\t') && iscntrl('\n') && isgraph('!'));
+    assert(isprint(' ') && ispunct('!') && isspace('\n') && isxdigit('f') && !isxdigit('g'));
+    assert(toupper('a') == 'A' && tolower('Z') == 'z');
     assert(snprintf(formatted, sizeof(formatted), "%s:%d:%x:%c", "ok", -12, 0xbeef, '!') == 13);
     assert(strcmp(formatted, "ok:-12:beef:!") == 0);
     assert(snprintf(formatted, 5, "%s", "abcdef") == 6 && strcmp(formatted, "abcd") == 0);
