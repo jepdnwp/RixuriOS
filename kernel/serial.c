@@ -9,11 +9,18 @@ void serial_init(void){
  outb(COM1+1,0x00);outb(COM1+3,0x03);outb(COM1+2,0xC7);outb(COM1+4,0x0B);
  /* Probe: write loopback test pattern to scratch register (COM1+7) */
  outb(COM1+7,0xAA);
- if(inb(COM1+7)==0xAA){outb(COM1+7,0x55);if(inb(COM1+7)==0x55)serial_has_com1=1;}
+ /* Do not trust the scratch-register loopback alone: some physical
+  * Super-I/O implementations echo it even when the UART transmitter is not
+  * usable.  Such a false positive makes every diagnostic character spin. */
+ uint8_t lsr=inb(COM1+5);
+ if(lsr!=0xFFu&&(lsr&0x20u)&&inb(COM1+7)==0xAA){
+  outb(COM1+7,0x55);
+  if(inb(COM1+7)==0x55)serial_has_com1=1;
+ }
 }
 static void serial_putc(char c){
  if(!serial_has_com1)return;
- for(int i=0;i<100000;i++){
+ for(int i=0;i<4096;i++){
   if(inb(COM1+5)&0x20){outb(COM1,(uint8_t)c);return;}
  }
 }
