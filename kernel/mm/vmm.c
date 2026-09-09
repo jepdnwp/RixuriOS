@@ -1,6 +1,7 @@
 #include "vmm.h"
 #include "pmm.h"
 #include "../serial.h"
+#include "kernel.h"
 #include <stddef.h>
 #define TABLE_ENTRIES 512ULL
 /* UEFI may place the memory map or GOP framebuffer above 128 GiB on
@@ -123,6 +124,12 @@ void vmm_log_walk(uint64_t pml4_phys,uint64_t va,const char*label){
  serial_write_hex(flags);
  {char pwun[5];pwun[0]=(flags&RIXURI_PTE_PRESENT)?'P':'.';pwun[1]=(flags&RIXURI_PTE_WRITE)?'W':'.';pwun[2]=(flags&RIXURI_PTE_USER)?'U':'.';pwun[3]=(flags&RIXURI_PTE_NX)?'X':'.';pwun[4]=0;serial_write(" pwun=");serial_write(pwun);}
  serial_write(rc==0?" MAPPED\r\n":" UNMAPPED\r\n");
+ /* Keep the forensic walk visible on physical-console-only machines. */
+ kernel_log("WALK ");
+ kernel_log(label?label:"?");
+ kernel_log(" va="); kernel_log_hex(va);
+ kernel_log(" rc="); kernel_log_dec((uint64_t)(rc<0?UINT64_MAX:(uint64_t)rc));
+ kernel_log(rc==0?" MAPPED\r\n":" UNMAPPED\r\n");
 }
 /* Serial-only kernel-vs-target PML4 comparison: every non-zero slot (see
  * vmm_log_walk comment for why detail stays off screen). */
