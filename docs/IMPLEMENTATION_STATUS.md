@@ -765,3 +765,8 @@ Userspace syscall wrappers now convert negative kernel results into the conventi
 ## Phase 22 ctype/stdio checkpoint — 2026-09-09
 
 The freestanding libc now provides character classification/conversion (`ctype.h`) and bounded formatting/output primitives (`vsnprintf`, `snprintf`, `puts`, `putchar`) with `%s`, `%d`, `%u`, `%x`, `%p`, `%c` and `%%` support. Conformance tests cover classification, truncation, signed formatting and hexadecimal formatting. The full strict test suite and userspace/kernel image build pass.
+
+
+## Phase 22 file/POSIX header checkpoint — 2026-09-09
+
+The freestanding libc now exposes compatibility headers for `fcntl.h`, `dirent.h` and `sys/stat.h`, including open flags, directory-entry/stat structures and file-type/mode macros. `open`, `creat` and `getdents64` wrappers are layered over the existing RixuriOS syscall ABI. Header conformance, strict userspace/kernel builds and the complete host test suite pass.

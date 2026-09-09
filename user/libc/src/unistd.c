@@ -1,5 +1,6 @@
 #include "unistd.h"
 #include "errno.h"
+#include <stdarg.h>
 
 static long rix_sys(long n,long a,long b,long c){long r;__asm__ volatile("int $0x80":"=a"(r):"a"(n),"D"(a),"S"(b),"d"(c):"rcx","r11","memory");return r;}
 static long rix_sys4(long n,long a,long b,long c,long d){long r;register long r10 __asm__("r10")=d;__asm__ volatile("int $0x80":"=a"(r):"a"(n),"D"(a),"S"(b),"d"(c),"r"(r10):"rcx","r11","memory");return r;}
@@ -10,11 +11,14 @@ static rix_pid_t rix_pid_result(long result){if(result<0){errno=(int)-result;ret
 rix_ssize_t read(int fd,void*buf,size_t count){return rix_ssize_result(rix_sys(0,fd,(long)buf,(long)count));}
 rix_ssize_t write(int fd,const void*buf,size_t count){return rix_ssize_result(rix_sys(1,fd,(long)buf,(long)count));}
 int openat(int dirfd,const char*path,uint32_t flags,uint32_t mode){return(int)rix_int_result(rix_sys4(2,dirfd,(long)path,flags,mode));}
+int open(const char *path,uint32_t flags,...){uint32_t mode=0;va_list arguments;va_start(arguments,flags);if(flags&4u)mode=va_arg(arguments,unsigned);va_end(arguments);return openat(-100,path,flags,mode);}
+int creat(const char *path,uint32_t mode){return open(path,4u|8u|1u,mode);}
 int mkdir(const char *path,uint32_t mode){return(int)rix_int_result(rix_sys(83,(long)path,mode,0));}
 int rmdir(const char *path){return(int)rix_int_result(rix_sys(84,(long)path,0,0));}
 int unlink(const char *path){return(int)rix_int_result(rix_sys(87,(long)path,0,0));}
 int link(const char *old_path,const char *new_path){return(int)rix_int_result(rix_sys(86,(long)old_path,(long)new_path,0));}
 int getdents(int fd,rix_dirent_t *entries,size_t capacity,size_t *count){return(int)rix_int_result(rix_sys4(78,fd,(long)entries,capacity,(long)count));}
+int getdents64(int fd,rix_dirent_t *entries,size_t capacity,size_t *count){return getdents(fd,entries,capacity,count);}
 int stat(const char *path,rix_stat_t *out){return(int)rix_int_result(rix_sys(4,(long)path,(long)out,0));}
 int close(int fd){return(int)rix_int_result(rix_sys(3,fd,0,0));}
 int pipe(int fds[2]){return(int)rix_int_result(rix_sys(22,(long)fds,0,0));}

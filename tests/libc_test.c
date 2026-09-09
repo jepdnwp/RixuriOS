@@ -3,6 +3,9 @@
 #include <errno.h>
 #include <ctype.h>
 #include <stdio.h>
+#include <fcntl.h>
+#include <dirent.h>
+#include <sys/stat.h>
 #include <assert.h>
 
 static unsigned char test_heap[128u * 1024u];
@@ -41,5 +44,9 @@ int main(void) {
     assert(snprintf(formatted, sizeof(formatted), "%s:%d:%x:%c", "ok", -12, 0xbeef, '!') == 13);
     assert(strcmp(formatted, "ok:-12:beef:!") == 0);
     assert(snprintf(formatted, 5, "%s", "abcdef") == 6 && strcmp(formatted, "abcd") == 0);
+    struct dirent entry = {0};
+    entry.d_ino = 7;
+    assert(entry.d_ino == 7 && AT_FDCWD == -100 && O_CREAT == 4u);
+    assert(S_ISDIR(S_IFDIR) && S_ISREG(S_IFREG));
     return 0;
 }

@@ -37,7 +37,7 @@ build/user_shell.o: user/shell/shell.c user/shell/shell.h | build
 	$(CC) $(USER_INIT_CFLAGS) -c $< -o $@
 build/user_unistd.o: user/libc/src/unistd.c user/libc/include/unistd.h | build
 	$(CC) $(USER_INIT_CFLAGS) -c $< -o $@
-build/user_libc.o: user/libc/src/libc.c user/libc/include/string.h user/libc/include/stdlib.h user/libc/include/errno.h user/libc/include/ctype.h user/libc/include/stdio.h | build
+build/user_libc.o: user/libc/src/libc.c user/libc/include/string.h user/libc/include/stdlib.h user/libc/include/errno.h user/libc/include/ctype.h user/libc/include/stdio.h user/libc/include/fcntl.h user/libc/include/dirent.h user/libc/include/sys/stat.h | build
 	$(CC) $(USER_INIT_CFLAGS) -c $< -o $@
 build/user_init.elf: build/user_init.o build/user_shell.o build/user_unistd.o build/user_libc.o user/init.ld | build
 	$(LD) -nostdlib -z max-page-size=0x1000 -T user/init.ld -o $@ build/user_init.o build/user_shell.o build/user_unistd.o build/user_libc.o

@@ -1481,3 +1481,8 @@ The freestanding syscall wrappers now expose POSIX-style failure semantics: kern
 ### Phase 22 ctype/stdio checkpoint — 2026-09-09
 
 Freestanding character classification and conversion APIs plus bounded stdio formatting/output are implemented and linked into userspace. Host conformance tests cover the supported format subset and truncation behavior. Broader POSIX headers and stream/file abstractions remain future Phase 22 work.
+
+
+### Phase 22 file/POSIX header checkpoint — 2026-09-09
+
+Compatibility headers for file flags, directory entries and stat mode/type macros are now linked to the existing syscall ABI. `open`, `creat` and `getdents64` are available as libc aliases/wrappers. Full POSIX stream and directory-object semantics remain future work.
