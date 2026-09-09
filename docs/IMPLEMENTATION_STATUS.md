@@ -738,3 +738,8 @@ Router Solicitation/Advertisement, Prefix Information, `/64` SLAAC, modified-EUI
 ## IPv6 device-stack integration — 2026-09-09
 
 The stack now polls IPv6 Ethernet frames into a dedicated bounded queue and transmits IPv6 packets only when the destination is present in the expiring Neighbor Cache. The kernel image and complete host test suite pass. IPv6 transport socket integration and independent IPv6 traffic evidence remain open.
+
+
+## IPv6 software closure — 2026-09-09
+
+A bounded longest-prefix route table and a separate IPv6 UDP socket ABI are implemented. IPv6 send now performs route lookup followed by Neighbor Cache resolution, and IPv6 receive dispatch fills the dedicated socket queue. Full host tests and kernel image build pass. Independent IPv6 external traffic remains untested in the current IPv4-only QEMU harness.

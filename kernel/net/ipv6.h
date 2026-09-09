@@ -107,6 +107,23 @@ int rix_net_tcp6_pull(rix_net_packet_t *packet,
                       rix_net_tcp_header_t *header);
 
 #define RIX_NET_IPV6_NEIGHBOR_CACHE_SIZE 8u
+#define RIX_NET_IPV6_ROUTE_MAX 4u
+typedef struct {
+    uint8_t prefix[16];
+    uint8_t next_hop[16];
+    uint8_t prefix_length;
+    uint8_t used;
+} rix_net_ipv6_route_t;
+typedef struct {
+    rix_net_ipv6_route_t routes[RIX_NET_IPV6_ROUTE_MAX];
+} rix_net_ipv6_route_table_t;
+void rix_net_ipv6_route_init(rix_net_ipv6_route_table_t *table);
+int rix_net_ipv6_route_add(rix_net_ipv6_route_table_t *table,
+                           const uint8_t prefix[16], uint8_t prefix_length,
+                           const uint8_t next_hop[16]);
+int rix_net_ipv6_route_lookup(const rix_net_ipv6_route_table_t *table,
+                              const uint8_t destination[16], uint8_t next_hop[16]);
+
 typedef struct {
     uint8_t used;
     uint8_t address[16];

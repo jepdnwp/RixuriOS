@@ -538,3 +538,82 @@ int rix_net_socket_receive(rix_net_socket_table_t *table, int descriptor,
     --socket->receive.count;
     return (int)length;
 }
+
+
+static int socket6_valid(const rix_net_socket6_udp_table_t *table, int descriptor) {
+    return table && descriptor >= 0 && descriptor < (int)RIX_NET_SOCKET6_MAX &&
+           table->sockets[descriptor].used;
+}
+void rix_net_socket6_udp_init(rix_net_socket6_udp_table_t *table) {
+    if (!table) return;
+    for (size_t i = 0; i < RIX_NET_SOCKET6_MAX; ++i) {
+        table->sockets[i].used = 0; table->sockets[i].head = 0; table->sockets[i].count = 0;
+    }
+}
+int rix_net_socket6_udp_open(rix_net_socket6_udp_table_t *table) {
+    if (!table) return -1;
+    for (size_t i = 0; i < RIX_NET_SOCKET6_MAX; ++i) if (!table->sockets[i].used) {
+        table->sockets[i].used = 1; table->sockets[i].local_port = (uint16_t)(49152u + i);
+        for (size_t j = 0; j < 16; ++j) table->sockets[i].local_address[j] = 0;
+        table->sockets[i].local_address[15] = 1; table->sockets[i].head = 0; table->sockets[i].count = 0;
+        return (int)i;
+    }
+    return -1;
+}
+int rix_net_socket6_udp_bind(rix_net_socket6_udp_table_t *table, int descriptor,
+                             const rix_net_endpoint6_t *endpoint) {
+    if (!socket6_valid(table, descriptor) || !endpoint || !endpoint->port) return -1;
+    table->sockets[descriptor].local_port = endpoint->port;
+    for (size_t i = 0; i < 16; ++i) table->sockets[descriptor].local_address[i] = endpoint->address[i];
+    return 0;
+}
+int rix_net_socket6_udp_send(rix_net_socket6_udp_table_t *table, int descriptor,
+                             const void *data, size_t length,
+                             const rix_net_endpoint6_t *destination) {
+    rix_net_stack_t *stack = rix_net_stack_default();
+    rix_net_packet_t packet;
+    if (!socket6_valid(table, descriptor) || !data || !length || !destination ||
+        !destination->port || !stack) return -1;
+    rix_net_packet_init(&packet);
+    if (rix_net_udp6_push(&packet, table->sockets[descriptor].local_address, destination->address,
+                          table->sockets[descriptor].local_port, destination->port, data, length) != 0 ||
+        rix_net_ipv6_push(&packet, table->sockets[descriptor].local_address, destination->address,
+                          17, 64, 0, 0) != 0) return -1;
+    int result = rix_net_stack_send_ipv6(stack, &packet, destination->address);
+    return result == 0 ? (int)length : result;
+}
+int rix_net_socket6_udp_poll(rix_net_socket6_udp_table_t *table) {
+    rix_net_stack_t *stack = rix_net_stack_default();
+    rix_net_packet_t packet; rix_net_ipv6_header_t ip; rix_net_udp_header_t udp;
+    if (!table || !stack) return -1;
+    (void)rix_net_stack_poll(stack, 0);
+    if (rix_net_stack_take_ipv6(stack, &packet) != 1 || rix_net_ipv6_pull(&packet, &ip) != 0 ||
+        ip.next_header != 17 || rix_net_udp6_pull(&packet, ip.source, ip.destination, &udp) != 0) return 0;
+    for (size_t i = 0; i < RIX_NET_SOCKET6_MAX; ++i) {
+        if (!table->sockets[i].used || table->sockets[i].local_port != udp.destination_port) continue;
+        int address_match = 1;
+        for (size_t j = 0; j < 16; ++j) if (table->sockets[i].local_address[j] != ip.destination[j]) address_match = 0;
+        if (!address_match && table->sockets[i].local_address[0] != 0) continue;
+        if (table->sockets[i].count >= RIX_NET_SOCKET_QUEUE) return -3;
+        size_t slot = (table->sockets[i].head + table->sockets[i].count) % RIX_NET_SOCKET_QUEUE;
+        table->sockets[i].receive[slot] = packet;
+        for (size_t j = 0; j < 16; ++j) table->sockets[i].peers[slot].address[j] = ip.source[j];
+        table->sockets[i].peers[slot].port = udp.source_port; ++table->sockets[i].count;
+        return (int)rix_net_packet_length(&packet);
+    }
+    return -4;
+}
+int rix_net_socket6_udp_receive(rix_net_socket6_udp_table_t *table, int descriptor,
+                                void *data, size_t capacity, rix_net_endpoint6_t *source) {
+    if (!socket6_valid(table, descriptor) || !data || !capacity) return -1;
+    if (!table->sockets[descriptor].count) return -3;
+    rix_net_packet_t *packet = &table->sockets[descriptor].receive[table->sockets[descriptor].head];
+    size_t length = rix_net_packet_length(packet);
+    if (length > capacity) return -2;
+    const uint8_t *bytes = rix_net_packet_data(packet);
+    for (size_t i = 0; i < length; ++i) ((uint8_t *)data)[i] = bytes[i];
+    if (source) *source = table->sockets[descriptor].peers[table->sockets[descriptor].head];
+    table->sockets[descriptor].head = (table->sockets[descriptor].head + 1u) % RIX_NET_SOCKET_QUEUE;
+    --table->sockets[descriptor].count;
+    return (int)length;
+}

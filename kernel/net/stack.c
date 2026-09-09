@@ -30,6 +30,7 @@ int rix_net_stack_init(rix_net_stack_t *stack) {
     if (!stack || !rix_net_device_info()) return -1;
     rix_net_arp_init(&stack->arp);
     rix_net_ipv6_neighbor_init(&stack->ipv6_neighbors);
+    rix_net_ipv6_route_init(&stack->ipv6_routes);
     rix_net_packet_init(&stack->pending);
     for (size_t i = 0; i < RIX_NET_RX_QUEUE; ++i)
         rix_net_packet_init(&stack->incoming[i]);
@@ -74,10 +75,11 @@ int rix_net_stack_send_ipv4(rix_net_stack_t *stack, rix_net_packet_t *packet,
 int rix_net_stack_send_ipv6(rix_net_stack_t *stack, rix_net_packet_t *packet,
                             const uint8_t destination[16]) {
     const rix_net_device_info_t *info = rix_net_device_info();
-    uint8_t mac[6];
+    uint8_t mac[6], hop[16];
     if (!stack || !stack->initialized || !packet || !destination ||
         !rix_net_packet_length(packet) || !info) return -1;
-    if (rix_net_ipv6_neighbor_lookup(&stack->ipv6_neighbors, destination,
+    if (rix_net_ipv6_route_lookup(&stack->ipv6_routes, destination, hop) != 0) return -2;
+    if (rix_net_ipv6_neighbor_lookup(&stack->ipv6_neighbors, hop,
                                      time_monotonic_ns(), mac) != 0) return -2;
     if (rix_net_eth_push(packet, mac, info->mac, RIX_NET_ETHERTYPE_IPV6) != 0) return -1;
     return rix_net_device_transmit(packet) < 0 ? -1 : 0;

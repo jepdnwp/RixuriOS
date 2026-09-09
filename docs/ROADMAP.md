@@ -1456,3 +1456,8 @@ Router Solicitation/Advertisement, Prefix Information parsing, `/64` SLAAC const
 ### Phase 21 IPv6 device-stack checkpoint — 2026-09-09
 
 The network stack now has a separate bounded IPv6 RX queue, IPv6 Ethernet polling, and Neighbor Cache-backed IPv6 transmission. Unknown neighbors fail closed. IPv6 transport sockets and independent QEMU/physical traffic evidence remain the final integration work.
+
+
+### Phase 21 IPv6 software closure — 2026-09-09
+
+The IPv6 software path now includes a bounded longest-prefix/default route table and a separate IPv6 UDP endpoint ABI with open, bind, send, poll and receive operations. The stack performs route lookup, Neighbor Cache resolution and IPv6 Ethernet transmission, and dispatches received UDPv6 payloads into the IPv6 socket queue. External IPv6 traffic evidence remains a hardware/network qualification item because the available QEMU harness is IPv4-only.

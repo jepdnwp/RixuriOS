@@ -354,3 +354,48 @@ int rix_net_tcp6_pull(rix_net_packet_t *packet, const uint8_t source[16],
     packet->length = rix_net_packet_length(packet);
     return 0;
 }
+
+
+static int ipv6_prefix_matches(const uint8_t address[16], const uint8_t prefix[16], uint8_t length) {
+    size_t whole = length / 8u;
+    uint8_t remainder = (uint8_t)(length % 8u);
+    for (size_t i = 0; i < whole; ++i) if (address[i] != prefix[i]) return 0;
+    return !remainder || (uint8_t)(address[whole] ^ prefix[whole]) >> (8u - remainder) == 0;
+}
+void rix_net_ipv6_route_init(rix_net_ipv6_route_table_t *table) {
+    if (!table) return;
+    for (size_t i = 0; i < RIX_NET_IPV6_ROUTE_MAX; ++i) table->routes[i].used = 0;
+}
+int rix_net_ipv6_route_add(rix_net_ipv6_route_table_t *table,
+                           const uint8_t prefix[16], uint8_t prefix_length,
+                           const uint8_t next_hop[16]) {
+    if (!table || !prefix || !next_hop || prefix_length > 128u) return -1;
+    size_t slot = RIX_NET_IPV6_ROUTE_MAX;
+    for (size_t i = 0; i < RIX_NET_IPV6_ROUTE_MAX; ++i)
+        if (table->routes[i].used && table->routes[i].prefix_length == prefix_length &&
+            ipv6_prefix_matches(table->routes[i].prefix, prefix, prefix_length)) { slot = i; break; }
+    if (slot == RIX_NET_IPV6_ROUTE_MAX)
+        for (size_t i = 0; i < RIX_NET_IPV6_ROUTE_MAX; ++i)
+            if (!table->routes[i].used) { slot = i; break; }
+    if (slot == RIX_NET_IPV6_ROUTE_MAX) return -2;
+    table->routes[slot].used = 1; table->routes[slot].prefix_length = prefix_length;
+    copy16(table->routes[slot].prefix, prefix); copy16(table->routes[slot].next_hop, next_hop);
+    return 0;
+}
+int rix_net_ipv6_route_lookup(const rix_net_ipv6_route_table_t *table,
+                              const uint8_t destination[16], uint8_t next_hop[16]) {
+    if (!table || !destination || !next_hop) return -1;
+    int best = -1; uint8_t best_length = 0;
+    for (size_t i = 0; i < RIX_NET_IPV6_ROUTE_MAX; ++i) {
+        const rix_net_ipv6_route_t *route = &table->routes[i];
+        if (route->used && route->prefix_length >= best_length &&
+            ipv6_prefix_matches(destination, route->prefix, route->prefix_length)) {
+            best = (int)i; best_length = route->prefix_length;
+        }
+    }
+    if (best < 0) return -2;
+    copy16(next_hop, table->routes[best].next_hop);
+    uint8_t empty = 1; for (size_t i = 0; i < 16; ++i) empty &= next_hop[i] == 0;
+    if (empty) copy16(next_hop, destination);
+    return 0;
+}

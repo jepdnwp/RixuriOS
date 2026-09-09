@@ -21,6 +21,10 @@ int rix_net_stack_send_ipv4(rix_net_stack_t *stack, rix_net_packet_t *packet,
                             uint32_t destination_ip) {
     (void)stack; (void)packet; (void)destination_ip; return -1;
 }
+int rix_net_stack_send_ipv6(rix_net_stack_t *stack, rix_net_packet_t *packet,
+                            const uint8_t destination[16]) {
+    (void)stack; (void)packet; (void)destination; return -1;
+}
 int rix_net_stack_poll(rix_net_stack_t *stack, uint64_t now) {
     (void)stack; (void)now; return -1;
 }
@@ -32,6 +36,9 @@ int rix_net_stack_take_ipv4(rix_net_stack_t *stack, rix_net_packet_t *packet) {
     *packet = stub_frame;
     stub_frame_valid = 0;
     return 1;
+}
+int rix_net_stack_take_ipv6(rix_net_stack_t *stack, rix_net_packet_t *packet) {
+    (void)stack; (void)packet; return 0;
 }
 
 static int contains_bytes(const uint8_t *data, size_t length, const char *needle) {
@@ -190,6 +197,21 @@ int main(void) {
            memcmp(resolved_mac, ipv6_test_mac, 6) == 0);
     assert(rix_net_ipv6_neighbor_expire(&neighbors, 100) == 1);
     assert(rix_net_ipv6_neighbor_lookup(&neighbors, ipv6_destination, 100, resolved_mac) != 0);
+    rix_net_ipv6_route_table_t routes;
+    uint8_t default_hop[16] = {0xfe,0x80,0,0,0,0,0,0,0,0,0,0,0,0,0,1};
+    uint8_t specific_hop[16] = {0xfe,0x80,0,0,0,0,0,0,0,0,0,0,0,0,0,2};
+    uint8_t route_result[16] = {0};
+    rix_net_ipv6_route_init(&routes);
+    assert(rix_net_ipv6_route_add(&routes, (uint8_t[16]){0}, 0, default_hop) == 0);
+    assert(rix_net_ipv6_route_add(&routes, ra_prefix, 64, specific_hop) == 0);
+    assert(rix_net_ipv6_route_lookup(&routes, ra_prefix, route_result) == 0 &&
+           memcmp(route_result, specific_hop, 16) == 0);
+    rix_net_socket6_udp_table_t socket6;
+    rix_net_endpoint6_t endpoint6 = {{0xfe,0x80,0,0,0,0,0,0,0,0,0,0,0,0,0,1}, 9000};
+    rix_net_socket6_udp_init(&socket6);
+    int socket6_fd = rix_net_socket6_udp_open(&socket6);
+    assert(socket6_fd >= 0 && rix_net_socket6_udp_bind(&socket6, socket6_fd, &endpoint6) == 0 &&
+           socket6.sockets[socket6_fd].local_port == 9000);
 
     rix_net_packet_init(&packet);
     assert(rix_net_udp_push(&packet, 0xc0a80102u, 0xc0a80101u, 12000, 53,

@@ -10,6 +10,7 @@
 typedef struct {
     rix_net_arp_cache_t arp;
     rix_net_ipv6_neighbor_cache_t ipv6_neighbors;
+    rix_net_ipv6_route_table_t ipv6_routes;
     rix_net_packet_t pending;
     uint32_t pending_next_hop;
     uint8_t pending_valid;

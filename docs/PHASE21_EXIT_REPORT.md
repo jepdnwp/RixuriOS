@@ -96,3 +96,10 @@ IPv6 transport socket endpoints and independent IPv6 wire evidence remain open. 
 ## IPv6 transport-wire checkpoint — 2026-09-09
 
 IPv6 UDP and TCP wire serializers/parsers now use the RFC pseudo-header checksum over 128-bit addresses. UDP length/checksum validation and TCP data-offset, sequence, acknowledgment, flags and checksum validation are host-tested. This closes the IPv6 transport wire layer without changing the existing IPv4-only socket ABI.
+
+
+## IPv6 route and socket ABI checkpoint — 2026-09-09
+
+The final software-facing IPv6 pieces are now present. A bounded longest-prefix route table supports on-link and default-router lookup. The stack uses that lookup before Neighbor Cache resolution and IPv6 Ethernet transmission. A separate IPv6 UDP endpoint/table ABI provides open, bind, send, poll and receive operations without changing the existing IPv4 socket ABI. UDPv6 packets are parsed into the IPv6 socket receive queue through the device stack.
+
+The repository now has a complete IPv6 software path from wire serialization through route lookup, neighbor resolution, device stack polling and a dedicated UDP socket ABI. Independent external IPv6 traffic evidence is not claimed because the current QEMU user-net test harness provides IPv4 evidence only; physical IPv6 evidence requires the target hardware and network.

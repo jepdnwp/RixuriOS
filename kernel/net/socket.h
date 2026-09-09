@@ -43,6 +43,31 @@ typedef struct {
     rix_net_socket_t sockets[RIX_NET_SOCKET_MAX];
 } rix_net_socket_table_t;
 
+typedef struct { uint8_t address[16]; uint16_t port; } rix_net_endpoint6_t;
+#define RIX_NET_SOCKET6_MAX 8u
+typedef struct {
+    uint8_t used;
+    uint8_t local_address[16];
+    uint16_t local_port;
+    rix_net_packet_t receive[RIX_NET_SOCKET_QUEUE];
+    rix_net_endpoint6_t peers[RIX_NET_SOCKET_QUEUE];
+    size_t head;
+    size_t count;
+} rix_net_socket6_udp_t;
+typedef struct { rix_net_socket6_udp_t sockets[RIX_NET_SOCKET6_MAX]; } rix_net_socket6_udp_table_t;
+
+void rix_net_socket6_udp_init(rix_net_socket6_udp_table_t *table);
+int rix_net_socket6_udp_open(rix_net_socket6_udp_table_t *table);
+int rix_net_socket6_udp_bind(rix_net_socket6_udp_table_t *table, int descriptor,
+                             const rix_net_endpoint6_t *endpoint);
+int rix_net_socket6_udp_send(rix_net_socket6_udp_table_t *table, int descriptor,
+                             const void *data, size_t length,
+                             const rix_net_endpoint6_t *destination);
+int rix_net_socket6_udp_poll(rix_net_socket6_udp_table_t *table);
+int rix_net_socket6_udp_receive(rix_net_socket6_udp_table_t *table, int descriptor,
+                                void *data, size_t capacity,
+                                rix_net_endpoint6_t *source);
+
 void rix_net_socket_table_init(rix_net_socket_table_t *table);
 int rix_net_socket_open(rix_net_socket_table_t *table, rix_net_socket_type_t type);
 int rix_net_socket_close(rix_net_socket_table_t *table, int descriptor);
