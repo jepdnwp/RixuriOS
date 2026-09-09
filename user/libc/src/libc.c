@@ -5,10 +5,25 @@
 #include "stdio.h"
 #include "dirent.h"
 #include "fcntl.h"
+#include "time.h"
 #include <stdint.h>
 #include <stdarg.h>
 
 int errno;
+static int time_leap(int year) { return (year%4==0&&year%100!=0)||year%400==0; }
+static const int time_month_days[12] = {31,28,31,30,31,30,31,31,30,31,30,31};
+static time_t time_days_before_year(int year) { time_t days=0;for(int y=1970;y<year;++y)days+=time_leap(y)?366:365;return days; }
+time_t time(time_t *out) { rix_timespec_t now;if(clock_gettime(&now)!=0)return(time_t)-1;if(out)*out=(time_t)now.sec;return(time_t)now.sec; }
+struct tm *gmtime_r(const time_t *value, struct tm *result) { if(!value||!result||*value<0)return 0;time_t seconds=*value;time_t days=seconds/86400;int rem=(int)(seconds%86400);int year=1970;while(days>=(time_leap(year)?366:365)){days-=time_leap(year)?366:365;++year;}int month=0;while(month<11&&days>=(time_month_days[month]+(month==1&&time_leap(year)))){days-=time_month_days[month]+(month==1&&time_leap(year));++month;}result->tm_year=year-1900;result->tm_mon=month;result->tm_mday=(int)days+1;result->tm_hour=rem/3600;result->tm_min=(rem%3600)/60;result->tm_sec=rem%60;result->tm_yday=(int)(time_days_before_year(year)-time_days_before_year(year)+(result->tm_mon?0:0));result->tm_yday=0;for(int i=0;i<month;++i)result->tm_yday+=time_month_days[i]+(i==1&&time_leap(year));result->tm_yday+=(int)days;result->tm_wday=(int)((4+(*value/86400))%7);result->tm_isdst=0;return result; }
+struct tm *gmtime(const time_t *value) { static struct tm result;return gmtime_r(value,&result); }
+struct tm *localtime_r(const time_t *value, struct tm *result) { return gmtime_r(value,result); }
+struct tm *localtime(const time_t *value) { return gmtime(value); }
+time_t mktime(struct tm *value) { if(!value||value->tm_year<70||value->tm_mon<0||value->tm_mon>11||value->tm_mday<1)return(time_t)-1;time_t days=time_days_before_year(value->tm_year+1900);for(int i=0;i<value->tm_mon;++i)days+=time_month_days[i]+(i==1&&time_leap(value->tm_year+1900));days+=(time_t)value->tm_mday-1;return days*86400+(time_t)value->tm_hour*3600+(time_t)value->tm_min*60+value->tm_sec; }
+double difftime(time_t left, time_t right) { return (double)(left-right); }
+char *asctime_r(const struct tm *value, char *buffer) { if(!value||!buffer)return 0;snprintf(buffer,26,"%04d-%02d-%02d %02d:%02d:%02d\n",value->tm_year+1900,value->tm_mon+1,value->tm_mday,value->tm_hour,value->tm_min,value->tm_sec);return buffer; }
+char *asctime(const struct tm *value) { static char buffer[26];return asctime_r(value,buffer); }
+char *ctime_r(const time_t *value, char *buffer) { struct tm result;if(!gmtime_r(value,&result))return 0;return asctime_r(&result,buffer); }
+char *ctime(const time_t *value) { static char buffer[26];return ctime_r(value,buffer); }
 
 void *memcpy(void *destination, const void *source, size_t length) {
     if (!destination || !source) return destination;

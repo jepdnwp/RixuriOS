@@ -7,6 +7,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <assert.h>
+#include <time.h>
 
 static unsigned char test_heap[128u * 1024u];
 static size_t test_break;
@@ -25,6 +26,7 @@ int open(const char *path, uint32_t flags, ...) { (void)path; (void)flags; retur
 int close(int fd) { (void)fd; return 0; }
 int getdents(int fd, rix_dirent_t *entries, size_t capacity, size_t *count) { (void)fd; (void)entries; (void)capacity; if (count) *count = 0; return -1; }
 off_t lseek(int fd, off_t offset, int whence) { (void)fd; (void)whence; return offset; }
+int clock_gettime(rix_timespec_t *out) { if (!out) return -1; out->sec = 1700000000u; out->nsec = 0; return 0; }
 
 int main(void) {
     char source[] = "rixurios";
@@ -98,6 +100,9 @@ int main(void) {
     assert(remove(0) == -1 && errno == RIX_EINVAL);
     char *end = 0;
     assert(atoi("-42") == -42);
+    time_t now = time(0); struct tm calendar;
+    assert(now == 1700000000 && gmtime_r(&(time_t){0}, &calendar) && calendar.tm_year == 70 && calendar.tm_mon == 0 && calendar.tm_mday == 1);
+    assert(mktime(&calendar) == 0 && difftime(10, 3) == 7.0);
     assert(strtol("0x2a", &end, 0) == 42 && *end == 0);
     assert(strtoul("101", &end, 2) == 5 && *end == 0);
     int values[5] = { 4, 1, 5, 2, 3 };
