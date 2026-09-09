@@ -135,6 +135,10 @@ pid_t session=p->session;for(unsigned tty=0;tty<RIX_TTY_COUNT;tty++)(void)tty_de
  case RIX_SYS_SHM_DESTROY:if(shm_destroy((uint32_t)frame->rdi)!=0)result=-RIX_EINVAL;else result=0;break;
  default:break;
  }
+ /* User entry starts with IF clear so a pending physical IRQ cannot race
+    TSS.RSP0/IRETQ delivery.  The first int 0x80 is now safely on the kernel
+    stack; re-enable interrupts in the saved user frame for the return. */
+ frame->rflags|=0x200ULL;
  frame->rax=(uint64_t)result;
 }
 void syscall_init(void){}

@@ -17,7 +17,8 @@ x86_enter_user:
     pushq %rdx
     pushfq
     popq %rax
-    orq $0x202,%rax
+    /* Do not expose a pending physical IRQ during the CPL3 transition. */
+    orq $0x002,%rax
     andq $~0x3000,%rax
     pushq %rax
     pushq $0x1b
@@ -37,7 +38,7 @@ x86_enter_user_return:
     pushq %rdx
     pushfq
     popq %rax
-    orq $0x202,%rax
+    orq $0x002,%rax
     andq $~0x3000,%rax
     pushq %rax
     pushq $0x1b
@@ -55,7 +56,7 @@ x86_enter_user_context:
     movq 136(%rsi),%rax
     pushq %rax
     movq 128(%rsi),%rax
-    orq $0x202,%rax
+    andq $~0x200,%rax
     andq $~0x3000,%rax
     pushq %rax
     pushq $0x1b
