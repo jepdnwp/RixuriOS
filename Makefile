@@ -226,7 +226,7 @@ hosts-test: | build
 	build/hosts_test
 
 rtl-test: | build
-	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/rtl8125_test.c kernel/net/rtl8125.c -o build/rtl8125_test
+	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -DRIX_HOST_TEST -I. tests/rtl8125_test.c kernel/net/rtl8125.c -o build/rtl8125_test
 		build/rtl8125_test
 
 acpi-test: | build
