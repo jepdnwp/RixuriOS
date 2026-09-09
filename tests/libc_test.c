@@ -17,7 +17,8 @@ void *sbrk(ptrdiff_t increment) {
     return old;
 }
 rix_ssize_t read(int fd, void *buffer, size_t count) { (void)fd; (void)buffer; (void)count; return -1; }
-rix_ssize_t write(int fd, const void *buffer, size_t count) { (void)fd; (void)buffer; return (rix_ssize_t)count; }
+static size_t host_written;
+rix_ssize_t write(int fd, const void *buffer, size_t count) { (void)buffer; if (fd == 1) host_written += count; return (rix_ssize_t)count; }
 int open(const char *path, uint32_t flags, ...) { (void)path; (void)flags; return -1; }
 int close(int fd) { (void)fd; return 0; }
 int getdents(int fd, rix_dirent_t *entries, size_t capacity, size_t *count) { (void)fd; (void)entries; (void)capacity; if (count) *count = 0; return -1; }
@@ -59,5 +60,6 @@ int main(void) {
     assert(setvbuf(&stream, io_buffer, _IOFBF, sizeof(io_buffer)) == 0);
     assert(fputs("stdio", &stream) == 0);
     assert(fputc('!', &stream) == '!');
+    assert(host_written == 0 && fflush(&stream) == 0 && host_written == 6);
     return 0;
 }

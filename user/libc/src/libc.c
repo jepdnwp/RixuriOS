@@ -154,35 +154,53 @@ FILE *fopen(const char *path, const char *mode) {
     if (fd < 0) return 0;
     FILE *stream = malloc(sizeof(*stream));
     if (!stream) { (void)close(fd); return 0; }
-    stream->fd = fd; return stream;
+    stream->fd = fd; stream->mode = _IOFBF;
+    stream->buffer = malloc(BUFSIZ);
+    if (stream->buffer) { stream->buffer_size = BUFSIZ; stream->owns_buffer = 1; }
+    return stream;
 }
-int fclose(FILE *stream) { if (!stream) { errno = RIX_EINVAL; return -1; } int rc = close(stream->fd); free(stream); return rc; }
+static int stream_flush(FILE *stream) {
+    if (!stream || !stream->writing || !stream->buffer || !stream->buffer_pos) return 0;
+    size_t done=0; while (done<stream->buffer_pos) { rix_ssize_t n=write(stream->fd,stream->buffer+done,stream->buffer_pos-done); if (n<=0) return -1; done+=(size_t)n; }
+    stream->buffer_pos=0; return 0;
+}
+static int stream_discard_input(FILE *stream) {
+    if (!stream || stream->writing || !stream->buffer || stream->buffer_len<=stream->buffer_pos) return 0;
+    if (lseek(stream->fd,-(off_t)(stream->buffer_len-stream->buffer_pos),SEEK_CUR)<0) return -1;
+    stream->buffer_pos=0; stream->buffer_len=0; return 0;
+}
+static int stream_fill(FILE *stream) {
+    if (!stream || !stream->buffer || !stream->buffer_size) return -1;
+    rix_ssize_t n=read(stream->fd,stream->buffer,stream->buffer_size); if (n<=0) return -1;
+    stream->buffer_pos=0; stream->buffer_len=(size_t)n; stream->writing=0; return 0;
+}
+int fclose(FILE *stream) { if (!stream) { errno = RIX_EINVAL; return -1; } int rc=stream_flush(stream); if (stream->owns_buffer) free(stream->buffer); int close_rc=close(stream->fd); free(stream); return rc<0?rc:close_rc; }
 size_t fread(void *buffer, size_t size, size_t count, FILE *stream) {
     if (!stream || (!buffer && size && count)) { errno = RIX_EINVAL; return 0; }
     if (!size || count > (size_t)-1 / size) return 0;
-    rix_ssize_t result = read(stream->fd, buffer, size * count);
-    return result < 0 ? 0 : (size_t)result / size;
+    if (stream_flush(stream)<0) return 0;
+    stream->writing=0; size_t total=size*count,done=0; unsigned char*out=buffer;
+    while(done<total){int value=fgetc(stream);if(value==EOF)break;out[done++]=(unsigned char)value;} return done/size;
 }
 size_t fwrite(const void *buffer, size_t size, size_t count, FILE *stream) {
     if (!stream || (!buffer && size && count)) { errno = RIX_EINVAL; return 0; }
     if (!size || count > (size_t)-1 / size) return 0;
-    rix_ssize_t result = write(stream->fd, buffer, size * count);
-    return result < 0 ? 0 : (size_t)result / size;
+    size_t total=size*count,done=0;const unsigned char*in=buffer;while(done<total){if(fputc(in[done],stream)==EOF)break;++done;}return done/size;
 }
-int fflush(FILE *stream) { if (!stream) { errno = RIX_EINVAL; return -1; } return 0; }
-int fseek(FILE *stream, long offset, int whence) { if (!stream) { errno = RIX_EINVAL; return -1; } return lseek(stream->fd, (off_t)offset, whence) < 0 ? -1 : 0; }
-long ftell(FILE *stream) { if (!stream) { errno = RIX_EINVAL; return -1L; } return (long)lseek(stream->fd, 0, SEEK_CUR); }
+int fflush(FILE *stream) { if (!stream) { errno = RIX_EINVAL; return -1; } return stream_flush(stream); }
+int fseek(FILE *stream, long offset, int whence) { if (!stream) { errno = RIX_EINVAL; return -1; } if(stream_flush(stream)<0||stream_discard_input(stream)<0)return -1; stream->writing=0;stream->buffer_pos=stream->buffer_len=0;return lseek(stream->fd,(off_t)offset,whence)<0?-1:0; }
+long ftell(FILE *stream) { if (!stream) { errno = RIX_EINVAL; return -1L; } long base=(long)lseek(stream->fd,0,SEEK_CUR);if(base<0)return -1;if(!stream->writing&&stream->buffer_len>stream->buffer_pos)base-=(long)(stream->buffer_len-stream->buffer_pos);return base; }
 void rewind(FILE *stream) { if (stream) (void)fseek(stream, 0, SEEK_SET); }
-int fgetc(FILE *stream) { unsigned char value; return (!stream || read(stream->fd, &value, 1) != 1) ? EOF : (int)value; }
-int fputc(int value, FILE *stream) { unsigned char character=(unsigned char)value; return (!stream || write(stream->fd, &character, 1) != 1) ? EOF : (int)character; }
+int fgetc(FILE *stream) { if(!stream){errno=RIX_EINVAL;return EOF;}if(stream->writing&&stream_flush(stream)<0)return EOF;stream->writing=0;if(stream->buffer){if(stream->buffer_pos>=stream->buffer_len&&stream_fill(stream)<0)return EOF;return stream->buffer[stream->buffer_pos++];}unsigned char value;return read(stream->fd,&value,1)==1?(int)value:EOF; }
+int fputc(int value, FILE *stream) { if(!stream){errno=RIX_EINVAL;return EOF;}if(!stream->writing){if(stream_discard_input(stream)<0)return EOF;stream->writing=1;}unsigned char character=(unsigned char)value;if(!stream->buffer)return write(stream->fd,&character,1)==1?(int)character:EOF;if(stream->buffer_pos>=stream->buffer_size&&stream_flush(stream)<0)return EOF;stream->buffer[stream->buffer_pos++]=character;return(int)character; }
 char *fgets(char *buffer, int capacity, FILE *stream) {
     if (!buffer || capacity <= 0 || !stream) { errno=RIX_EINVAL; return 0; }
     int index=0; while (index+1 < capacity) { int value=fgetc(stream); if (value==EOF) break; buffer[index++]=(char)value; if (value=='\n') break; }
     if (!index) return 0;
     buffer[index]=0; return buffer;
 }
-int fputs(const char *text, FILE *stream) { if (!text || !stream) { errno=RIX_EINVAL; return EOF; } size_t length=strlen(text); return write(stream->fd,text,length)==(rix_ssize_t)length ? 0 : EOF; }
-int setvbuf(FILE *stream, char *buffer, int mode, size_t size) { (void)buffer; (void)size; if (!stream || mode < _IONBF || mode > _IOLBF) { errno=RIX_EINVAL; return -1; } return 0; }
+int fputs(const char *text, FILE *stream) { if (!text || !stream) { errno=RIX_EINVAL; return EOF; } size_t length=strlen(text);return fwrite(text,1,length,stream)==length?0:EOF; }
+int setvbuf(FILE *stream, char *buffer, int mode, size_t size) { if (!stream || mode < _IONBF || mode > _IOLBF || (size && !buffer)) { errno=RIX_EINVAL; return -1; } if(stream_flush(stream)<0)return -1;if(stream->owns_buffer)free(stream->buffer);stream->buffer=mode==_IONBF?0:(unsigned char*)buffer;stream->buffer_size=mode==_IONBF?0:size;stream->buffer_pos=stream->buffer_len=0;stream->mode=mode;stream->owns_buffer=0;stream->writing=0;return 0; }
 void setbuf(FILE *stream, char *buffer) { (void)setvbuf(stream, buffer, buffer ? _IOFBF : _IONBF, buffer ? BUFSIZ : 0); }
 
 DIR *opendir(const char *path) {

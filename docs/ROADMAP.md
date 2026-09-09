@@ -1501,3 +1501,8 @@ The POSIX-shaped file layer now has persistent descriptor offsets, kernel-backed
 ### Phase 22 stdio I/O checkpoint — 2026-09-09
 
 Descriptor-backed character and line I/O now covers `fgetc`, `fputc`, `fgets` and `fputs`, with `setvbuf`/`setbuf` compatibility entry points. Buffer validation is implemented, while true buffered read/write optimization remains future work.
+
+
+### Phase 22 real stdio buffering checkpoint — 2026-09-09
+
+The descriptor-backed `FILE` layer now performs real read and write buffering, preserves unread input across seek transitions, flushes on close/explicit `fflush`, and accepts caller-owned buffers through `setvbuf`. Host tests verify deferred output and flush delivery.

@@ -785,3 +785,8 @@ File descriptors now support persistent offsets across reads, writes and directo
 ## Phase 22 stdio I/O checkpoint — 2026-09-09
 
 The stdio surface now includes `fgetc`, `fputc`, `fgets`, `fputs`, `setvbuf` and `setbuf`, using descriptor-backed reads and writes with standard EOF/error behavior. The current setvbuf layer validates buffering modes but remains unbuffered internally; a real read/write buffer is reserved for a later optimization pass. Strict builds, libc-test and the full host suite pass.
+
+
+## Phase 22 real stdio buffering checkpoint — 2026-09-09
+
+`FILE` now tracks buffer ownership, read position, pending input and pending output. `fopen` provisions a default buffer when possible; `fgetc`/`fread` refill it, `fputc`/`fwrite` accumulate output, and `fflush`, `fclose` and seek operations reconcile pending data. `setvbuf` supports caller-provided buffers and unbuffered mode. The host libc test verifies that writes remain buffered until flush and then reach the descriptor.

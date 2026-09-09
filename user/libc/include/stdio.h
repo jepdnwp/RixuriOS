@@ -1,7 +1,7 @@
 #pragma once
 #include <stddef.h>
 #include <stdarg.h>
-typedef struct { int fd; } FILE;
+typedef struct { int fd; unsigned char *buffer; size_t buffer_size; size_t buffer_pos; size_t buffer_len; int mode; int writing; int owns_buffer; } FILE;
 #define EOF (-1)
 #define SEEK_SET 0
 #define SEEK_CUR 1
