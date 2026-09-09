@@ -1,6 +1,7 @@
 #include "string.h"
 #include "stdlib.h"
 #include "errno.h"
+#include "unistd.h"
 #include <stdint.h>
 
 int errno;
@@ -53,16 +54,14 @@ char *strchr(const char *text, int value) {
 
 typedef struct { uint32_t magic; uint32_t used; size_t size; } rix_alloc_header_t;
 #define RIX_ALLOC_MAGIC 0x52495841u
-#define RIX_ALLOC_ARENA_SIZE (64u * 1024u)
-static uint8_t allocator_arena[RIX_ALLOC_ARENA_SIZE] __attribute__((aligned(16)));
-static size_t allocator_offset;
 static size_t align_up(size_t value) { return (value + 15u) & ~(size_t)15u; }
 void *malloc(size_t size) {
-    if (!size || size > RIX_ALLOC_ARENA_SIZE - sizeof(rix_alloc_header_t)) { errno = RIX_ENOMEM; return 0; }
+    if (!size || size > (size_t)-1 - sizeof(rix_alloc_header_t)) { errno = RIX_ENOMEM; return 0; }
     size_t total = align_up(sizeof(rix_alloc_header_t) + size);
-    if (total > RIX_ALLOC_ARENA_SIZE - allocator_offset) { errno = RIX_ENOMEM; return 0; }
-    rix_alloc_header_t *header = (rix_alloc_header_t *)(allocator_arena + allocator_offset);
-    allocator_offset += total; header->magic = RIX_ALLOC_MAGIC; header->used = 1; header->size = size;
+    void *memory = sbrk((ptrdiff_t)total);
+    if (memory == (void *)-1) { errno = RIX_ENOMEM; return 0; }
+    rix_alloc_header_t *header = (rix_alloc_header_t *)memory;
+    header->magic = RIX_ALLOC_MAGIC; header->used = 1; header->size = size;
     return header + 1;
 }
 void *calloc(size_t count, size_t size) {

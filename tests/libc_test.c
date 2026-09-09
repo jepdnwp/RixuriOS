@@ -3,6 +3,15 @@
 #include <errno.h>
 #include <assert.h>
 
+static unsigned char test_heap[128u * 1024u];
+static size_t test_break;
+void *sbrk(ptrdiff_t increment) {
+    if (increment < 0 || (size_t)increment > sizeof(test_heap) - test_break) return (void *)-1;
+    void *old = test_heap + test_break;
+    test_break += (size_t)increment;
+    return old;
+}
+
 int main(void) {
     char source[] = "rixurios";
     char buffer[32];

@@ -17,8 +17,10 @@ typedef enum { RIX_PROC_UNUSED=0, RIX_PROC_RUNNING=1, RIX_PROC_SLEEPING=2, RIX_P
 #define RIX_PROCESS_GROUP_MAX 8
 #define RIX_SESSION_MAX RIX_PROCESS_MAX
 #define RIX_SESSION_ACTIVE 1u
+#define RIX_USER_HEAP_BASE 0x0000008001000000ULL
+#define RIX_USER_HEAP_LIMIT 0x0000008002000000ULL
 
-typedef struct { pid_t pid; pid_t parent; pid_t process_group; pid_t session; rix_process_state_t state; uint32_t uid; uint32_t gid; uint64_t capabilities; rix_address_space_t address_space; uint64_t kernel_stack; uint64_t kernel_stack_size; uint64_t exit_status; uint64_t fd_bitmap; uint64_t signal_pending; uint64_t signal_mask; rix_net_socket_table_t sockets; char name[RIX_PROCESS_NAME_MAX]; char cwd[RIX_PROCESS_CWD_MAX]; } rix_process_t;
+typedef struct { pid_t pid; pid_t parent; pid_t process_group; pid_t session; rix_process_state_t state; uint32_t uid; uint32_t gid; uint64_t capabilities; rix_address_space_t address_space; uint64_t heap_base; uint64_t heap_break; uint64_t kernel_stack; uint64_t kernel_stack_size; uint64_t exit_status; uint64_t fd_bitmap; uint64_t signal_pending; uint64_t signal_mask; rix_net_socket_table_t sockets; char name[RIX_PROCESS_NAME_MAX]; char cwd[RIX_PROCESS_CWD_MAX]; } rix_process_t;
 typedef struct { pid_t session; pid_t leader; uint32_t uid; uint32_t controlling_tty; uint32_t flags; } rix_session_info_t;
 typedef struct { pid_t pid; pid_t parent; uint32_t uid; uint32_t gid; uint32_t state; pid_t session; char name[RIX_PROCESS_NAME_MAX]; } rix_process_info_t;
 int process_init(void);
@@ -41,6 +43,7 @@ int process_activate_user_entry(pid_t pid);
  * Returns zero only when RIP is a present user executable page and RSP points
  * into a present user writable stack page in the target address space. */
 int process_validate_user_entry(pid_t pid, uint64_t user_rip, uint64_t user_rsp);
+int process_brk(pid_t pid, uint64_t requested, uint64_t *out_break);
 int process_set_state(pid_t pid,rix_process_state_t state);
 /* In-memory CR3 event ring (no output at record time): every scheduler
  * selection and every address-space activation pushes one entry; the fault

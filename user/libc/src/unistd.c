@@ -1,4 +1,5 @@
 #include "unistd.h"
+#include "errno.h"
 static long rix_sys(long n,long a,long b,long c){long r;__asm__ volatile("int $0x80":"=a"(r):"a"(n),"D"(a),"S"(b),"d"(c):"rcx","r11","memory");return r;}
 static long rix_sys4(long n,long a,long b,long c,long d){long r;register long r10 __asm__("r10")=d;__asm__ volatile("int $0x80":"=a"(r):"a"(n),"D"(a),"S"(b),"d"(c),"r"(r10):"rcx","r11","memory");return r;}
 rix_ssize_t read(int fd,void*buf,size_t count){return(rix_ssize_t)rix_sys(0,fd,(long)buf,(long)count);}
@@ -56,4 +57,6 @@ int socket_bind(int fd,rix_net_endpoint_t endpoint){return(int)rix_sys(42,fd,(lo
 int socket_connect(int fd,rix_net_endpoint_t endpoint){return(int)rix_sys(43,fd,(long)&endpoint,0);}
 int socket_send(int fd,const void*data,size_t length,rix_net_endpoint_t destination){return(int)rix_sys4(44,fd,(long)data,(long)length,(long)&destination);}
 int socket_receive(int fd,void*data,size_t capacity,rix_net_endpoint_t*source){return(int)rix_sys4(45,fd,(long)data,(long)capacity,(long)source);}
+int brk(void *address){long result=rix_sys(12,(long)address,0,0);if(result<0){errno=(int)-result;return -1;}return 0;}
+void *sbrk(ptrdiff_t increment){long current=rix_sys(12,0,0,0);if(current<0){errno=(int)-current;return(void*)-1;}if((increment>0&&current>(long)UINTPTR_MAX-increment)||(increment<0&&current<(long)INTPTR_MIN-increment)){errno=RIX_EINVAL;return(void*)-1;}long requested=current+increment;long result=rix_sys(12,requested,0,0);if(result<0){errno=(int)-result;return(void*)-1;}return(void*)current;}
 _Noreturn void _exit(int status){(void)rix_sys(60,status,0,0);for(;;)__asm__ volatile("hlt");}

@@ -1466,3 +1466,8 @@ The IPv6 software path now includes a bounded longest-prefix/default route table
 ### Phase 22 initial libc checkpoint — 2026-09-09
 
 The first Phase 22 slice adds freestanding memory/string APIs, errno storage, and a bounded deterministic allocator to the userspace image and program link chain. Host libc tests and the complete strict test suite pass. A future slice must replace the fixed arena with a kernel-backed memory-growth ABI before claiming musl/POSIX completion.
+
+
+### Phase 22 kernel-backed heap checkpoint — 2026-09-09
+
+A bounded `brk` heap-growth syscall now backs the freestanding libc allocator. User processes receive mapped, zeroed, writable/NX heap pages with rollback on partial failure and page return on shrink. `sbrk`/`malloc` no longer depend on the previous fixed 64 KiB arena. The remaining Phase 22 work is broader POSIX/musl API coverage and syscall errno normalization.

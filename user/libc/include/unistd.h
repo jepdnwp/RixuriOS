@@ -1,6 +1,7 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
+#include <stddef.h>
 typedef int64_t rix_ssize_t;
 typedef uint64_t rix_pid_t;
 typedef struct { rix_pid_t session; rix_pid_t leader; uint32_t uid; uint32_t controlling_tty; uint32_t flags; } rix_session_info_t;
@@ -91,4 +92,6 @@ int socket_bind(int fd, rix_net_endpoint_t endpoint);
 int socket_connect(int fd, rix_net_endpoint_t endpoint);
 int socket_send(int fd, const void *data, size_t length, rix_net_endpoint_t destination);
 int socket_receive(int fd, void *data, size_t capacity, rix_net_endpoint_t *source);
+int brk(void *address);
+void *sbrk(ptrdiff_t increment);
 _Noreturn void _exit(int status);

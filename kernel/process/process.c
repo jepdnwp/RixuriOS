@@ -23,7 +23,7 @@ static size_t bounded_strlen(const char*s){size_t n=0;if(!s)return 0;while(n<RIX
 static void copy_name(char*d,const char*s){size_t n=bounded_strlen(s);for(size_t i=0;i<n;i++)d[i]=s[i];d[n]=0;}
 static int copy_cwd(char*d,const char*s){size_t n=0;if(!d||!s)return -1;while(n+1<RIX_PROCESS_CWD_MAX&&s[n]){d[n]=s[n];++n;}if(s[n])return -1;d[n]=0;return 0;}
 static pid_t allocate_pid(void){for(size_t n=0;n<RIX_PROCESS_MAX-1;n++){pid_t candidate=next_pid;if(++next_pid>=RIX_PROCESS_MAX)next_pid=1;if(candidate&& !process_lookup(candidate))return candidate;}return 0;}
-static void clear_process(rix_process_t*p){p->pid=0;p->parent=0;p->process_group=0;p->session=0;p->state=RIX_PROC_UNUSED;p->uid=0;p->gid=0;p->capabilities=0;p->address_space.pml4_phys=0;p->kernel_stack=0;p->kernel_stack_size=0;p->exit_status=0;p->fd_bitmap=0;p->signal_pending=0;p->signal_mask=0;rix_net_socket_table_init(&p->sockets);p->name[0]=0;p->cwd[0]='/';p->cwd[1]=0;}
+static void clear_process(rix_process_t*p){p->pid=0;p->parent=0;p->process_group=0;p->session=0;p->state=RIX_PROC_UNUSED;p->uid=0;p->gid=0;p->capabilities=0;p->address_space.pml4_phys=0;p->heap_base=0;p->heap_break=0;p->kernel_stack=0;p->kernel_stack_size=0;p->exit_status=0;p->fd_bitmap=0;p->signal_pending=0;p->signal_mask=0;rix_net_socket_table_init(&p->sockets);p->name[0]=0;p->cwd[0]='/';p->cwd[1]=0;}
 static void zero_page(uint64_t pa){uint8_t*p=(uint8_t*)(uintptr_t)pa;for(size_t i=0;i<4096;i++)p[i]=0;}
 int process_init(void){for(size_t i=0;i<RIX_PROCESS_MAX;i++){clear_process(&table[i]);supplementary_counts[i]=0;audit_uids[i]=0;real_uids[i]=saved_uids[i]=real_gids[i]=saved_gids[i]=0;for(size_t g=0;g<RIX_PROCESS_GROUP_MAX;g++)supplementary_groups[i][g]=0;}for(size_t i=0;i<RIX_SESSION_MAX;i++){sessions[i].session=0;sessions[i].leader=0;sessions[i].uid=0;sessions[i].controlling_tty=UINT32_MAX;sessions[i].flags=0;}current_pid=0;next_pid=1;live_count=1;
 table[0].pid=0;table[0].process_group=0;table[0].session=0;table[0].state=RIX_PROC_RUNNING;table[0].capabilities=RIX_CAP_ALL;copy_name(table[0].name,"kernel");return 0;}
@@ -59,6 +59,7 @@ int process_create_user(const char*name,pid_t parent,const void*image,uint64_t i
  kernel_log("DEBUG: address space create begin\r\n");
  int asc=address_space_create(&p->address_space);int urc=-4;
  if(asc!=0){urc=-4;kernel_log("DEBUG: address space create fail reason=");if(asc<0)kernel_log("-");kernel_log_dec((uint64_t)(asc<0?-asc:asc));kernel_log(" free_pages=");kernel_log_dec(pmm_free_pages());kernel_log("\r\n");goto fail_user;}
+ p->heap_base=RIX_USER_HEAP_BASE;p->heap_break=RIX_USER_HEAP_BASE;
  kernel_log("DEBUG: address space create success pml4=");kernel_log_hex(p->address_space.pml4_phys);kernel_log("\r\n");
  kernel_log("DEBUG: user stack create begin top=");kernel_log_hex(USER_STACK_TOP);kernel_log(" pages=");kernel_log_dec(USER_STACK_PAGES);kernel_log("\r\n");
  for(uint64_t i=0;i<USER_STACK_PAGES;i++){uint64_t pa=pmm_alloc_page();if(!pa){urc=-5;kernel_log("DEBUG: user stack create fail reason=alloc-fail i=");kernel_log_dec(i);kernel_log(" free_pages=");kernel_log_dec(pmm_free_pages());kernel_log("\r\n");goto fail_user;}
@@ -195,6 +196,8 @@ int process_exec_user_with_args(pid_t pid, const void *image, uint64_t image_siz
     if (stack_build_args(&replacement, &user_stack, argv, argc, envp, envc) != 0) goto fail;
     address_space_destroy(&p->address_space);
     p->address_space = replacement;
+    p->heap_base = RIX_USER_HEAP_BASE;
+    p->heap_break = RIX_USER_HEAP_BASE;
     *out_entry = elf.entry;
     *out_user_stack = user_stack;
     return 0;
@@ -450,3 +453,51 @@ int process_drop_capabilities(pid_t pid,uint64_t mask){rix_process_t*p=process_l
 int process_delegate_capabilities(pid_t parent,pid_t child,uint64_t mask){rix_process_t*p=process_lookup(parent),*c=process_lookup(child);if(!p||!c||parent==child||c->state==RIX_PROC_UNUSED||c->state==RIX_PROC_ZOMBIE||c->parent!=parent||!capability_valid(mask)||!process_has_capability(parent,RIX_CAP_DELEGATE)||!process_has_capability(parent,mask)||(mask&RIX_CAP_DELEGATE)||(c->capabilities&mask))return -1;c->capabilities|=mask;p->capabilities&=~mask;return 0;}
 int process_get_audit_uid(pid_t pid,uint32_t*out){rix_process_t*p=process_lookup(pid);size_t index=(size_t)pid;if(!p||!out||index>=RIX_PROCESS_MAX)return -1;*out=audit_uids[index];return 0;}
 int process_set_audit_uid(pid_t pid,uint32_t uid){rix_process_t*p=process_lookup(pid);size_t index=(size_t)pid;if(!p||index>=RIX_PROCESS_MAX||!process_has_capability(pid,RIX_CAP_AUDIT_ADMIN))return -1;audit_uids[index]=uid;return 0;}
+
+
+int process_brk(pid_t pid, uint64_t requested, uint64_t *out_break) {
+    rix_process_t *p = process_lookup(pid);
+    if (!p || !p->address_space.pml4_phys || !p->heap_base || !out_break) return -1;
+    if (requested == 0) { *out_break = p->heap_break; return 0; }
+    if (requested < p->heap_base || requested > RIX_USER_HEAP_LIMIT) return -2;
+    uint64_t old_break = p->heap_break;
+    uint64_t old_page_end = (old_break + RIXURI_PAGE_SIZE - 1u) & ~(RIXURI_PAGE_SIZE - 1u);
+    uint64_t new_page_end = (requested + RIXURI_PAGE_SIZE - 1u) & ~(RIXURI_PAGE_SIZE - 1u);
+    if (new_page_end > old_page_end) {
+        size_t mapped = 0;
+        for (uint64_t va = old_page_end; va < new_page_end; va += RIXURI_PAGE_SIZE) {
+            uint64_t pa = pmm_alloc_page();
+            if (!pa) {
+                for (uint64_t rollback = old_page_end; rollback < va; rollback += RIXURI_PAGE_SIZE) {
+                    uint64_t old_pa = address_space_translate(&p->address_space, rollback);
+                    (void)address_space_unmap(&p->address_space, rollback);
+                    if (old_pa) pmm_free_page(old_pa);
+                }
+                return -3;
+            }
+            zero_page(pa);
+            if (address_space_map(&p->address_space, va, pa,
+                                  RIXURI_PTE_PRESENT | RIXURI_PTE_WRITE |
+                                  RIXURI_PTE_USER | RIXURI_PTE_NX | RIXURI_PTE_OWNED) != 0) {
+                pmm_free_page(pa);
+                for (uint64_t rollback = old_page_end; rollback < va; rollback += RIXURI_PAGE_SIZE) {
+                    uint64_t old_pa = address_space_translate(&p->address_space, rollback);
+                    (void)address_space_unmap(&p->address_space, rollback);
+                    if (old_pa) pmm_free_page(old_pa);
+                }
+                return -3;
+            }
+            ++mapped;
+        }
+        (void)mapped;
+    } else if (new_page_end < old_page_end) {
+        for (uint64_t va = new_page_end; va < old_page_end; va += RIXURI_PAGE_SIZE) {
+            uint64_t pa = address_space_translate(&p->address_space, va);
+            (void)address_space_unmap(&p->address_space, va);
+            if (pa) pmm_free_page(pa);
+        }
+    }
+    p->heap_break = requested;
+    *out_break = requested;
+    return 0;
+}

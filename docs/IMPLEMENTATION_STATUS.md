@@ -750,3 +750,8 @@ A bounded longest-prefix route table and a separate IPv6 UDP socket ABI are impl
 Phase 22 has started with a freestanding userspace libc foundation. The userspace image and program link rules now include `string.h`/`libc.c`, `errno`, and a deterministic 64 KiB arena allocator implementing `malloc`, `calloc`, `realloc` and `free`. Memory/string operations include `memcpy`, `memmove`, `memset`, `memcmp`, `strlen`, `strcmp`, `strncmp` and `strchr`. A dedicated host `libc-test` covers overlap-safe moves, comparison, zeroed allocation, resizing and allocation failure. `make CROSS= -j2 test` and the kernel image build pass.
 
 This is the first Phase 22 slice, not a musl-complete port. The allocator remains intentionally bounded until an anonymous-memory/brk-style kernel ABI is selected.
+
+
+## Phase 22 kernel-backed heap checkpoint — 2026-09-09
+
+The fixed userspace allocator arena has been replaced by a kernel-backed heap path. Each user process receives a bounded heap interval beginning at `RIX_USER_HEAP_BASE`; `process_brk()` maps and zeroes user-writable NX pages on growth, unmaps and returns pages on shrink, and rolls back partial growth on allocation failure. Syscall 12 exposes `brk`, while userspace `sbrk` and the libc allocator use that ABI. Strict kernel build, full host test suite and libc-test pass.
