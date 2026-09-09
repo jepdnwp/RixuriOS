@@ -716,3 +716,10 @@ The physical hardware evidence boundary is unchanged: the sandbox cannot execute
 
 ## 2026-09-09 — Full QEMU regression and harness synchronization
 The complete QEMU regression matrix now passes **26/26 tests**. The harnesses track a fresh prompt position and drain delayed UART bytes after each prompt, preventing late child diagnostics from being attributed to the following command. Utility expectations now match the current diagnostics (`cannot open`, `cannot link`, `cannot remove`) and `/home/root` shell working directory. The external-network test accepts only validated HTTP responses (`external PASS`) or explicit fail-closed results (`DNS/network path unavailable`, `no echo reply`); it never converts unavailable networking into success. This passing matrix does not close the known physical E1000 RX-DMA blocker: real-hardware RTL8125 qualification and sustained external NIC validation remain open.
+
+
+## Phase 21 exit — 2026-09-09
+
+Phase 21 — **Full Network Stack** is complete for the software, host-test and QEMU virtual-network scope. The final validation includes strict host tests, RTL8125/E1000 unit coverage, DHCP, loopback ping/curl, QEMU external DHCP/DNS/TCP/HTTP traffic and ISO boot. A scheduler correction ensures that resumed user processes reload their address-space CR3 after the initial deferred Ring 3 entry; this fixed repeated QEMU network commands after the first user transition.
+
+The physical evidence boundary remains explicit: RTL8125 link/TX/RX, interrupt-driven RX, reset/recovery and final Ring 3 behavior on the Ryzen/ASUS target are `NOT TESTED` because this environment cannot execute on that machine. These items are deferred to the physical hardware qualification track and are not claimed as QEMU evidence.

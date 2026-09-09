@@ -395,6 +395,8 @@ static int cr3_probe_root(uint64_t np){
  {static unsigned n=0;if(n<2){kernel_log("DEBUG: ROOT fresh pml40=");kernel_log_hex(t[0]);kernel_log(" pml41=");kernel_log_hex(t[1]);kernel_log(" pml42=");kernel_log_hex(t[2]);kernel_log(" pml43=");kernel_log_hex(t[3]);kernel_log("\r\n");if(n<2){n++;}}}
  return 0;
 }
+static volatile int process_user_entry_deferred;
+int process_activate_user_entry(pid_t pid){process_user_entry_deferred=1;int rc=process_activate(pid);process_user_entry_deferred=0;return rc;}
 int process_activate(pid_t pid){if(pid==0){uint64_t kb=vmm_kernel_pml4();cr3trace_push(1,0,kb,read_cr3_hw());current_pid=0;vmm_switch_pml4(kb);cr3trace_push(2,0,kb,read_cr3_hw());return 0;}{static unsigned n=0;if(n<2){kernel_log("DEBUG: process_activate begin\r\n");n++;}}rix_process_t*p=process_lookup(pid);{static unsigned n=0;if(n<2){kernel_log("DEBUG: process lookup done\r\n");n++;}}if(!p||p->state==RIX_PROC_UNUSED||p->state==RIX_PROC_ZOMBIE||!p->address_space.pml4_phys||!p->kernel_stack)return -1;{static unsigned n=0;if(n<1){kernel_log("DEBUG: address space found pid=");kernel_log_dec(p->pid);kernel_log(" pml4=");kernel_log_hex(p->address_space.pml4_phys);kernel_log(" kstack=");kernel_log_hex(p->kernel_stack);kernel_log("\r\nDEBUG: current process=");kernel_log_dec(process_current());kernel_log(" current cr3=");kernel_log_hex(read_cr3_hw());kernel_log(" kernel pml4=");kernel_log_hex(vmm_kernel_pml4());kernel_log("\r\nDEBUG: target pml4=");kernel_log_hex(p->address_space.pml4_phys);kernel_log("\r\n");serial_drain();n++;}}{static unsigned n=0;if(n<1){uint64_t oc=read_cr3_hw();if(cr3_diagnose_target(p,oc)!=0){kernel_log("DEBUG: process_activate REFUSED invalid target CR3\r\n");serial_drain();return -1;}n++;}}current_pid=pid;tss_set_rsp0(p->kernel_stack+p->kernel_stack_size);{static unsigned n=0;if(n<2){kernel_log("DEBUG: switching CR3\r\n");serial_drain();n++;}}
 #if RIX_DEBUG_NO_CR3_SWITCH
 {static unsigned n=0;if(n<2){kernel_log("DEBUG: process_activate CR3 SWITCH SKIPPED\r\n");kernel_log("DEBUG: CR3 switch skipped\r\n");serial_drain();n++;}}
@@ -413,14 +415,12 @@ uint64_t loadval=target;
  * real hardware can expose that unvalidated final state during a TLB flush. */
 int final_vr=vmm_validate_pml4(loadval);
 if(final_vr!=0){kernel_log("DEBUG: final PML4 validation failed reason=");kernel_log_dec((uint64_t)(final_vr<0?-final_vr:final_vr));kernel_log("\r\n");serial_drain();return -1;}
-#if RIX_DEFER_USER_CR3_TO_ENTRY
-/* A user task is entered immediately afterward by x86_enter_user(), which
- * loads CR3 and executes iretq without touching the old kernel stack.  Doing
- * the same load here first made real hardware fault while returning through a
- * stack that the target address space may not map identically. */
-{static unsigned n=0;if(n<2){kernel_log("DEBUG: user CR3 switch deferred to ring3 entry\r\n");serial_drain();n++;}}
-return 0;
-#elif RIX_DEBUG_CR3_RELOAD_SELF
+if(process_user_entry_deferred){
+ /* Only the first bootstrap defers CR3; resumed user tasks must switch here. */
+ {static unsigned n=0;if(n<2){kernel_log("DEBUG: user CR3 switch deferred to ring3 entry\r\n");serial_drain();n++;}}
+ return 0;
+}
+#if RIX_DEBUG_CR3_RELOAD_SELF
 loadval=read_cr3_hw();
 {static unsigned n=0;if(n<2){kernel_log("DEBUG: CR3 SELFTEST reloading current CR3\r\n");serial_drain();n++;}}
 #endif

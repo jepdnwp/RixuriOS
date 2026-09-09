@@ -50,3 +50,10 @@ The next gate is attaching this device boundary to the per-process socket path: 
 ## External ARP and RX DMA gate — 2026-09-08
 
 The device-to-stack path now emits a valid ARP request through E1000 and receives a QEMU user-net ARP reply on the virtual wire. Packet capture confirms request `10.0.2.15 -> 10.0.2.3` and reply `10.0.2.3 -> 10.0.2.15`. The remaining gate is delivery of the received frame into the E1000 RX descriptor ring; the current software observation remains `DD=0`, `RDH=0`, `RDT=63`. DNS parsing and external TCP are intentionally blocked behind this RX DMA gate.
+
+
+## Phase 21 exit status — 2026-09-09
+
+Phase 21 — **Full Network Stack** is complete for the host, loopback, QEMU virtual-network and software-integration scope. The same packet, Ethernet, ARP, IPv4, UDP, TCP, device and socket path is exercised by `ping` and `curl`; success requires a validated protocol response. DHCPv4, DNS, external TCP and validated HTTP redirects pass in the QEMU user-net harness. The scheduler CR3-resume correction also restores repeated user-process network commands after the initial Ring 3 transition.
+
+Physical RTL8125 TX/RX, link negotiation, interrupt delivery, reset/recovery and final Ring 3 qualification on the Ryzen/ASUS target remain `NOT TESTED`. These are hardware evidence gates and are not replaced by host or QEMU results. They are tracked in the physical qualification phase.

@@ -1434,3 +1434,10 @@ The RX gate is closed: the descriptor Length field is programmed and restored, a
 ### Phase 21 DHCP evidence — 2026-09-08
 
 The DHCP item is closed on QEMU user-net: bounded DISCOVER/OFFER/REQUEST/ACK with XID/type/magic validation, `rix_net_device_configure()` applying the learned address/netmask/gateway/DNS, a boot-time attempt with static fallback, and host unit tests. Quirk documented: explicit `-device e1000,netdev=net0` under TCG delays SLIRP-to-guest delivery ~1s at boot, absorbed by the 12-round window (round 10 accepts; stale queued OFFERs are correctly discarded by type check); default-NIC boots succeed in round 0. Remaining Phase 21 scope is userspace propagation of the learned DNS, lease renewal, IPv6 architecture, firewall/filtering architecture, TCP retransmission timers and close semantics, interrupt-driven RX, and RTL8125 plus full physical-hardware qualification.
+
+
+### Phase 21 exit checkpoint — 2026-09-09
+
+**Phase 21 — Full Network Stack** is complete for the software, host-test and QEMU virtual-network scope. Host/NIC tests and QEMU validation now cover packet buffers, Ethernet, ARP, IPv4, ICMP, UDP, DNS, DHCPv4, bounded TCP, sockets, loopback, E1000 TX/RX and validated external HTTP responses. `ping` and `curl` use the same real packet/device/socket path and fail closed when a response is unavailable. A scheduler CR3-resume correction also closes the repeated-user-process regression exposed by the network harness.
+
+Checkpoint status: `CP0 SPEC PASS`, `CP1 BUILD PASS`, `CP2 UNIT PASS`, `CP3 BOOT PASS`, `CP4 INTEGRATION PASS`, `CP5 HARDWARE DEFERRED`, `CP6 REGRESSION PASS`, `CP7 SECURITY REVIEWED`, `CP8 PERFORMANCE DEFERRED`, `CP9 DOCS PASS`, `CP10 RELEASE DEFERRED`. Physical RTL8125 TX/RX, link, interrupt, recovery and final Ring 3 evidence remain assigned to the physical hardware qualification track; they are not claimed as QEMU evidence.

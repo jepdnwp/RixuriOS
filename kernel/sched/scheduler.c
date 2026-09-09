@@ -66,7 +66,7 @@ static __attribute__((noreturn)) void task_bootstrap(void){
         {static unsigned n=0;if(n<2){kernel_log("DEBUG: userspace bootstrap begin pid=");kernel_log_dec(t->process_pid);kernel_log("\r\n");n++;}}
         rix_process_t *p=process_lookup(t->process_pid);
         if(!p){kernel_log("DEBUG: bootstrap process lookup FAILED\r\n");task_returned();}
-        if(process_activate(t->process_pid)!=0){kernel_log("DEBUG: bootstrap process_activate FAILED\r\n");task_returned();}
+        if(process_activate_user_entry(t->process_pid)!=0){kernel_log("DEBUG: bootstrap process_activate FAILED\r\n");task_returned();}
         if(process_validate_user_entry(t->process_pid,t->user_entry,t->user_stack)!=0){
             kernel_log("DEBUG: bootstrap user entry validation FAILED\r\n");
             task_returned();
