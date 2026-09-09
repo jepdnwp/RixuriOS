@@ -18,6 +18,7 @@ void *sbrk(ptrdiff_t increment) {
     return old;
 }
 rix_ssize_t read(int fd, void *buffer, size_t count) { (void)fd; (void)buffer; (void)count; return -1; }
+rix_ssize_t getrandom(void *buffer, size_t length, uint32_t flags) { static unsigned seed = 0; (void)flags; ++seed; for (size_t i = 0; i < length; ++i) ((unsigned char *)buffer)[i] = (unsigned char)(0xa5u ^ seed ^ (unsigned)i); return (rix_ssize_t)length; }
 static size_t host_written;
 rix_ssize_t write(int fd, const void *buffer, size_t count) { (void)buffer; if (fd == 1) host_written += count; return (rix_ssize_t)count; }
 int open(const char *path, uint32_t flags, ...) { (void)path; (void)flags; return -1; }

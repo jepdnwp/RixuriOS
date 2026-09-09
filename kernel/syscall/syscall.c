@@ -10,6 +10,7 @@
 #include "../tty/tty.h"
 #include "../time/time.h"
 #include "../../include/kernel.h"
+#include "../arch/x86_64/cpu.h"
 #include <stdint.h>
 #define RIX_ENOSYS 38
 #define RIX_EINVAL 22
@@ -73,6 +74,7 @@ void syscall_dispatch(rix_syscall_frame_t*frame){
  case RIX_SYS_OPENAT:{char path[RIX_VFS_PATH_MAX];if(user_string(frame->rsi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}int fd;int rc=vfs_open(self,path,(uint32_t)frame->rdx,(uint32_t)frame->r10,&fd);if(rc!=0)result=vfs_result(rc);else result=fd;break;}
  case RIX_SYS_LSEEK:{uint64_t position=0;int rc=vfs_seek(self,(int)frame->rdi,(int64_t)frame->rsi,(int)frame->rdx,&position);result=rc==0?(int64_t)position:-RIX_EINVAL;break;}
  case RIX_SYS_BRK:{uint64_t new_break=0;int rc=process_brk(self,frame->rdi,&new_break);if(rc==0)result=(int64_t)new_break;else result=rc==-3?-RIX_ENOMEM:-RIX_EINVAL;break;}
+ case RIX_SYS_GETRANDOM:{uint64_t dst=frame->rdi,len=frame->rsi;size_t done=0;if(frame->rdx!=0||len>RIX_MAX_IO){result=-RIX_EINVAL;break;}while(done<len){uint64_t value;if(x86_random_u64(&value)!=0){result=done?(int64_t)done:-RIX_ENOSYS;break;}size_t chunk=(len-done<sizeof(value))?len-done:sizeof(value);if(copy_to_user(dst+done,&value,chunk)!=0){result=-RIX_EFAULT;break;}done+=chunk;}if(done==len)result=(int64_t)done;break;}
  case RIX_SYS_MKDIR:{char path[RIX_VFS_PATH_MAX];if(user_string(frame->rdi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}result=vfs_result(vfs_mkdir(path,(uint32_t)frame->rsi,process_uid(self),process_gid(self)));break;}
  case RIX_SYS_RMDIR:{char path[RIX_VFS_PATH_MAX];if(user_string(frame->rdi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}result=vfs_result(vfs_rmdir(path));break;}
  case RIX_SYS_UNLINK:{char path[RIX_VFS_PATH_MAX];if(user_string(frame->rdi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}result=vfs_result(vfs_unlink(path));break;}

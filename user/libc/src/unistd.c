@@ -67,6 +67,7 @@ int socket_bind(int fd,rix_net_endpoint_t endpoint){return(int)rix_int_result(ri
 int socket_connect(int fd,rix_net_endpoint_t endpoint){return(int)rix_int_result(rix_sys(43,fd,(long)&endpoint,0));}
 int socket_send(int fd,const void*data,size_t length,rix_net_endpoint_t destination){return(int)rix_int_result(rix_sys4(44,fd,(long)data,(long)length,(long)&destination));}
 int socket_receive(int fd,void*data,size_t capacity,rix_net_endpoint_t*source){return(int)rix_int_result(rix_sys4(45,fd,(long)data,(long)capacity,(long)source));}
+rix_ssize_t getrandom(void*buffer,size_t length,uint32_t flags){return rix_ssize_result(rix_sys(139,(long)buffer,(long)length,(long)flags));}
 int brk(void *address){long result=rix_sys(12,(long)address,0,0);if(result<0){errno=(int)-result;return -1;}return 0;}
 void *sbrk(ptrdiff_t increment){long current=rix_sys(12,0,0,0);if(current<0){errno=(int)-current;return(void*)-1;}if((increment>0&&current>(long)UINTPTR_MAX-increment)||(increment<0&&current<(long)INTPTR_MIN-increment)){errno=RIX_EINVAL;return(void*)-1;}long requested=current+increment;long result=rix_sys(12,requested,0,0);if(result<0){errno=(int)-result;return(void*)-1;}return(void*)current;}
 _Noreturn void _exit(int status){(void)rix_sys(60,status,0,0);for(;;)__asm__ volatile("hlt");}

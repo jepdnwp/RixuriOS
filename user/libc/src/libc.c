@@ -268,4 +268,4 @@ int setenv(const char *name,const char *value,int overwrite) { if(!environment_n
 int unsetenv(const char *name) { if(!environment_name_valid(name)){errno=RIX_EINVAL;return -1;}int index=environment_index(name);if(index<0)return 0;free(environment[(size_t)index].name);free(environment[(size_t)index].value);environment[(size_t)index].name=0;environment[(size_t)index].value=0;return 0; }
 void srand(unsigned seed) { random_state=seed?seed:1u; }
 int rand(void) { random_state=random_state*1103515245u+12345u;return(int)((random_state>>1)&0x7fffffffU); }
-uint32_t arc4random(void) { random_state=random_state*1664525u+1013904223u;return random_state; }
+uint32_t arc4random(void) { uint32_t value=0; if (getrandom(&value,sizeof(value),0)==(rix_ssize_t)sizeof(value)) return value; random_state=random_state*1664525u+1013904223u;return random_state; }
