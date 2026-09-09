@@ -75,9 +75,14 @@ int rix_net_dhcp_build_discover(rix_net_packet_t *packet, uint32_t xid,
                                 const uint8_t mac[6]) {
     uint8_t type = RIX_DHCP_MSG_DISCOVER;
     uint8_t prl[3] = {1, 3, 6};
+    uint8_t client_id[7];
     if (!packet || !mac || !xid) return -1;
+    client_id[0] = 1;
+    for (size_t i = 0; i < 6; ++i) client_id[i + 1] = mac[i];
     if (dhcp_header(packet, RIX_DHCP_OP_REQUEST, xid, mac) != 0) return -1;
     if (dhcp_option(packet, DHCP_OPT_MSGTYPE, &type, 1) != 0) return -1;
+    if (dhcp_option(packet, DHCP_OPT_CLIENT_ID, client_id, sizeof(client_id)) != 0)
+        return -1;
     if (dhcp_option(packet, DHCP_OPT_PRL, prl, 3) != 0) return -1;
     return dhcp_pad(packet);
 }

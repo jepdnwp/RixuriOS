@@ -59,7 +59,10 @@ int rix_net_udp_pull(rix_net_packet_t *packet, uint32_t source_ip,
     const uint8_t *bytes = rix_net_packet_data(packet);
     uint16_t length = (uint16_t)(((uint16_t)bytes[4] << 8) | bytes[5]);
     if (length < RIX_NET_UDP_HEADER_LENGTH || length > rix_net_packet_length(packet)) return -2;
-    if (pseudo_checksum(source_ip, destination_ip, bytes, length) != 0) return -3;
+    /* RFC 768 permits a zero UDP checksum for IPv4. DHCP replies from some
+       firmware and embedded servers use this valid form. */
+    if ((bytes[6] || bytes[7]) &&
+        pseudo_checksum(source_ip, destination_ip, bytes, length) != 0) return -3;
     header->source_port = (uint16_t)(((uint16_t)bytes[0] << 8) | bytes[1]);
     header->destination_port = (uint16_t)(((uint16_t)bytes[2] << 8) | bytes[3]);
     header->length = length;
