@@ -141,6 +141,26 @@ int vsnprintf(char *buffer, size_t capacity, const char *format, va_list argumen
 int snprintf(char *buffer, size_t capacity, const char *format, ...) {
     va_list arguments; va_start(arguments, format); int result = vsnprintf(buffer, capacity, format, arguments); va_end(arguments); return result;
 }
+static FILE standard_output = { .fd = 1 };
+static FILE standard_error = { .fd = 2 };
+static FILE *libc_stdout = &standard_output;
+static FILE *libc_stderr = &standard_error;
+int vfprintf(FILE *stream, const char *format, va_list arguments) {
+    if (!stream || !format) { errno = RIX_EINVAL; return -1; }
+    va_list sizing; va_copy(sizing, arguments);
+    int length = vsnprintf(0, 0, format, sizing); va_end(sizing);
+    if (length < 0) return -1;
+    char *text = malloc((size_t)length + 1u);
+    if (!text) { errno = RIX_ENOMEM; return -1; }
+    va_list rendering; va_copy(rendering, arguments);
+    int rendered = vsnprintf(text, (size_t)length + 1u, format, rendering); va_end(rendering);
+    if (rendered < 0 || fwrite(text, 1, (size_t)rendered, stream) != (size_t)rendered) rendered = -1;
+    free(text); return rendered;
+}
+int fprintf(FILE *stream, const char *format, ...) { va_list arguments; va_start(arguments, format); int result = vfprintf(stream, format, arguments); va_end(arguments); return result; }
+int vprintf(const char *format, va_list arguments) { return vfprintf(libc_stdout, format, arguments); }
+int printf(const char *format, ...) { va_list arguments; va_start(arguments, format); int result = vprintf(format, arguments); va_end(arguments); return result; }
+void perror(const char *prefix) { if (!prefix) prefix = "error"; (void)fprintf(libc_stderr, "%s: errno %d\n", prefix, errno); }
 int puts(const char *text) {
     size_t length = strlen(text); if (write(1, text, length) < 0 || write(1, "\n", 1) < 0) return -1; return (int)(length + 1u);
 }

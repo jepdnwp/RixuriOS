@@ -63,6 +63,10 @@ int main(void) {
     assert(fputs("stdio", &stream) == 0);
     assert(fputc('!', &stream) == '!');
     assert(host_written == 0 && fflush(&stream) == 0 && host_written == 6);
+    FILE formatted_stream = { .fd = 1 };
+    assert(fprintf(&formatted_stream, "%s:%d", "fmt", 7) == 5);
+    errno = RIX_EINVAL;
+    assert(fprintf(&formatted_stream, "x") == 1);
     char *end = 0;
     assert(atoi("-42") == -42);
     assert(strtol("0x2a", &end, 0) == 42 && *end == 0);

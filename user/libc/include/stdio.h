@@ -12,6 +12,11 @@ typedef struct { int fd; unsigned char *buffer; size_t buffer_size; size_t buffe
 #define BUFSIZ 1024u
 int vsnprintf(char *buffer, size_t capacity, const char *format, va_list arguments);
 int snprintf(char *buffer, size_t capacity, const char *format, ...);
+int vfprintf(FILE *stream, const char *format, va_list arguments);
+int fprintf(FILE *stream, const char *format, ...);
+int vprintf(const char *format, va_list arguments);
+int printf(const char *format, ...);
+void perror(const char *prefix);
 int puts(const char *text);
 int putchar(int value);
 FILE *fopen(const char *path, const char *mode);
