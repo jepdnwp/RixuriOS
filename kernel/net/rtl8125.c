@@ -47,6 +47,7 @@ static void mmio_write8(volatile uint8_t *mmio, uint32_t offset, uint8_t value) 
 
 int rix_rtl8125_is_supported(const rix_pci_device_t *device) {
     if (!device || device->vendor_id != RIX_RTL8125_VENDOR_ID) return 0;
+    if (device->class_code != 0x02u || device->subclass != 0x00u) return 0;
     return device->device_id == RIX_RTL8125_DEVICE_ID ||
            device->device_id == RIX_RTL8126_DEVICE_ID;
 }
@@ -204,6 +205,11 @@ int rix_rtl8125_init(void) {
         if (pci_config_write32(device->bus, device->device, device->function,
                                0x04u, command | 0x00000006u) != 0) {
             serial_write("RTL8125: candidate rejected: PCI bus-master enable failed\r\n");
+            continue;
+        }
+        command = pci_config_read32(device->bus, device->device, device->function, 0x04u);
+        if ((command & 0x00000006u) != 0x00000006u) {
+            serial_write("RTL8125: candidate rejected: PCI decode/bus-master not active\r\n");
             continue;
         }
         volatile uint8_t *mmio = map_regs(base, size);

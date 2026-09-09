@@ -40,6 +40,8 @@ int main(void) {
     rix_pci_device_t device = {0};
     device.vendor_id = RIX_RTL8125_VENDOR_ID;
     device.device_id = RIX_RTL8125_DEVICE_ID;
+    device.class_code = 0x02u;
+    device.subclass = 0x00u;
     assert(rix_rtl8125_is_supported(&device));
     device.device_id = 0x1234;
     assert(!rix_rtl8125_is_supported(&device));
