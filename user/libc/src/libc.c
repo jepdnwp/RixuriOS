@@ -2,6 +2,9 @@
 #include "stdlib.h"
 #include "errno.h"
 #include "unistd.h"
+#include "stdio.h"
+#include "dirent.h"
+#include "fcntl.h"
 #include <stdint.h>
 #include <stdarg.h>
 
@@ -142,3 +145,44 @@ int puts(const char *text) {
     size_t length = strlen(text); if (write(1, text, length) < 0 || write(1, "\n", 1) < 0) return -1; return (int)(length + 1u);
 }
 int putchar(int value) { char character = (char)value; return write(1, &character, 1) < 0 ? -1 : (unsigned char)character; }
+
+FILE *fopen(const char *path, const char *mode) {
+    if (!path || !mode || !mode[0]) { errno = RIX_EINVAL; return 0; }
+    uint32_t flags = mode[0] == 'r' ? O_RDONLY : (mode[0] == 'a' ? O_WRONLY | O_CREAT | O_APPEND : O_WRONLY | O_CREAT | O_TRUNC);
+    if (mode[1] == '+') flags = (flags & ~(O_RDONLY | O_WRONLY)) | O_RDWR;
+    int fd = open(path, flags, 0666u);
+    if (fd < 0) return 0;
+    FILE *stream = malloc(sizeof(*stream));
+    if (!stream) { (void)close(fd); return 0; }
+    stream->fd = fd; return stream;
+}
+int fclose(FILE *stream) { if (!stream) { errno = RIX_EINVAL; return -1; } int rc = close(stream->fd); free(stream); return rc; }
+size_t fread(void *buffer, size_t size, size_t count, FILE *stream) {
+    if (!stream || (!buffer && size && count)) { errno = RIX_EINVAL; return 0; }
+    if (!size || count > (size_t)-1 / size) return 0;
+    rix_ssize_t result = read(stream->fd, buffer, size * count);
+    return result < 0 ? 0 : (size_t)result / size;
+}
+size_t fwrite(const void *buffer, size_t size, size_t count, FILE *stream) {
+    if (!stream || (!buffer && size && count)) { errno = RIX_EINVAL; return 0; }
+    if (!size || count > (size_t)-1 / size) return 0;
+    rix_ssize_t result = write(stream->fd, buffer, size * count);
+    return result < 0 ? 0 : (size_t)result / size;
+}
+int fflush(FILE *stream) { if (!stream) { errno = RIX_EINVAL; return -1; } return 0; }
+
+DIR *opendir(const char *path) {
+    if (!path) { errno = RIX_EINVAL; return 0; }
+    int fd = open(path, O_RDONLY, 0);
+    if (fd < 0) return 0;
+    DIR *directory = malloc(sizeof(*directory));
+    if (!directory) { (void)close(fd); return 0; }
+    directory->fd = fd; directory->index = 0; directory->count = 0;
+    if (getdents(fd, (rix_dirent_t *)directory->entries, 16u, &directory->count) < 0) { (void)close(fd); free(directory); return 0; }
+    return directory;
+}
+struct dirent *readdir(DIR *directory) {
+    if (!directory || directory->index >= directory->count) return 0;
+    return &directory->entries[directory->index++];
+}
+int closedir(DIR *directory) { if (!directory) { errno = RIX_EINVAL; return -1; } int rc = close(directory->fd); free(directory); return rc; }

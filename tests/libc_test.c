@@ -16,6 +16,11 @@ void *sbrk(ptrdiff_t increment) {
     test_break += (size_t)increment;
     return old;
 }
+rix_ssize_t read(int fd, void *buffer, size_t count) { (void)fd; (void)buffer; (void)count; return -1; }
+rix_ssize_t write(int fd, const void *buffer, size_t count) { (void)fd; (void)buffer; return (rix_ssize_t)count; }
+int open(const char *path, uint32_t flags, ...) { (void)path; (void)flags; return -1; }
+int close(int fd) { (void)fd; return 0; }
+int getdents(int fd, rix_dirent_t *entries, size_t capacity, size_t *count) { (void)fd; (void)entries; (void)capacity; if (count) *count = 0; return -1; }
 
 int main(void) {
     char source[] = "rixurios";

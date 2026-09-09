@@ -770,3 +770,8 @@ The freestanding libc now provides character classification/conversion (`ctype.h
 ## Phase 22 file/POSIX header checkpoint — 2026-09-09
 
 The freestanding libc now exposes compatibility headers for `fcntl.h`, `dirent.h` and `sys/stat.h`, including open flags, directory-entry/stat structures and file-type/mode macros. `open`, `creat` and `getdents64` wrappers are layered over the existing RixuriOS syscall ABI. Header conformance, strict userspace/kernel builds and the complete host test suite pass.
+
+
+## Phase 22 stream/directory checkpoint — 2026-09-09
+
+The freestanding libc now includes a minimal `FILE` abstraction with `fopen`, `fclose`, `fread`, `fwrite` and `fflush`, layered over the existing file-descriptor syscalls. Directory iteration is available through `opendir`, `readdir` and `closedir`, using the bounded `getdents` ABI and libc heap storage. Strict userspace/kernel builds, libc-test and the full host suite pass. Buffering and repeated directory refill remain future enhancements.

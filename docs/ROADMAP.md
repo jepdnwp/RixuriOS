@@ -1486,3 +1486,8 @@ Freestanding character classification and conversion APIs plus bounded stdio for
 ### Phase 22 file/POSIX header checkpoint — 2026-09-09
 
 Compatibility headers for file flags, directory entries and stat mode/type macros are now linked to the existing syscall ABI. `open`, `creat` and `getdents64` are available as libc aliases/wrappers. Full POSIX stream and directory-object semantics remain future work.
+
+
+### Phase 22 stream/directory checkpoint — 2026-09-09
+
+A minimal descriptor-backed `FILE` API and bounded directory iterator API are now available in freestanding libc. They provide a POSIX-shaped surface over the existing RixuriOS syscalls; full buffering, seek state and multi-batch directory refill remain open work.
