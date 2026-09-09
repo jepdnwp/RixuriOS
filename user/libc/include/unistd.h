@@ -61,6 +61,8 @@ rix_pid_t fork(void) __attribute__((returns_twice));
 rix_pid_t wait(rix_pid_t child, uint64_t *status);
 rix_pid_t waitpid(rix_pid_t child, uint64_t *status, uint32_t options);
 int nanosleep(const rix_timespec_t *request, rix_timespec_t *remaining);
+unsigned sleep(unsigned seconds);
+int usleep(unsigned usec);
 int clock_gettime(rix_timespec_t *out);
 int chdir(const char *path);
 int getcwd(char *buffer, size_t capacity);

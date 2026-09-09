@@ -31,6 +31,8 @@ rix_pid_t fork(void){return rix_pid_result(rix_sys(57,0,0,0));}
 rix_pid_t wait(rix_pid_t child,uint64_t*status){return rix_pid_result(rix_sys(61,(long)child,(long)status,0));}
 rix_pid_t waitpid(rix_pid_t child,uint64_t*status,uint32_t options){return rix_pid_result(rix_sys(247,(long)child,(long)status,(long)options));}
 int nanosleep(const rix_timespec_t *request,rix_timespec_t *remaining){return(int)rix_int_result(rix_sys(35,(long)request,(long)remaining,0));}
+unsigned sleep(unsigned seconds){rix_timespec_t request={seconds,0},remaining={0,0};if(nanosleep(&request,&remaining)==0)return 0;return(unsigned)remaining.sec+(remaining.nsec!=0);}
+int usleep(unsigned usec){if(usec>=1000000u){errno=RIX_EINVAL;return -1;}rix_timespec_t request={0,usec*1000u};return nanosleep(&request,0);}
 int clock_gettime(rix_timespec_t *out){return(int)rix_int_result(rix_sys(13,(long)out,0,0));}
 int chdir(const char *path){return(int)rix_int_result(rix_sys(80,(long)path,0,0));}
 int getcwd(char *buffer,size_t capacity){return(int)rix_int_result(rix_sys(79,(long)buffer,(long)capacity,0));}
