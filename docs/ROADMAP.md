@@ -1526,6 +1526,8 @@ Integer formatting now accepts `%i` as a signed-decimal alias and supports octal
 `vsnprintf` now recognizes the `#` alternate-form flag for nonzero octal, lowercase hexadecimal and uppercase hexadecimal output, producing `0`, `0x` and `0X` prefixes respectively. Pointer formatting remains explicitly `0x`-prefixed. Regression tests cover mixed alternate forms and pointer output alongside the existing truncation checks.
 ### Phase 22 process timing checkpoint — 2026-09-09
 The POSIX-facing unistd layer now exposes `sleep` and `usleep` wrappers over the real kernel `nanosleep` syscall, with interrupted-second accounting and microsecond range validation. The userspace libc dependency rule was also corrected so the new time header is tracked without turning the target line into a shell recipe. Full libc, kernel and whitespace checks pass.
+### Phase 22 process identity checkpoint — 2026-09-09
+The process ABI now includes `RIX_SYS_GETPPID` and a libc `getppid` wrapper. The kernel resolves the current process record and returns its recorded parent PID, while PID errors use the existing wrapper normalization path. Full libc, kernel image and whitespace checks pass.
 ### Phase 22 stdlib search/allocation checkpoint — 2026-09-09
 The freestanding libc now provides comparator-based `bsearch`, complementing `qsort`. The allocator rejects size-plus-header and alignment-rounding overflow before invoking `sbrk`; sorted lookup tests cover hits and misses, while existing heap tests continue to cover zeroing and reallocation. Strict libc, complete host-suite, kernel image and whitespace checks pass.
 ### Phase 22 ctype compatibility checkpoint — 2026-09-09
