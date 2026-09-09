@@ -167,7 +167,7 @@ static void format_unsigned(char *buffer, size_t capacity, size_t *written, uint
     do { unsigned digit = (unsigned)(value % base); digits[count++] = (char)(digit < 10u ? '0' + digit : 'a' + digit - 10u); value /= base; } while (value);
     while (count) format_char(buffer, capacity, written, digits[--count]);
 }
-static void format_unsigned_padded(char *buffer, size_t capacity, size_t *written, uint64_t value, unsigned base, unsigned width, int left, int zero) { char digits[sizeof(uint64_t)*2u+1u];size_t count=0;do{unsigned digit=(unsigned)(value%base);digits[count++]=(char)(digit<10u?'0'+digit:'a'+digit-10u);value/=base;}while(value);size_t length=count;if(width>length&&!left){for(unsigned i=(unsigned)length;i<width;++i)format_char(buffer,capacity,written,zero?'0':' ');}while(count)format_char(buffer,capacity,written,digits[--count]);if(width>length&&left){for(unsigned i=(unsigned)length;i<width;++i)format_char(buffer,capacity,written,' ');} }
+static void format_unsigned_padded(char *buffer, size_t capacity, size_t *written, uint64_t value, unsigned base, unsigned width, int left, int zero, int upper) { char digits[sizeof(uint64_t)*2u+1u];size_t count=0;do{unsigned digit=(unsigned)(value%base);digits[count++]=(char)(digit<10u?'0'+digit:(upper?'A':'a')+digit-10u);value/=base;}while(value);size_t length=count;if(width>length&&!left){for(unsigned i=(unsigned)length;i<width;++i)format_char(buffer,capacity,written,zero?'0':' ');}while(count)format_char(buffer,capacity,written,digits[--count]);if(width>length&&left){for(unsigned i=(unsigned)length;i<width;++i)format_char(buffer,capacity,written,' ');} }
 static void format_text_padded(char *buffer, size_t capacity, size_t *written, const char *text, unsigned width, int left) { if(!text)text="(null)";size_t length=strlen(text);if(width>length&&!left)for(unsigned i=(unsigned)length;i<width;++i)format_char(buffer,capacity,written,' ');for(size_t i=0;i<length;++i)format_char(buffer,capacity,written,text[i]);if(width>length&&left)for(unsigned i=(unsigned)length;i<width;++i)format_char(buffer,capacity,written,' '); }
 int vsnprintf(char *buffer, size_t capacity, const char *format, va_list arguments) {
     size_t written = 0;
@@ -181,14 +181,16 @@ int vsnprintf(char *buffer, size_t capacity, const char *format, va_list argumen
         switch (*format++) {
         case 'c': { char value=(char)va_arg(arguments,int);format_text_padded(buffer,capacity,&written,(char[2]){value,0},width,left_align);break; }
         case 's': format_text_padded(buffer, capacity, &written, va_arg(arguments, const char *),width,left_align); break;
-        case 'd': {
+        case 'd': case 'i': {
             int64_t value = long_value ? va_arg(arguments, long) : va_arg(arguments, int);
-            if (value < 0) { format_char(buffer, capacity, &written, '-'); format_unsigned_padded(buffer, capacity, &written, (uint64_t)(-(value + 1)) + 1u, 10,width?width-1u:0,left_align,zero_pad); }
-            else format_unsigned_padded(buffer, capacity, &written, (uint64_t)value, 10,width,left_align,zero_pad);
+            if (value < 0) { format_char(buffer, capacity, &written, '-'); format_unsigned_padded(buffer, capacity, &written, (uint64_t)(-(value + 1)) + 1u, 10,width?width-1u:0,left_align,zero_pad,0); }
+            else format_unsigned_padded(buffer, capacity, &written, (uint64_t)value, 10,width,left_align,zero_pad,0);
             break;
         }
-        case 'u': format_unsigned_padded(buffer, capacity, &written, long_value ? va_arg(arguments, unsigned long) : va_arg(arguments, unsigned), 10,width,left_align,zero_pad); break;
-        case 'x': format_unsigned_padded(buffer, capacity, &written, long_value ? va_arg(arguments, unsigned long) : va_arg(arguments, unsigned), 16,width,left_align,zero_pad); break;
+        case 'u': format_unsigned_padded(buffer, capacity, &written, long_value ? va_arg(arguments, unsigned long) : va_arg(arguments, unsigned), 10,width,left_align,zero_pad,0); break;
+        case 'o': format_unsigned_padded(buffer, capacity, &written, long_value ? va_arg(arguments, unsigned long) : va_arg(arguments, unsigned), 8,width,left_align,zero_pad,0); break;
+        case 'x': format_unsigned_padded(buffer, capacity, &written, long_value ? va_arg(arguments, unsigned long) : va_arg(arguments, unsigned), 16,width,left_align,zero_pad,0); break;
+        case 'X': format_unsigned_padded(buffer, capacity, &written, long_value ? va_arg(arguments, unsigned long) : va_arg(arguments, unsigned), 16,width,left_align,zero_pad,1); break;
         case 'p': format_text(buffer, capacity, &written, "0x"); format_unsigned(buffer, capacity, &written, (uint64_t)(uintptr_t)va_arg(arguments, void *), 16); break;
         default: format_char(buffer, capacity, &written, '?'); break;
         }
