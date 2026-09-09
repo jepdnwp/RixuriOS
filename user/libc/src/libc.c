@@ -3,6 +3,7 @@
 #include "errno.h"
 #include "unistd.h"
 #include <stdint.h>
+#include <stdarg.h>
 
 int errno;
 
@@ -83,3 +84,61 @@ void *realloc(void *pointer, size_t size) {
     if (header->magic == RIX_ALLOC_MAGIC && header->used) memcpy(replacement, pointer, header->size < size ? header->size : size);
     free(pointer); return replacement;
 }
+
+
+int isdigit(int value) { return value >= '0' && value <= '9'; }
+int islower(int value) { return value >= 'a' && value <= 'z'; }
+int isupper(int value) { return value >= 'A' && value <= 'Z'; }
+int isalpha(int value) { return islower(value) || isupper(value); }
+int isalnum(int value) { return isalpha(value) || isdigit(value); }
+int isspace(int value) { return value == ' ' || value == '\t' || value == '\n' || value == '\r' || value == '\v' || value == '\f'; }
+int tolower(int value) { return isupper(value) ? value + ('a' - 'A') : value; }
+int toupper(int value) { return islower(value) ? value - ('a' - 'A') : value; }
+
+static void format_char(char *buffer, size_t capacity, size_t *written, char value) {
+    if (capacity && *written + 1u < capacity) buffer[*written] = value;
+    ++*written;
+}
+static void format_text(char *buffer, size_t capacity, size_t *written, const char *text) {
+    if (!text) text = "(null)";
+    while (*text) format_char(buffer, capacity, written, *text++);
+}
+static void format_unsigned(char *buffer, size_t capacity, size_t *written, uint64_t value, unsigned base) {
+    char digits[sizeof(uint64_t) * 2u + 1u]; size_t count = 0;
+    do { unsigned digit = (unsigned)(value % base); digits[count++] = (char)(digit < 10u ? '0' + digit : 'a' + digit - 10u); value /= base; } while (value);
+    while (count) format_char(buffer, capacity, written, digits[--count]);
+}
+int vsnprintf(char *buffer, size_t capacity, const char *format, va_list arguments) {
+    size_t written = 0;
+    if (!format || (!buffer && capacity)) return -1;
+    while (*format) {
+        if (*format != '%') { format_char(buffer, capacity, &written, *format++); continue; }
+        ++format; if (!*format) break;
+        if (*format == '%') { format_char(buffer, capacity, &written, '%'); ++format; continue; }
+        int long_value = 0; if (*format == 'l') { long_value = 1; ++format; }
+        if (*format == 'z') { long_value = 1; ++format; }
+        switch (*format++) {
+        case 'c': format_char(buffer, capacity, &written, (char)va_arg(arguments, int)); break;
+        case 's': format_text(buffer, capacity, &written, va_arg(arguments, const char *)); break;
+        case 'd': {
+            int64_t value = long_value ? va_arg(arguments, long) : va_arg(arguments, int);
+            if (value < 0) { format_char(buffer, capacity, &written, '-'); format_unsigned(buffer, capacity, &written, (uint64_t)(-(value + 1)) + 1u, 10); }
+            else format_unsigned(buffer, capacity, &written, (uint64_t)value, 10);
+            break;
+        }
+        case 'u': format_unsigned(buffer, capacity, &written, long_value ? va_arg(arguments, unsigned long) : va_arg(arguments, unsigned), 10); break;
+        case 'x': format_unsigned(buffer, capacity, &written, long_value ? va_arg(arguments, unsigned long) : va_arg(arguments, unsigned), 16); break;
+        case 'p': format_text(buffer, capacity, &written, "0x"); format_unsigned(buffer, capacity, &written, (uint64_t)(uintptr_t)va_arg(arguments, void *), 16); break;
+        default: format_char(buffer, capacity, &written, '?'); break;
+        }
+    }
+    if (capacity) buffer[written < capacity ? written : capacity - 1u] = 0;
+    return (int)written;
+}
+int snprintf(char *buffer, size_t capacity, const char *format, ...) {
+    va_list arguments; va_start(arguments, format); int result = vsnprintf(buffer, capacity, format, arguments); va_end(arguments); return result;
+}
+int puts(const char *text) {
+    size_t length = strlen(text); if (write(1, text, length) < 0 || write(1, "\n", 1) < 0) return -1; return (int)(length + 1u);
+}
+int putchar(int value) { char character = (char)value; return write(1, &character, 1) < 0 ? -1 : (unsigned char)character; }

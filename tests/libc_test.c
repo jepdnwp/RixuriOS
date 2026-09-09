@@ -1,6 +1,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <ctype.h>
+#include <stdio.h>
 #include <assert.h>
 
 static unsigned char test_heap[128u * 1024u];
@@ -34,5 +36,10 @@ int main(void) {
     assert(a != 0);
     free(a); free(b);
     assert(malloc((size_t)-1) == 0 && errno == RIX_ENOMEM);
+    char formatted[32];
+    assert(isalpha('R') && isdigit('7') && isspace('\n') && toupper('a') == 'A' && tolower('Z') == 'z');
+    assert(snprintf(formatted, sizeof(formatted), "%s:%d:%x:%c", "ok", -12, 0xbeef, '!') == 13);
+    assert(strcmp(formatted, "ok:-12:beef:!") == 0);
+    assert(snprintf(formatted, 5, "%s", "abcdef") == 6 && strcmp(formatted, "abcd") == 0);
     return 0;
 }

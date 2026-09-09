@@ -1476,3 +1476,8 @@ A bounded `brk` heap-growth syscall now backs the freestanding libc allocator. U
 ### Phase 22 errno normalization checkpoint — 2026-09-09
 
 The freestanding syscall wrappers now expose POSIX-style failure semantics: kernel negative error codes become `-1` (or `(rix_pid_t)-1` for PID APIs) and update `errno`. This covers file, process, session, capability, signal, socket and clock wrappers. Remaining Phase 22 work is broader header/API coverage and conformance testing.
+
+
+### Phase 22 ctype/stdio checkpoint — 2026-09-09
+
+Freestanding character classification and conversion APIs plus bounded stdio formatting/output are implemented and linked into userspace. Host conformance tests cover the supported format subset and truncation behavior. Broader POSIX headers and stream/file abstractions remain future Phase 22 work.

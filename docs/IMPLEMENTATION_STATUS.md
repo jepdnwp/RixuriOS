@@ -760,3 +760,8 @@ The fixed userspace allocator arena has been replaced by a kernel-backed heap pa
 ## Phase 22 errno normalization checkpoint — 2026-09-09
 
 Userspace syscall wrappers now convert negative kernel results into the conventional `-1` return value and set the global `errno`. This applies to I/O, filesystem, process, session, capability, signal, socket and time wrappers; PID-returning functions use `(rix_pid_t)-1` on failure. `brk` and `sbrk` preserve the same error contract. The full strict host test suite, libc-test and userspace/kernel image build pass.
+
+
+## Phase 22 ctype/stdio checkpoint — 2026-09-09
+
+The freestanding libc now provides character classification/conversion (`ctype.h`) and bounded formatting/output primitives (`vsnprintf`, `snprintf`, `puts`, `putchar`) with `%s`, `%d`, `%u`, `%x`, `%p`, `%c` and `%%` support. Conformance tests cover classification, truncation, signed formatting and hexadecimal formatting. The full strict test suite and userspace/kernel image build pass.
