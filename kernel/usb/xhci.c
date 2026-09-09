@@ -400,8 +400,15 @@ int xhci_init(void) {
                         serial_write("xHCI: candidate reset failed\r\n");
                         continue;
                     }
-                    if (setup_runtime(c, op, &runtimes[count]) != 0) {
-                        serial_write("xHCI: candidate runtime failed\r\n");
+                    int runtime_rc = setup_runtime(c, op, &runtimes[count]);
+                    if (runtime_rc != 0) {
+                        serial_write("xHCI: candidate runtime failed rc=");
+                        serial_write_dec((uint64_t)(runtime_rc < 0 ? -runtime_rc : runtime_rc));
+                        serial_write(" free=");
+                        serial_write_dec(pmm_free_pages());
+                        serial_write(" ac64=");
+                        serial_write_dec((uint64_t)((c->hcc_params1 & XHCI_HCC_AC64) != 0u));
+                        serial_write("\r\n");
                         continue;
                     }
                     *(volatile uint32_t *)(op + XHCI_USBCMD) |= XHCI_CMD_RS;
