@@ -173,7 +173,17 @@ int vfs_write(uint64_t pid,int fd,const void*buffer,size_t size,size_t*out_writt
 if(!fs)return -3;
     rixfs_inode_disk_t in;if(rixfs_read_inode(fs,fds[ps][fd].inode,&in))return -4;uint64_t off=fds[ps][fd].append?in.size:fds[ps][fd].offset;if(off>UINT64_MAX-(uint64_t)size)return -5;if(off+(uint64_t)size>in.size&&rixfs_truncate(fs,in.inode,off+(uint64_t)size))return -6;if(size&&rixfs_write(fs,in.inode,off,buffer,size))return -7;fds[ps][fd].offset=off+size;*out_written=size;return 0;
 }
-int vfs_readdir(uint64_t pid,int fd,uint64_t*offset,rix_vfs_dirent_t*out,char*name,size_t cap){size_t ps;if(pid_slot(pid,&ps)||fd<0||fd>=RIX_VFS_FD_MAX||!fds[ps][fd].used||!offset||!out||!name)return -1;if(fds[ps][fd].type!=RIX_VFS_DIR)return -2;rixfs_dirent_disk_t e;int r=rixfs_readdir(vfs_root_fs(),fds[ps][fd].inode,offset,&e,name,cap);if(r)return r;out->inode=e.inode;out->type=e.type;return 0;}
+int vfs_seek(uint64_t pid,int fd,int64_t offset,int whence,uint64_t*out_offset){
+    size_t ps;if(pid_slot(pid,&ps)||fd<0||fd>=RIX_VFS_FD_MAX||!fds[ps][fd].used||!out_offset)return -1;
+    if(fds[ps][fd].type==VFS_FD_PIPE_READ||fds[ps][fd].type==VFS_FD_PIPE_WRITE)return -2;
+    if(fds[ps][fd].type!=RIX_VFS_FILE)return -3;
+    uint64_t base=0;if(whence==1)base=fds[ps][fd].offset;else if(whence==2){rixfs_inode_disk_t in;if(rixfs_read_inode(vfs_root_fs(),fds[ps][fd].inode,&in))return -4;base=in.size;}else if(whence!=0)return -5;
+    if(offset<0 && (uint64_t)(-(offset+1))+1u>base)return -6;
+    uint64_t next=offset<0?base-((uint64_t)(-(offset+1))+1u):base+(uint64_t)offset;
+    if(next<base&&offset>=0)return -6;
+    fds[ps][fd].offset=next;*out_offset=next;return 0;
+}
+int vfs_readdir(uint64_t pid,int fd,uint64_t*offset,rix_vfs_dirent_t*out,char*name,size_t cap){size_t ps;if(pid_slot(pid,&ps)||fd<0||fd>=RIX_VFS_FD_MAX||!fds[ps][fd].used||!offset||!out||!name)return -1;if(fds[ps][fd].type!=RIX_VFS_DIR)return -2;*offset=fds[ps][fd].offset;rixfs_dirent_disk_t e;int r=rixfs_readdir(vfs_root_fs(),fds[ps][fd].inode,offset,&e,name,cap);if(r)return r;fds[ps][fd].offset=*offset;out->inode=e.inode;out->type=e.type;return 0;}
 int vfs_stat(const char*path,rix_vnode_t*out){if(!out)return -1;rix_vfs_path_t p;int rc=vfs_lookup(path,&p);if(rc)return rc;*out=*p.node;return 0;}
 int vfs_chmod(const char*path,uint32_t mode){if(!path||(mode&~07777u))return -1;rix_vfs_path_t p;int lookup_rc=vfs_lookup(path,&p);if(lookup_rc)return lookup_rc;if(!p.node)return -2;pid_t pid=process_current();if(process_uid(pid)==0&&!process_has_capability(pid,RIX_CAP_DAC_OVERRIDE))return RIX_VFS_ERR_PERMISSION;if(process_uid(pid)!=0&&process_uid(pid)!=p.node->uid)return RIX_VFS_ERR_PERMISSION;
 rixfs_t*fs=vfs_root_fs();if(!fs)return -4;rixfs_inode_disk_t in;if(rixfs_read_inode(fs,p.node->inode,&in))return -5;in.mode=(in.mode&RIXFS_IFMT)|(mode&07777u);return rixfs_write_inode(fs,in.inode,&in);}

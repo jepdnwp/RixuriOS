@@ -170,6 +170,9 @@ size_t fwrite(const void *buffer, size_t size, size_t count, FILE *stream) {
     return result < 0 ? 0 : (size_t)result / size;
 }
 int fflush(FILE *stream) { if (!stream) { errno = RIX_EINVAL; return -1; } return 0; }
+int fseek(FILE *stream, long offset, int whence) { if (!stream) { errno = RIX_EINVAL; return -1; } return lseek(stream->fd, (off_t)offset, whence) < 0 ? -1 : 0; }
+long ftell(FILE *stream) { if (!stream) { errno = RIX_EINVAL; return -1L; } return (long)lseek(stream->fd, 0, SEEK_CUR); }
+void rewind(FILE *stream) { if (stream) (void)fseek(stream, 0, SEEK_SET); }
 
 DIR *opendir(const char *path) {
     if (!path) { errno = RIX_EINVAL; return 0; }
@@ -182,7 +185,13 @@ DIR *opendir(const char *path) {
     return directory;
 }
 struct dirent *readdir(DIR *directory) {
-    if (!directory || directory->index >= directory->count) return 0;
+    if (!directory) { errno = RIX_EINVAL; return 0; }
+    if (directory->index >= directory->count) {
+        directory->index = 0; directory->count = 0;
+        size_t fetched = 0;
+        if (getdents(directory->fd, (rix_dirent_t *)directory->entries, 16u, &fetched) < 0 || !fetched) return 0;
+        directory->count = fetched;
+    }
     return &directory->entries[directory->index++];
 }
 int closedir(DIR *directory) { if (!directory) { errno = RIX_EINVAL; return -1; } int rc = close(directory->fd); free(directory); return rc; }

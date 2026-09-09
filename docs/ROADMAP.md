@@ -1491,3 +1491,8 @@ Compatibility headers for file flags, directory entries and stat mode/type macro
 ### Phase 22 stream/directory checkpoint — 2026-09-09
 
 A minimal descriptor-backed `FILE` API and bounded directory iterator API are now available in freestanding libc. They provide a POSIX-shaped surface over the existing RixuriOS syscalls; full buffering, seek state and multi-batch directory refill remain open work.
+
+
+### Phase 22 seek/refill checkpoint — 2026-09-09
+
+The POSIX-shaped file layer now has persistent descriptor offsets, kernel-backed `lseek`, libc stream seek helpers, and multi-batch directory iteration through `readdir`. Full buffering and advanced stream state remain future work.

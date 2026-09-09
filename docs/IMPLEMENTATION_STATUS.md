@@ -775,3 +775,8 @@ The freestanding libc now exposes compatibility headers for `fcntl.h`, `dirent.h
 ## Phase 22 stream/directory checkpoint — 2026-09-09
 
 The freestanding libc now includes a minimal `FILE` abstraction with `fopen`, `fclose`, `fread`, `fwrite` and `fflush`, layered over the existing file-descriptor syscalls. Directory iteration is available through `opendir`, `readdir` and `closedir`, using the bounded `getdents` ABI and libc heap storage. Strict userspace/kernel builds, libc-test and the full host suite pass. Buffering and repeated directory refill remain future enhancements.
+
+
+## Phase 22 seek/refill checkpoint — 2026-09-09
+
+File descriptors now support persistent offsets across reads, writes and directory enumeration. Kernel syscall 8 provides `lseek` with `SEEK_SET`, `SEEK_CUR` and `SEEK_END`; libc exposes `lseek`, `fseek`, `ftell` and `rewind`. `getdents` now advances the descriptor offset, allowing `readdir` to refill batches instead of repeating the first entries. Strict builds, libc-test and the full host suite pass.

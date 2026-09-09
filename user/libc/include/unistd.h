@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stddef.h>
 typedef int64_t rix_ssize_t;
+typedef int64_t off_t;
 typedef uint64_t rix_pid_t;
 typedef struct { rix_pid_t session; rix_pid_t leader; uint32_t uid; uint32_t controlling_tty; uint32_t flags; } rix_session_info_t;
 #define RIX_PROCESS_NAME_MAX 32u
@@ -48,6 +49,7 @@ int unlink(const char *path);
 int link(const char *old_path, const char *new_path);
 int getdents(int fd, rix_dirent_t *entries, size_t capacity, size_t *count);
 int getdents64(int fd, rix_dirent_t *entries, size_t capacity, size_t *count);
+off_t lseek(int fd, off_t offset, int whence);
 int stat(const char *path, rix_stat_t *out);
 int close(int fd);
 int pipe(int fds[2]);
