@@ -8,3 +8,5 @@ size_t strlen(const char *text);
 int strcmp(const char *left, const char *right);
 int strncmp(const char *left, const char *right, size_t length);
 char *strchr(const char *text, int value);
+char *strerror(int error);
+int strerror_r(int error, char *buffer, size_t capacity);

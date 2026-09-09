@@ -67,6 +67,12 @@ int main(void) {
     assert(fprintf(&formatted_stream, "%s:%d", "fmt", 7) == 5);
     errno = RIX_EINVAL;
     assert(fprintf(&formatted_stream, "x") == 1);
+    assert(strcmp(strerror(RIX_ENOENT), "No such file or directory") == 0);
+    char error_text[8];
+    assert(strerror_r(RIX_ENOENT, error_text, sizeof(error_text)) == RIX_ERANGE && error_text[7] == 0);
+    assert(fgetc(&formatted_stream) == EOF && ferror(&formatted_stream) && !feof(&formatted_stream));
+    clearerr(&formatted_stream);
+    assert(!ferror(&formatted_stream) && !feof(&formatted_stream));
     char *end = 0;
     assert(atoi("-42") == -42);
     assert(strtol("0x2a", &end, 0) == 42 && *end == 0);
