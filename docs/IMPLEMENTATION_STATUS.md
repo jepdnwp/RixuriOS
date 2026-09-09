@@ -728,3 +728,8 @@ The physical evidence boundary remains explicit: RTL8125 link/TX/RX, interrupt-d
 ## IPv6 foundation — 2026-09-09
 
 The IPv6 wire foundation is implemented: Ethernet IPv6 EtherType support, bounded header parsing/building, ICMPv6 Echo checksum handling, and option-free Neighbor Solicitation/Advertisement messages. Host `net-test` passes. Full IPv6 transport and hardware evidence remain open because neighbor-cache integration, autoconfiguration, routing, IPv6 sockets and QEMU/physical traffic have not yet been completed.
+
+
+## IPv6 control plane — 2026-09-09
+
+Router Solicitation/Advertisement, Prefix Information, `/64` SLAAC, modified-EUI-64 link-local generation and an expiring Neighbor Cache are implemented and host-tested. IPv6 transport sockets and device-stack dispatch remain open; no independent IPv6 QEMU or physical-hardware PASS is claimed.

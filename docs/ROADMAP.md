@@ -1446,3 +1446,8 @@ Checkpoint status: `CP0 SPEC PASS`, `CP1 BUILD PASS`, `CP2 UNIT PASS`, `CP3 BOOT
 ### Phase 21 IPv6 foundation checkpoint — 2026-09-09
 
 IPv6 is no longer only an architecture placeholder. Ethernet now accepts `0x86DD`; bounded IPv6 header construction/parsing, payload validation, ICMPv6 pseudo-header checksums, Echo Request/Reply and option-free Neighbor Solicitation/Advertisement bodies are implemented and covered by host tests. Full IPv6 remains open for address autoconfiguration, Router Solicitation/Advertisement, neighbor-cache/device dispatch, routing, transport sockets and QEMU/physical traffic evidence.
+
+
+### Phase 21 IPv6 control-plane checkpoint — 2026-09-09
+
+Router Solicitation/Advertisement, Prefix Information parsing, `/64` SLAAC construction, modified-EUI-64 link-local generation and an expiring Neighbor Cache are implemented and host-tested. IPv6 transport sockets, device-stack dispatch and independent QEMU/physical IPv6 evidence remain the final IPv6 integration gate.

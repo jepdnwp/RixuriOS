@@ -149,3 +149,116 @@ int rix_net_icmpv6_neighbor_pull(rix_net_packet_t *packet,
     copy16(target, data + 8);
     return rix_net_packet_pull(packet, 24, 0);
 }
+
+
+int rix_net_icmpv6_router_solicit_push(rix_net_packet_t *packet,
+                                       const uint8_t source[16], const uint8_t destination[16]) {
+    if (!packet || !source || !destination) return -1;
+    uint8_t *body = 0;
+    if (rix_net_packet_put(packet, 4, (void **)&body) != 0) return -1;
+    for (size_t i = 0; i < 4; ++i) body[i] = 0;
+    return icmpv6_put(packet, RIX_NET_ICMPV6_ROUTER_SOLICIT, 0, source, destination);
+}
+
+int rix_net_icmpv6_router_advert_push(rix_net_packet_t *packet,
+                                      const uint8_t source[16], const uint8_t destination[16],
+                                      uint8_t hop_limit, uint8_t flags,
+                                      uint16_t router_lifetime, const uint8_t prefix[16],
+                                      uint8_t prefix_length) {
+    if (!packet || !source || !destination || !prefix || prefix_length > 128u) return -1;
+    uint8_t *body = 0;
+    if (rix_net_packet_put(packet, 44, (void **)&body) != 0) return -1;
+    body[0] = hop_limit; body[1] = flags;
+    uint16_t lifetime = be16(router_lifetime);
+    body[2] = ((uint8_t *)&lifetime)[0]; body[3] = ((uint8_t *)&lifetime)[1];
+    for (size_t i = 4; i < 12; ++i) body[i] = 0;
+    body[12] = 3; body[13] = 4; body[14] = prefix_length; body[15] = 0xc0;
+    uint32_t valid = be32(0xffffffffu);
+    for (size_t i = 0; i < 4; ++i) body[16 + i] = ((uint8_t *)&valid)[i];
+    for (size_t i = 20; i < 28; ++i) body[i] = 0;
+    for (size_t i = 0; i < 16; ++i) body[28 + i] = prefix[i];
+    return icmpv6_put(packet, RIX_NET_ICMPV6_ROUTER_ADVERT, 0, source, destination);
+}
+
+int rix_net_icmpv6_router_advert_pull(rix_net_packet_t *packet,
+                                      const uint8_t source[16], const uint8_t destination[16],
+                                      uint8_t *hop_limit, uint8_t *flags,
+                                      uint16_t *router_lifetime, uint8_t prefix[16],
+                                      uint8_t *prefix_length) {
+    if (!packet || !source || !destination || !hop_limit || !flags ||
+        !router_lifetime || !prefix || !prefix_length || rix_net_packet_length(packet) != 48) return -1;
+    const uint8_t *data = rix_net_packet_data(packet);
+    if (data[0] != RIX_NET_ICMPV6_ROUTER_ADVERT || data[1] != 0 ||
+        data[16] != 3 || data[17] != 4 || data[19] != 0xc0 || data[18] > 128u ||
+        icmpv6_checksum(source, destination, data, rix_net_packet_length(packet)) != 0) return -2;
+    *hop_limit = data[4]; *flags = data[5];
+    *router_lifetime = (uint16_t)(((uint16_t)data[6] << 8) | data[7]);
+    *prefix_length = data[18];
+    copy16(prefix, data + 32);
+    return rix_net_packet_pull(packet, 48, 0);
+}
+
+int rix_net_ipv6_slaac_address(const uint8_t prefix[16], uint8_t prefix_length,
+                               const uint8_t interface_id[8], uint8_t address[16]) {
+    if (!prefix || !interface_id || !address || prefix_length > 128u) return -1;
+    copy16(address, prefix);
+    for (size_t bit = prefix_length; bit < 128u; ++bit) address[bit / 8] &= (uint8_t)~(1u << (7u - (bit % 8u)));
+    if (prefix_length != 64u) return -2;
+    for (size_t i = 0; i < 8; ++i) address[8 + i] = interface_id[i];
+    return 0;
+}
+
+int rix_net_ipv6_link_local_from_mac(const uint8_t mac[6], uint8_t address[16]) {
+    if (!mac || !address) return -1;
+    for (size_t i = 0; i < 16; ++i) address[i] = 0;
+    address[0] = 0xfe; address[1] = 0x80;
+    address[8] = (uint8_t)(mac[0] ^ 0x02u); address[9] = mac[1]; address[10] = mac[2];
+    address[11] = 0xff; address[12] = 0xfe; address[13] = mac[3];
+    address[14] = mac[4]; address[15] = mac[5];
+    return 0;
+}
+
+static int ipv6_address_equal(const uint8_t left[16], const uint8_t right[16]) {
+    uint8_t different = 0;
+    for (size_t i = 0; i < 16; ++i) different |= (uint8_t)(left[i] ^ right[i]);
+    return different == 0;
+}
+static void copy_mac6(uint8_t destination[6], const uint8_t source[6]) {
+    for (size_t i = 0; i < 6; ++i) destination[i] = source[i];
+}
+void rix_net_ipv6_neighbor_init(rix_net_ipv6_neighbor_cache_t *cache) {
+    if (!cache) return;
+    for (size_t i = 0; i < RIX_NET_IPV6_NEIGHBOR_CACHE_SIZE; ++i) cache->entries[i].used = 0;
+}
+int rix_net_ipv6_neighbor_learn(rix_net_ipv6_neighbor_cache_t *cache,
+                                const uint8_t address[16], const uint8_t mac[6], uint64_t expires) {
+    if (!cache || !address || !mac) return -1;
+    size_t slot = RIX_NET_IPV6_NEIGHBOR_CACHE_SIZE;
+    for (size_t i = 0; i < RIX_NET_IPV6_NEIGHBOR_CACHE_SIZE; ++i)
+        if (cache->entries[i].used && ipv6_address_equal(cache->entries[i].address, address)) { slot = i; break; }
+    if (slot == RIX_NET_IPV6_NEIGHBOR_CACHE_SIZE)
+        for (size_t i = 0; i < RIX_NET_IPV6_NEIGHBOR_CACHE_SIZE; ++i)
+            if (!cache->entries[i].used) { slot = i; break; }
+    if (slot == RIX_NET_IPV6_NEIGHBOR_CACHE_SIZE) return -2;
+    cache->entries[slot].used = 1; copy16(cache->entries[slot].address, address);
+    copy_mac6(cache->entries[slot].mac, mac); cache->entries[slot].expires = expires;
+    return 0;
+}
+int rix_net_ipv6_neighbor_lookup(rix_net_ipv6_neighbor_cache_t *cache,
+                                 const uint8_t address[16], uint64_t now, uint8_t mac[6]) {
+    if (!cache || !address || !mac) return -1;
+    for (size_t i = 0; i < RIX_NET_IPV6_NEIGHBOR_CACHE_SIZE; ++i) {
+        rix_net_ipv6_neighbor_t *entry = &cache->entries[i];
+        if (entry->used && entry->expires > now && ipv6_address_equal(entry->address, address)) {
+            copy_mac6(mac, entry->mac); return 0;
+        }
+    }
+    return -2;
+}
+int rix_net_ipv6_neighbor_expire(rix_net_ipv6_neighbor_cache_t *cache, uint64_t now) {
+    if (!cache) return -1;
+    int expired = 0;
+    for (size_t i = 0; i < RIX_NET_IPV6_NEIGHBOR_CACHE_SIZE; ++i)
+        if (cache->entries[i].used && cache->entries[i].expires <= now) { cache->entries[i].used = 0; ++expired; }
+    return expired;
+}

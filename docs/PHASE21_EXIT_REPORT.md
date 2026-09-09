@@ -77,3 +77,10 @@ The next work belongs to the physical qualification track rather than to the com
 The IPv6 foundation is now implemented and host-tested. Ethernet accepts EtherType `0x86DD`; the kernel has bounded IPv6 version/header validation, traffic class and flow-label handling, payload-length enforcement, ICMPv6 pseudo-header checksums, Echo Request/Reply and option-free Neighbor Solicitation/Advertisement bodies. The host network test covers valid round trips and checksum/type corruption rejection.
 
 This is not yet a claim of full IPv6 networking. Address autoconfiguration, Router Solicitation/Advertisement, Neighbor Cache integration with the device stack, IPv6 routing, UDP/TCP socket endpoints, fragmentation policy and QEMU/physical IPv6 traffic remain open.
+
+
+## IPv6 control-plane checkpoint — 2026-09-09
+
+The IPv6 control-plane foundation now includes Router Solicitation and Router Advertisement messages with a Prefix Information option, deterministic `/64` SLAAC address construction, modified-EUI-64 link-local address generation, and a bounded eight-entry Neighbor Cache with expiry and lookup semantics. Host tests cover RA parsing, prefix extraction, SLAAC, link-local generation, cache learning, expiration and rejection of malformed messages.
+
+IPv6 transport sockets and device-stack dispatch are still separate integration work. Until that work and an independent QEMU/physical IPv6 observation exist, the IPv6 portion remains an implementation checkpoint rather than a full-network PASS.

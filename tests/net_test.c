@@ -144,6 +144,38 @@ int main(void) {
                                         &nd_type, &nd_flags, nd_target) != 0);
 
     rix_net_packet_init(&packet);
+    assert(rix_net_icmpv6_router_solicit_push(&packet, ipv6_source, ipv6_destination) == 0);
+    assert(rix_net_packet_length(&packet) == 8);
+    uint8_t ra_prefix[16] = {0x20,0x01,0x0d,0xb8,0x12,0x34,0,0,0,0,0,0,0,0,0,0};
+    uint8_t ra_got_prefix[16] = {0}; uint8_t ra_hop = 0, ra_flags = 0, ra_prefix_len = 0;
+    uint16_t ra_lifetime = 0;
+    rix_net_packet_init(&packet);
+    assert(rix_net_icmpv6_router_advert_push(&packet, ipv6_destination, ipv6_source,
+                                             64, 0xc0, 1800, ra_prefix, 64) == 0);
+    assert(rix_net_icmpv6_router_advert_pull(&packet, ipv6_destination, ipv6_source,
+                                             &ra_hop, &ra_flags, &ra_lifetime,
+                                             ra_got_prefix, &ra_prefix_len) == 0);
+    assert(ra_hop == 64 && ra_flags == 0xc0 && ra_lifetime == 1800 && ra_prefix_len == 64 &&
+           memcmp(ra_got_prefix, ra_prefix, 16) == 0);
+    const uint8_t iid[8] = {0x02,0xaa,0xbb,0xff,0xfe,0xcc,0xdd,0xee};
+    uint8_t slaac[16] = {0};
+    assert(rix_net_ipv6_slaac_address(ra_prefix, 64, iid, slaac) == 0 &&
+           memcmp(slaac, ra_prefix, 8) == 0 && memcmp(slaac + 8, iid, 8) == 0);
+    const uint8_t ipv6_test_mac[6] = {0x00,0x11,0x22,0x33,0x44,0x55};
+    uint8_t link_local[16] = {0};
+    assert(rix_net_ipv6_link_local_from_mac(ipv6_test_mac, link_local) == 0 &&
+           link_local[0] == 0xfe && link_local[1] == 0x80 && link_local[8] == 0x02 &&
+           link_local[11] == 0xff && link_local[12] == 0xfe);
+    rix_net_ipv6_neighbor_cache_t neighbors;
+    uint8_t resolved_mac[6] = {0};
+    rix_net_ipv6_neighbor_init(&neighbors);
+    assert(rix_net_ipv6_neighbor_learn(&neighbors, ipv6_destination, ipv6_test_mac, 100) == 0);
+    assert(rix_net_ipv6_neighbor_lookup(&neighbors, ipv6_destination, 99, resolved_mac) == 0 &&
+           memcmp(resolved_mac, ipv6_test_mac, 6) == 0);
+    assert(rix_net_ipv6_neighbor_expire(&neighbors, 100) == 1);
+    assert(rix_net_ipv6_neighbor_lookup(&neighbors, ipv6_destination, 100, resolved_mac) != 0);
+
+    rix_net_packet_init(&packet);
     assert(rix_net_udp_push(&packet, 0xc0a80102u, 0xc0a80101u, 12000, 53,
                             payload, sizeof(payload)) == 0);
     rix_net_udp_header_t udp;

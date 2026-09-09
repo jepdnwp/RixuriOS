@@ -64,3 +64,8 @@ Physical RTL8125 TX/RX, link negotiation, interrupt delivery, reset/recovery and
 The first IPv6 protocol slice is implemented. Ethernet now accepts IPv6 EtherType `0x86DD`. The wire layer validates IPv6 version, payload length, traffic class and flow label. ICMPv6 Echo Request/Reply uses the RFC pseudo-header checksum, and bounded Neighbor Solicitation/Advertisement bodies are available for later neighbor-cache integration. Host tests cover valid packets and corrupted checksum/type rejection.
 
 The full IPv6 gate remains open until address configuration, Router Advertisement handling, neighbor-cache/device dispatch, routing and IPv6 socket transport are integrated and exercised on QEMU or physical networking.
+
+
+## IPv6 control-plane checkpoint — 2026-09-09
+
+Router Solicitation and Router Advertisement support now carries a bounded Prefix Information option. The implementation derives a `/64` SLAAC address, generates a modified-EUI-64 link-local address from a MAC address, and maintains an expiring eight-entry Neighbor Cache. These semantics are host-tested. IPv6 transport sockets and device-stack dispatch remain the final integration gate for full Phase 21 IPv6 closure.
