@@ -780,3 +780,8 @@ The freestanding libc now includes a minimal `FILE` abstraction with `fopen`, `f
 ## Phase 22 seek/refill checkpoint — 2026-09-09
 
 File descriptors now support persistent offsets across reads, writes and directory enumeration. Kernel syscall 8 provides `lseek` with `SEEK_SET`, `SEEK_CUR` and `SEEK_END`; libc exposes `lseek`, `fseek`, `ftell` and `rewind`. `getdents` now advances the descriptor offset, allowing `readdir` to refill batches instead of repeating the first entries. Strict builds, libc-test and the full host suite pass.
+
+
+## Phase 22 stdio I/O checkpoint — 2026-09-09
+
+The stdio surface now includes `fgetc`, `fputc`, `fgets`, `fputs`, `setvbuf` and `setbuf`, using descriptor-backed reads and writes with standard EOF/error behavior. The current setvbuf layer validates buffering modes but remains unbuffered internally; a real read/write buffer is reserved for a later optimization pass. Strict builds, libc-test and the full host suite pass.

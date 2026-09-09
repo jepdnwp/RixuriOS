@@ -1496,3 +1496,8 @@ A minimal descriptor-backed `FILE` API and bounded directory iterator API are no
 ### Phase 22 seek/refill checkpoint — 2026-09-09
 
 The POSIX-shaped file layer now has persistent descriptor offsets, kernel-backed `lseek`, libc stream seek helpers, and multi-batch directory iteration through `readdir`. Full buffering and advanced stream state remain future work.
+
+
+### Phase 22 stdio I/O checkpoint — 2026-09-09
+
+Descriptor-backed character and line I/O now covers `fgetc`, `fputc`, `fgets` and `fputs`, with `setvbuf`/`setbuf` compatibility entry points. Buffer validation is implemented, while true buffered read/write optimization remains future work.

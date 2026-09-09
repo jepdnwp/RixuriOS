@@ -54,5 +54,10 @@ int main(void) {
     entry.d_ino = 7;
     assert(entry.d_ino == 7 && AT_FDCWD == -100 && O_CREAT == 4u);
     assert(S_ISDIR(S_IFDIR) && S_ISREG(S_IFREG));
+    FILE stream = { .fd = 1 };
+    char io_buffer[32];
+    assert(setvbuf(&stream, io_buffer, _IOFBF, sizeof(io_buffer)) == 0);
+    assert(fputs("stdio", &stream) == 0);
+    assert(fputc('!', &stream) == '!');
     return 0;
 }

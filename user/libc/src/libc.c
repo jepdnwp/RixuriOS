@@ -173,6 +173,17 @@ int fflush(FILE *stream) { if (!stream) { errno = RIX_EINVAL; return -1; } retur
 int fseek(FILE *stream, long offset, int whence) { if (!stream) { errno = RIX_EINVAL; return -1; } return lseek(stream->fd, (off_t)offset, whence) < 0 ? -1 : 0; }
 long ftell(FILE *stream) { if (!stream) { errno = RIX_EINVAL; return -1L; } return (long)lseek(stream->fd, 0, SEEK_CUR); }
 void rewind(FILE *stream) { if (stream) (void)fseek(stream, 0, SEEK_SET); }
+int fgetc(FILE *stream) { unsigned char value; return (!stream || read(stream->fd, &value, 1) != 1) ? EOF : (int)value; }
+int fputc(int value, FILE *stream) { unsigned char character=(unsigned char)value; return (!stream || write(stream->fd, &character, 1) != 1) ? EOF : (int)character; }
+char *fgets(char *buffer, int capacity, FILE *stream) {
+    if (!buffer || capacity <= 0 || !stream) { errno=RIX_EINVAL; return 0; }
+    int index=0; while (index+1 < capacity) { int value=fgetc(stream); if (value==EOF) break; buffer[index++]=(char)value; if (value=='\n') break; }
+    if (!index) return 0;
+    buffer[index]=0; return buffer;
+}
+int fputs(const char *text, FILE *stream) { if (!text || !stream) { errno=RIX_EINVAL; return EOF; } size_t length=strlen(text); return write(stream->fd,text,length)==(rix_ssize_t)length ? 0 : EOF; }
+int setvbuf(FILE *stream, char *buffer, int mode, size_t size) { (void)buffer; (void)size; if (!stream || mode < _IONBF || mode > _IOLBF) { errno=RIX_EINVAL; return -1; } return 0; }
+void setbuf(FILE *stream, char *buffer) { (void)setvbuf(stream, buffer, buffer ? _IOFBF : _IONBF, buffer ? BUFSIZ : 0); }
 
 DIR *opendir(const char *path) {
     if (!path) { errno = RIX_EINVAL; return 0; }
