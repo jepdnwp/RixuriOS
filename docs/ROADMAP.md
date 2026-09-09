@@ -1518,6 +1518,8 @@ Freestanding numeric conversion, absolute-value and comparator-based sorting hel
 A bounded heap-backed environment API and deterministic random helpers are now available. The random helpers are explicitly non-cryptographic until a kernel entropy source is added; security-sensitive consumers must not use them.
 ### Phase 22 time compatibility checkpoint — 2026-09-09
 The freestanding libc now exposes a UTC-oriented `time.h` surface: `time`, `gmtime[_r]`, `localtime[_r]`, `mktime`, `asctime[_r]`, `ctime[_r]` and `difftime`. `time` is backed by the existing kernel realtime clock syscall; calendar conversion handles leap years and epoch round trips. Locale/timezone formatting remains intentionally minimal and UTC-based. Strict libc, complete host-suite, kernel image and whitespace checks pass.
+### Phase 22 printf width checkpoint — 2026-09-09
+`vsnprintf` now parses basic `-` and `0` flags plus decimal field widths for character, string and integer conversions. Left alignment, space padding and zero padding are covered by tests, including `%08x`; this also makes the existing calendar rendering helpers produce fixed-width fields. Strict libc, complete host-suite, kernel image and whitespace checks pass.
 ### Phase 22 stdlib search/allocation checkpoint — 2026-09-09
 The freestanding libc now provides comparator-based `bsearch`, complementing `qsort`. The allocator rejects size-plus-header and alignment-rounding overflow before invoking `sbrk`; sorted lookup tests cover hits and misses, while existing heap tests continue to cover zeroing and reallocation. Strict libc, complete host-suite, kernel image and whitespace checks pass.
 ### Phase 22 ctype compatibility checkpoint — 2026-09-09
