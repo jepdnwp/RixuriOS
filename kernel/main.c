@@ -26,6 +26,7 @@
 #include "time/rtc.h"
 #include "time/time.h"
 #include "net/e1000.h"
+#include "net/rtl8125.h"
 #include "net/device.h"
 #include "net/stack.h"
 #include "net/dhcp.h"
@@ -190,7 +191,8 @@ static void network_poll_worker(void *arg){
   scheduler_yield();
  }
 }
-static void try_mount_root(void){const char *names[]={"nvme0n1","nvme0n1p1","nvme1n1","nvme1n1p1"};for(size_t i=0;i<sizeof(names)/sizeof(names[0]);i++){rix_block_device_t*d=block_find(names[i]);if(!d)continue;int rc=vfs_mount_root(d);klog_write("VFS: mount ");klog_write(names[i]);klog_write(" rc=");klog_write_dec((uint64_t)(rc<0?-rc:rc));klog_write("\r\n");if(rc==0)return;}}
+static const char *vfs_mount_rc_string(int rc){switch(rc){case 0:return "ok";case -1:return "bad device";case -2:return "no memory";case -3:return "superblock read IO error";case -4:return "superblock too small";case -5:return "not a RixFS superblock";case -6:return "superblock geometry inconsistent";case -7:return "inode table overflow";case -8:return "superblock layout overlap";case -9:return "journal replay failed";default:return "unknown";}}
+static void try_mount_root(void){const char *names[]={"nvme0n1","nvme0n1p1","nvme1n1","nvme1n1p1"};for(size_t b=0;b<block_device_count();b++){const rix_block_device_t*bd=block_device_at(b);if(!bd)continue;klog_write("BLOCK: ");klog_write(bd->name);klog_write(" sectors=");klog_write_dec(bd->sector_count);klog_write(" sector_size=");klog_write_dec(bd->sector_size);klog_write("\r\n");}for(size_t c=0;c<nvme_controller_count();c++){const rix_nvme_controller_t*nc=nvme_controller(c);if(!nc)continue;for(uint32_t ns=0;ns<32u;ns++){if(!nc->namespaces[ns].used)continue;klog_write("NVMe: ctrl=");klog_write_dec(c);klog_write(" ns=");klog_write_dec(nc->namespaces[ns].nsid);klog_write(" sectors=");klog_write_dec(nc->namespaces[ns].size_lba);klog_write(" sector_size=");klog_write_dec(nc->namespaces[ns].lba_size);klog_write("\r\n");}}int last_rc=0,tried=0;for(size_t i=0;i<sizeof(names)/sizeof(names[0]);i++){rix_block_device_t*d=block_find(names[i]);if(!d)continue;tried=1;int rc=vfs_mount_root(d);last_rc=rc;klog_write("VFS: mount ");klog_write(names[i]);klog_write(" rc=");klog_write_dec((uint64_t)(rc<0?-rc:rc));klog_write("\r\n");if(rc==0)return;}if(!tried)klog_write("VFS: no candidate block devices present (embedded init continues)\r\n");else if(last_rc!=0){klog_write("VFS: no bootable RixFS volume (");klog_write(vfs_mount_rc_string(last_rc));klog_write("; embedded init continues)\r\n");}}
 
 void kernel_main(const rixuri_boot_info_t *boot){
  /* serial + GDT/IDT first. NO framebuffer access before VMM init! */
@@ -235,27 +237,37 @@ void kernel_main(const rixuri_boot_info_t *boot){
  klog_write(" height=");klog_write_dec(boot->framebuffer_height);
  klog_write(" pitch=");klog_write_dec(boot->framebuffer_pitch);
  klog_write(" format=");klog_write_dec(boot->framebuffer_format);klog_write("\r\n");
- hid_init();klog_write("TTY/HID: initialized\r\n");
- if(boot->rsdp){if(acpi_init(boot->rsdp)==0){klog_write("ACPI CPUs: ");klog_write_dec(acpi_cpu_count());klog_write(" IOAPICs: ");klog_write_dec(acpi_ioapic_count());klog_write("\r\n");}else klog_write("ACPI: unavailable\r\n");}
- if(lapic_init()!=0)panic("local APIC initialization failed");
- if(pci_init()!=0)panic("PCI initialization failed");
- klog_write("PCI: devices=");klog_write_dec(pci_device_count());klog_write("\r\n");
- (void)rix_e1000_init();
- if(rix_net_device_init()==0){const rix_net_device_info_t *net=rix_net_device_info();klog_write("NET: device link=");klog_write_dec(net->link_up);klog_write(" ip=");klog_write_hex(net->address);klog_write(" gateway=");klog_write_hex(net->gateway);klog_write(" dns=");klog_write_hex(net->dns);klog_write("\r\n");if(rix_net_stack_init(&net_stack)!=0)klog_write("NET: stack init failed\r\n");else if(!net->link_up)klog_write("NET: link down, keeping static config\r\n");else if(rix_net_dhcp_run()==0){net=rix_net_device_info();klog_write("NET: dhcp ip=");klog_write_hex(net->address);klog_write(" gateway=");klog_write_hex(net->gateway);klog_write(" dns=");klog_write_hex(net->dns);klog_write("\r\n");}else klog_write("NET: dhcp failed, using static config\r\n");}
+  hid_init();klog_write("TTY/HID: initialized\r\n");
+  klog_write("BOOT: ACPI begin\r\n");
+  if(boot->rsdp){int acpi_rc=acpi_init(boot->rsdp);if(acpi_rc==0){klog_write("ACPI CPUs: ");klog_write_dec(acpi_cpu_count());klog_write(" IOAPICs: ");klog_write_dec(acpi_ioapic_count());klog_write("\r\n");}else{klog_write("ACPI: unavailable (");klog_write(acpi_error_string(acpi_rc));klog_write(")\r\n");}}
+  klog_write("BOOT: ACPI done\r\n");
+  if(lapic_init()!=0)panic("local APIC initialization failed");
+  if(pci_init()!=0)panic("PCI initialization failed");
+  klog_write("PCI: devices=");klog_write_dec(pci_device_count());klog_write("\r\n");
+  pci_print_devices();
+   klog_write("BOOT: PCI done\r\n");
+   (void)rix_e1000_init();
+ (void)rix_rtl8125_init();
+ if(rix_net_device_init()==0){const rix_net_device_info_t *net=rix_net_device_info();klog_write("NET: backend=");klog_write(rix_net_device_backend());klog_write(" device link=");klog_write_dec(net->link_up);klog_write(" ip=");klog_write_hex(net->address);klog_write(" gateway=");klog_write_hex(net->gateway);klog_write(" dns=");klog_write_hex(net->dns);klog_write("\r\n");if(rix_net_stack_init(&net_stack)!=0)klog_write("NET: stack init failed\r\n");else if(!net->link_up)klog_write("NET: link down, keeping static config\r\n");else if(rix_net_dhcp_run()==0){net=rix_net_device_info();klog_write("NET: dhcp ip=");klog_write_hex(net->address);klog_write(" gateway=");klog_write_hex(net->gateway);klog_write(" dns=");klog_write_hex(net->dns);klog_write("\r\n");}else klog_write("NET: dhcp failed, using static config\r\n");}
  else klog_write("NET: no usable network device\r\n");
  if(block_init()!=0)panic("block subsystem initialization failed");
  if(vfs_init()!=0)panic("VFS initialization failed");
- if(nvme_init()!=0)panic("NVMe initialization failed");
- klog_write("NVMe: controllers=");klog_write_dec(nvme_controller_count());klog_write("\r\n");
- try_mount_root();
- if(xhci_init()!=0)panic("xHCI initialization failed");
- klog_write("xHCI: controllers=");klog_write_dec(xhci_controller_count());klog_write("\r\n");
+  if(nvme_init()!=0)panic("NVMe initialization failed");
+  klog_write("NVMe: controllers=");klog_write_dec(nvme_controller_count());klog_write("\r\n");
+  klog_write("BOOT: NVMe done\r\n");
+  try_mount_root();
+  klog_write("BOOT: VFS mount done\r\n");
+  klog_write("BOOT: xHCI begin\r\n");
+  if(xhci_init()!=0)panic("xHCI initialization failed");
+  klog_write("xHCI: controllers=");klog_write_dec(xhci_controller_count());klog_write("\r\n");
+  klog_write("BOOT: xHCI done\r\n");
  if(pit_init(100)!=0)panic("PIT initialization failed");
  if(rtc_init()!=0)klog_write("RTC: unavailable or non-24-hour mode\r\n");
  if(time_init(100)!=0)klog_write("TIME: realtime clock unavailable; monotonic clock active\r\n");
  else {rix_timespec_t now;if(time_realtime(&now)==0){klog_write("TIME: realtime=");klog_write_dec(now.sec);klog_write("\r\n");}}
- if(scheduler_init()!=0)panic("scheduler initialization failed");
- if(process_init()!=0)panic("process initialization failed");
+  if(scheduler_init()!=0)panic("scheduler initialization failed");
+  klog_write("BOOT: scheduler begin\r\n");
+  if(process_init()!=0)panic("process initialization failed");
  tty_set_signal_hook(terminal_signal_group);
  syscall_init();
  uint64_t user_entry=0,user_stack=0;pid_t user_pid=0;rix_task_id_t user_task=0;

@@ -20,6 +20,9 @@ typedef struct {
 
 int rix_net_device_init(void);
 const rix_net_device_info_t *rix_net_device_info(void);
+/* Backend that won probe order ("e1000", "rtl8125", or "none"). The E1000
+ * path is byte-identical to before; RTL8125 is a fallback only. */
+const char *rix_net_device_backend(void);
 /* Apply DHCP-learned configuration. Nonzero fields replace the static
    defaults; zero netmask/gateway/dns keep the current values. */
 int rix_net_device_configure(uint32_t address, uint32_t netmask,

@@ -13,3 +13,6 @@ int pci_bar_size(const rix_pci_device_t *device,unsigned bar,uint64_t *size,uint
 int pci_msix_info(const rix_pci_device_t *device,uint16_t *table_size,uint8_t *bir,uint32_t *table_offset);
 size_t pci_device_count(void);
 const rix_pci_device_t *pci_device(size_t index);
+/* One compact line per device to serial (bounded: RIX_PCI_MAX_DEVICES).
+ * Used for physical bring-up inventory; QEMU output only gains lines. */
+void pci_print_devices(void);

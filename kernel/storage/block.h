@@ -18,5 +18,6 @@ struct rix_block_device { char name[RIX_BLOCK_NAME_MAX]; uint32_t sector_size; u
 int block_init(void);
 int block_register(rix_block_device_t *device);
 rix_block_device_t *block_find(const char *name);
+const rix_block_device_t *block_device_at(size_t index);
 int block_submit(rix_block_device_t *device,rix_bio_t *bio);
 size_t block_device_count(void);

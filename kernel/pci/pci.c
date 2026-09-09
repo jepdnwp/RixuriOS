@@ -1,5 +1,6 @@
 #include "pci.h"
 #include "../arch/x86_64/acpi.h"
+#include "../serial.h"
 #include <stddef.h>
 #include <stdint.h>
 static rix_pci_device_t devices[RIX_PCI_MAX_DEVICES];static size_t count;
@@ -14,3 +15,7 @@ int pci_bar_size(const rix_pci_device_t*d,unsigned bar,uint64_t*size,uint64_t*ba
 int pci_msix_info(const rix_pci_device_t*d,uint16_t*n,uint8_t*bir,uint32_t*off){if(!d||!n||!bir||!off)return -1;uint8_t p;if(pci_find_capability(d,0x11,&p)!=0)return -1;uint32_t c=pci_config_read32(d->bus,d->device,d->function,p);*n=(uint16_t)((c>>16)&0x7ffu)+1u;uint32_t t=pci_config_read32(d->bus,d->device,d->function,(uint8_t)(p+4));*bir=(uint8_t)(t&7u);*off=t&0xfffffff8u;return 0;}
 int pci_init(void){count=0;for(unsigned b=0;b<256&&count<RIX_PCI_MAX_DEVICES;b++)for(unsigned d=0;d<32&&count<RIX_PCI_MAX_DEVICES;d++){uint32_t id=pci_config_read32((uint8_t)b,(uint8_t)d,0,0);if(id==0xffffffffu)continue;scan_function((uint8_t)b,(uint8_t)d,0);uint8_t h=(uint8_t)(pci_config_read32((uint8_t)b,(uint8_t)d,0,0xC)>>16);if(h&0x80)for(uint8_t f=1;f<8&&count<RIX_PCI_MAX_DEVICES;f++)scan_function((uint8_t)b,(uint8_t)d,f);}return 0;}
 size_t pci_device_count(void){return count;}const rix_pci_device_t*pci_device(size_t i){return i<count?&devices[i]:NULL;}
+static void print_hex_nibbles(uint64_t v,unsigned nibbles){static const char d[]="0123456789abcdef";for(unsigned s=0;s<nibbles;s++){char c=d[(v>>((nibbles-1u-s)*4u))&0xFULL];serial_write_n(&c,1);}}
+static void print_hex8(uint32_t v){print_hex_nibbles(v,8u);}
+static void print_dec_small(uint64_t v){char buf[21];size_t i=sizeof(buf);if(!v){serial_write("0");return;}while(v){buf[--i]=(char)('0'+v%10ULL);v/=10ULL;}serial_write_n(&buf[i],sizeof(buf)-i);}
+void pci_print_devices(void){for(size_t i=0;i<count;i++){const rix_pci_device_t*d=&devices[i];serial_write("PCI: ");print_dec_small(d->bus);serial_write(":");print_dec_small(d->device);serial_write(".");print_dec_small(d->function);serial_write(" ");print_hex_nibbles(d->vendor_id,4u);serial_write(":");print_hex_nibbles(d->device_id,4u);serial_write(" class=");print_hex_nibbles(d->class_code,2u);serial_write(" sub=");print_hex_nibbles(d->subclass,2u);serial_write(" prog=");print_hex_nibbles(d->prog_if,2u);serial_write(" bar0=");print_hex8(d->bars[0]);serial_write(" cmd=");print_hex_nibbles(pci_config_read32(d->bus,d->device,d->function,4u)&0xffffu,4u);serial_write("\r\n");}}

@@ -47,12 +47,15 @@ static void cli(void){__asm__ volatile("cli" ::: "memory");}
 static void sti(void){__asm__ volatile("sti" ::: "memory");}
 
 static __attribute__((noreturn)) void task_returned(void){ tasks[current_index].state=TASK_DEAD; for(;;) scheduler_yield(); }
+static void boot_user_entry_marker(uint64_t pid,uint64_t entry,uint64_t stack,uint64_t pml4){kernel_log("BOOT: user entry pid=");kernel_log_dec(pid);kernel_log(" entry=");kernel_log_hex(entry);kernel_log(" stack=");kernel_log_hex(stack);kernel_log(" pml4=");kernel_log_hex(pml4);kernel_log("\r\n");}
 static __attribute__((noreturn)) void task_bootstrap(void){
     rix_task_t *t=&tasks[current_index];
     if(t->process_pid){
         rix_process_t *p=process_lookup(t->process_pid);
         if(!p){kernel_log("DEBUG: bootstrap process lookup FAILED\r\n");task_returned();}
         if(process_activate(t->process_pid)!=0){kernel_log("DEBUG: bootstrap process_activate FAILED\r\n");task_returned();}
+        boot_user_entry_marker(t->process_pid,t->user_entry,t->user_stack,p->address_space.pml4_phys);
+        if(t->user_context_valid)x86_enter_user_context(p->address_space.pml4_phys,&t->user_context);
         if(t->user_context_valid)x86_enter_user_context(p->address_space.pml4_phys,&t->user_context);
         if(t->user_return==UINT64_MAX)x86_enter_user(p->address_space.pml4_phys,t->user_entry,t->user_stack);
         kernel_log("DEBUG: ring3 entry returned unexpectedly\r\n");

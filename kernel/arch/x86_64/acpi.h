@@ -13,6 +13,17 @@ typedef struct { uint64_t base; uint16_t segment; uint8_t start_bus; uint8_t end
 typedef struct { uint16_t pm1a_control; uint16_t pm1b_control; uint16_t sleep_type_a; uint16_t sleep_type_b; uint8_t available; } acpi_power_info_t;
 
 int acpi_init(uint64_t rsdp_phys);
+/* Distinct failure stages for acpi_init (0 = success). Physical boards
+ * (large XSDTs, rev-2 RSDP validation) fail at different stages than QEMU,
+ * so the boot log names the exact stage instead of a bare "unavailable". */
+#define ACPI_ERR_NO_RSDP 1
+#define ACPI_ERR_BAD_SIG 2
+#define ACPI_ERR_BAD_LENGTH 3
+#define ACPI_ERR_BAD_CHECKSUM 4
+#define ACPI_ERR_NO_MADT 5
+#define ACPI_ERR_BAD_MADT 6
+#define ACPI_ERR_MADT_ENTRY 7
+const char *acpi_error_string(int rc);
 size_t acpi_cpu_count(void);
 size_t acpi_ioapic_count(void);
 const acpi_cpu_info_t *acpi_cpu(size_t index);

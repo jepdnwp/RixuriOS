@@ -85,6 +85,7 @@ try:
         b"help ps",
         b"echo -n abc",
         b"uname -a",
+        b"cat /missing-file",
         ]
     for line in commands:
         command(line)
@@ -122,6 +123,8 @@ if b"abc\x1b[1;32m" not in output:
     raise SystemExit("echo -n output not observed")
 if b"x86_64" not in output:
     raise SystemExit("uname -a output not observed")
+if b"cat: cannot open /missing-file" not in output:
+    raise SystemExit("cat missing-file diagnostic not observed")
 if b"command execution failed" in output:
     raise SystemExit("shell command execution failure observed")
 print("qemu file utilities test: PASS")

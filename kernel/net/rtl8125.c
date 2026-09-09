@@ -92,6 +92,9 @@ int rix_rtl8125_init_rings(rix_rtl8125_t *driver) {
     for (size_t i = 0; i < RIX_RTL8125_TX_RING_SIZE; ++i) {
         driver->tx_ring[i].buffer_address = 0;
         driver->tx_ring[i].length = 0;
+        /* Empty TX descriptors belong to the driver (OWN clear); OWN is set
+         * only when handing a filled descriptor to the NIC. RX descriptors
+         * below stay NIC-owned. */
         driver->tx_ring[i].flags = i + 1 == RIX_RTL8125_TX_RING_SIZE ? RIX_RTL8125_DESC_EOR : 0;
     }
     for (size_t i = 0; i < RIX_RTL8125_RX_RING_SIZE; ++i) {
@@ -137,9 +140,9 @@ int rix_rtl8125_program_rings(rix_rtl8125_t *driver, volatile uint8_t *mmio,
                                size_t mmio_size) {
     if (!driver || !driver->present || !mmio ||
         mmio_size < RIX_RTL8125_REG_RX_DESC_LOW + 4u ||
-        !driver->tx_dma.count || !driver->rx_dma.count) return -1;
-    uint64_t tx = driver->tx_dma.pages[0];
-    uint64_t rx = driver->rx_dma.pages[0];
+        !driver->tx_ring_phys || !driver->rx_ring_phys) return -1;
+    uint64_t tx = driver->tx_ring_phys;
+    uint64_t rx = driver->rx_ring_phys;
     mmio_write32(mmio, RIX_RTL8125_REG_TX_DESC_LOW, (uint32_t)tx);
     mmio_write32(mmio, RIX_RTL8125_REG_TX_DESC_HIGH, (uint32_t)(tx >> 32));
     mmio_write32(mmio, RIX_RTL8125_REG_RX_DESC_LOW, (uint32_t)rx);
@@ -150,6 +153,14 @@ int rix_rtl8125_program_rings(rix_rtl8125_t *driver, volatile uint8_t *mmio,
 int rix_rtl8125_read_link(volatile uint8_t *mmio, size_t mmio_size, int *link_up) {
     if (!mmio || !link_up || mmio_size < RIX_RTL8125_REG_PHY_STATUS + 4u) return -1;
     *link_up = (mmio_read32(mmio, RIX_RTL8125_REG_PHY_STATUS) & RIX_RTL8125_PHY_LINK_UP) != 0;
+    return 0;
+}
+
+/* Accept unicast-to-us, multicast and broadcast. Without this the receiver
+ * configuration after reset drops everything on the wire. */
+int rix_rtl8125_program_rx_filter(volatile uint8_t *mmio, size_t mmio_size) {
+    if (!mmio || mmio_size < RIX_RTL8125_REG_RCR + 4u) return -1;
+    mmio_write32(mmio, RIX_RTL8125_REG_RCR, RIX_RTL8125_RCR_ACCEPT);
     return 0;
 }
 
@@ -242,7 +253,7 @@ int rix_rtl8125_configure(rix_rtl8125_t *driver) {
         rix_rtl8125_descriptor_t descriptor = {
             .buffer_address = driver->tx_buffers[i],
             .length = 0,
-            .flags = RIX_RTL8125_DESC_OWN
+            .flags = i + 1 == RIX_RTL8125_TX_RING_SIZE ? RIX_RTL8125_DESC_EOR : 0
         };
         tx_descriptors[i] = descriptor;
         driver->tx_ring[i] = descriptor;
@@ -268,6 +279,7 @@ int rix_rtl8125_configure(rix_rtl8125_t *driver) {
     }
 
     rix_rtl8125_hw_enable(driver->mmio, driver->mmio_size, 0u);
+    if (rix_rtl8125_program_rx_filter(driver->mmio, driver->mmio_size) != 0) return -7;
     rix_rtl8125_read_link(driver->mmio, driver->mmio_size, &driver->link_up);
     return 0;
 }
@@ -305,6 +317,10 @@ int rix_rtl8125_transmit(rix_rtl8125_t *driver, const void *data, size_t length)
     driver->tx_ring[slot].length = (uint32_t)length;
     driver->tx_ring[slot].flags = descriptors[slot].flags;
     driver->tx_tail = (uint16_t)((slot + 1u) % RIX_RTL8125_TX_RING_SIZE);
+    /* Ring the TX doorbell: without TPPOLL/NPQ the NIC never fetches the
+     * handed-off descriptor. */
+    if (rix_rtl8125_validate_mmio(driver, RIX_RTL8125_REG_TPPOLL, 1u) != 0) return -3;
+    driver->mmio[RIX_RTL8125_REG_TPPOLL] = RIX_RTL8125_TPPOLL_NPQ;
     return (int)length;
 }
 

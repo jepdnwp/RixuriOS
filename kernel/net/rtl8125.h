@@ -17,6 +17,13 @@
 #define RIX_RTL8125_REG_RX_DESC_HIGH 0xe0u
 #define RIX_RTL8125_REG_RX_DESC_LOW 0xe4u
 #define RIX_RTL8125_REG_COMMAND 0x37u
+#define RIX_RTL8125_REG_TPPOLL 0x38u
+#define RIX_RTL8125_TPPOLL_NPQ 0x40u
+#define RIX_RTL8125_REG_RCR 0x44u
+#define RIX_RTL8125_RCR_APM 0x02u
+#define RIX_RTL8125_RCR_AM 0x04u
+#define RIX_RTL8125_RCR_AB 0x08u
+#define RIX_RTL8125_RCR_ACCEPT (RIX_RTL8125_RCR_APM | RIX_RTL8125_RCR_AM | RIX_RTL8125_RCR_AB)
 #define RIX_RTL8125_REG_IMR 0x3cu
 #define RIX_RTL8125_REG_ISR 0x3eu
 #define RIX_RTL8125_REG_PHY_STATUS 0x6cu
@@ -51,7 +58,7 @@ typedef struct {
     uint16_t tx_tail;
     uint16_t rx_head;
     uint8_t present;
-    uint8_t link_up;
+    int link_up;
 } rix_rtl8125_t;
 
 int rix_rtl8125_is_supported(const rix_pci_device_t *device);
@@ -69,6 +76,7 @@ int rix_rtl8125_hw_enable(volatile uint8_t *mmio, size_t mmio_size,
 int rix_rtl8125_read_mac(volatile uint8_t *mmio, size_t mmio_size, uint8_t mac[6]);
 int rix_rtl8125_program_rings(rix_rtl8125_t *driver, volatile uint8_t *mmio,
                                size_t mmio_size);
+int rix_rtl8125_program_rx_filter(volatile uint8_t *mmio, size_t mmio_size);
 int rix_rtl8125_read_link(volatile uint8_t *mmio, size_t mmio_size, int *link_up);
 int rix_rtl8125_ack_interrupts(volatile uint8_t *mmio, size_t mmio_size,
                                uint32_t *pending);
