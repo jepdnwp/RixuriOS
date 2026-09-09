@@ -252,7 +252,8 @@ static void release_runtime_pages(rix_xhci_controller_t *c) {
     c->erst_phys = 0;
 }
 
-static int setup_runtime(rix_xhci_controller_t *c, volatile uint8_t *base, xhci_runtime_t *rt) {
+static int setup_runtime(rix_xhci_controller_t *c, volatile uint8_t *cap,
+                         volatile uint8_t *op, xhci_runtime_t *rt) {
     uint64_t dcbaa = dma_page(c);
     uint64_t cmd_ring = dma_page(c);
     uint64_t event_ring = dma_page(c);
@@ -283,13 +284,15 @@ static int setup_runtime(rix_xhci_controller_t *c, volatile uint8_t *base, xhci_
     volatile uint64_t *dcbaa_ptr = (volatile uint64_t *)(uintptr_t)dcbaa;
     dcbaa_ptr[0] = 0;
 
-    volatile uint64_t *dcbaap = (volatile uint64_t *)(base + XHCI_DCBAAP);
-    volatile uint64_t *crcr = (volatile uint64_t *)(base + XHCI_CRCR);
+    volatile uint64_t *dcbaap = (volatile uint64_t *)(op + XHCI_DCBAAP);
+    volatile uint64_t *crcr = (volatile uint64_t *)(op + XHCI_CRCR);
     *dcbaap = dcbaa;
     *crcr = cmd_ring | XHCI_TRB_CYCLE;
 
-    uint32_t db_off = *(volatile uint32_t *)(base + XHCI_DBOFF) & ~0x3u;
-    uint32_t rt_off = *(volatile uint32_t *)(base + XHCI_RTSOFF) & ~0x1Fu;
+    /* DBOFF and RTSOFF are capability-register offsets; CRCR/DCBAAP and
+     * CONFIG above are operational-register offsets. */
+    uint32_t db_off = *(volatile uint32_t *)(cap + XHCI_DBOFF) & ~0x3u;
+    uint32_t rt_off = *(volatile uint32_t *)(cap + XHCI_RTSOFF) & ~0x1Fu;
     if (rt_off < c->cap_length) {
         pmm_free_page(dcbaa);
         pmm_free_page(cmd_ring);
@@ -297,7 +300,7 @@ static int setup_runtime(rix_xhci_controller_t *c, volatile uint8_t *base, xhci_
         pmm_free_page(erst);
         return -2;
     }
-    volatile uint8_t *runtime = base + rt_off;
+    volatile uint8_t *runtime = cap + rt_off;
     volatile uint32_t *iman = (volatile uint32_t *)(runtime + 0x20);
     volatile uint32_t *erstsz = (volatile uint32_t *)(runtime + 0x28);
     volatile uint64_t *erstba = (volatile uint64_t *)(runtime + 0x30);
@@ -308,9 +311,9 @@ static int setup_runtime(rix_xhci_controller_t *c, volatile uint8_t *base, xhci_
     *erdp = event_ring | XHCI_ERDP_EHB;
     *iman |= 1u;
 
-    volatile uint32_t *config = (volatile uint32_t *)(base + XHCI_CONFIG);
+    volatile uint32_t *config = (volatile uint32_t *)(op + XHCI_CONFIG);
     *config = c->max_slots;
-    volatile uint32_t *db0 = (volatile uint32_t *)(base + db_off);
+    volatile uint32_t *db0 = (volatile uint32_t *)(cap + db_off);
     *db0 = 0;
 
     c->dcbaa_phys = dcbaa;
@@ -400,7 +403,7 @@ int xhci_init(void) {
                         serial_write("xHCI: candidate reset failed\r\n");
                         continue;
                     }
-                    int runtime_rc = setup_runtime(c, op, &runtimes[count]);
+                    int runtime_rc = setup_runtime(c, base, op, &runtimes[count]);
                     if (runtime_rc != 0) {
                         serial_write("xHCI: candidate runtime failed rc=");
                         serial_write_dec((uint64_t)(runtime_rc < 0 ? -runtime_rc : runtime_rc));

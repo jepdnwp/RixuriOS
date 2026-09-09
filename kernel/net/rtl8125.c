@@ -90,8 +90,9 @@ int rix_rtl8125_prepare_descriptor(rix_rtl8125_descriptor_t *descriptor,
                                     uint32_t flags) {
     if (!descriptor || !buffer_address || !length || length > RIX_NET_MTU) return -1;
     descriptor->buffer_address = buffer_address;
-    descriptor->length = length;
-    descriptor->flags = flags & (RIX_RTL8125_DESC_OWN | RIX_RTL8125_DESC_EOR);
+    descriptor->flags = (flags & (RIX_RTL8125_DESC_OWN | RIX_RTL8125_DESC_EOR)) |
+                        (length & RIX_RTL8125_DESC_LEN_MASK);
+    descriptor->length = 0;
     return 0;
 }
 
@@ -263,8 +264,8 @@ int rix_rtl8125_configure(rix_rtl8125_t *driver) {
         zero_bytes((void *)(uintptr_t)driver->tx_buffers[i], RIXURI_PAGE_SIZE);
         rix_rtl8125_descriptor_t descriptor = {
             .buffer_address = driver->tx_buffers[i],
-            .length = 0,
-            .flags = i + 1 == RIX_RTL8125_TX_RING_SIZE ? RIX_RTL8125_DESC_EOR : 0
+            .flags = i + 1 == RIX_RTL8125_TX_RING_SIZE ? RIX_RTL8125_DESC_EOR : 0,
+            .length = 0
         };
         tx_descriptors[i] = descriptor;
         driver->tx_ring[i] = descriptor;
@@ -275,8 +276,9 @@ int rix_rtl8125_configure(rix_rtl8125_t *driver) {
         zero_bytes((void *)(uintptr_t)driver->rx_buffers[i], RIXURI_PAGE_SIZE);
         rix_rtl8125_descriptor_t descriptor = {
             .buffer_address = driver->rx_buffers[i],
-            .length = RIX_RTL8125_RX_BUFFER_SIZE,
-            .flags = RIX_RTL8125_DESC_OWN | (i + 1 == RIX_RTL8125_RX_RING_SIZE ? RIX_RTL8125_DESC_EOR : 0)
+            .flags = RIX_RTL8125_DESC_OWN | RIX_RTL8125_RX_BUFFER_SIZE |
+                     (i + 1 == RIX_RTL8125_RX_RING_SIZE ? RIX_RTL8125_DESC_EOR : 0),
+            .length = 0
         };
         rx_descriptors[i] = descriptor;
         driver->rx_ring[i] = descriptor;
@@ -321,8 +323,8 @@ int rix_rtl8125_transmit(rix_rtl8125_t *driver, const void *data, size_t length)
     uint8_t *buffer = (uint8_t *)(uintptr_t)driver->tx_buffers[slot];
     for (size_t i = 0; i < length; ++i) buffer[i] = ((const uint8_t *)data)[i];
     descriptors[slot].buffer_address = driver->tx_buffers[slot];
-    descriptors[slot].length = (uint32_t)length;
-    descriptors[slot].flags = RIX_RTL8125_DESC_OWN |
+    descriptors[slot].length = 0;
+    descriptors[slot].flags = RIX_RTL8125_DESC_OWN | (uint32_t)length |
         (slot + 1 == RIX_RTL8125_TX_RING_SIZE ? RIX_RTL8125_DESC_EOR : 0);
     driver->tx_ring[slot].buffer_address = driver->tx_buffers[slot];
     driver->tx_ring[slot].length = (uint32_t)length;
@@ -343,12 +345,12 @@ int rix_rtl8125_receive(rix_rtl8125_t *driver, void *data, size_t capacity, size
     uint16_t slot = driver->rx_head;
     uint32_t flags = descriptors[slot].flags;
     if (flags & RIX_RTL8125_DESC_OWN) return 0;
-    size_t received = descriptors[slot].length;
+    size_t received = flags & RIX_RTL8125_DESC_LEN_MASK;
     if (received > capacity || received > RIX_NET_FRAME_CAPACITY) return -3;
     uint8_t *buffer = (uint8_t *)(uintptr_t)driver->rx_buffers[slot];
     for (size_t i = 0; i < received; ++i) ((uint8_t *)data)[i] = buffer[i];
-    descriptors[slot].length = RIX_RTL8125_RX_BUFFER_SIZE;
-    descriptors[slot].flags = RIX_RTL8125_DESC_OWN |
+    descriptors[slot].length = 0;
+    descriptors[slot].flags = RIX_RTL8125_DESC_OWN | RIX_RTL8125_RX_BUFFER_SIZE |
         (slot + 1 == RIX_RTL8125_RX_RING_SIZE ? RIX_RTL8125_DESC_EOR : 0);
     driver->rx_ring[slot].length = RIX_RTL8125_RX_BUFFER_SIZE;
     driver->rx_ring[slot].flags = descriptors[slot].flags;

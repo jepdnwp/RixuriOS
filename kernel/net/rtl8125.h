@@ -33,11 +33,12 @@
 #define RIX_RTL8125_CMD_TX_ENABLE 0x04u
 #define RIX_RTL8125_DESC_OWN 0x80000000u
 #define RIX_RTL8125_DESC_EOR 0x40000000u
+#define RIX_RTL8125_DESC_LEN_MASK 0x00003fffu
 
 typedef struct {
     uint64_t buffer_address;
-    uint32_t length;
     uint32_t flags;
+    uint32_t length;
 } rix_rtl8125_descriptor_t;
 
 typedef struct {
