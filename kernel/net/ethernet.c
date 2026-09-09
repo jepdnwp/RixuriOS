@@ -30,5 +30,6 @@ int rix_net_eth_pull(rix_net_packet_t *packet, rix_net_eth_header_t *header) {
 }
 
 int rix_net_ethertype_supported(uint16_t ethertype) {
-    return ethertype == RIX_NET_ETHERTYPE_IPV4 || ethertype == RIX_NET_ETHERTYPE_ARP;
+    return ethertype == RIX_NET_ETHERTYPE_IPV4 || ethertype == RIX_NET_ETHERTYPE_ARP ||
+           ethertype == RIX_NET_ETHERTYPE_IPV6;
 }

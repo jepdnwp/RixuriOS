@@ -1441,3 +1441,8 @@ The DHCP item is closed on QEMU user-net: bounded DISCOVER/OFFER/REQUEST/ACK wit
 **Phase 21 — Full Network Stack** is complete for the software, host-test and QEMU virtual-network scope. Host/NIC tests and QEMU validation now cover packet buffers, Ethernet, ARP, IPv4, ICMP, UDP, DNS, DHCPv4, bounded TCP, sockets, loopback, E1000 TX/RX and validated external HTTP responses. `ping` and `curl` use the same real packet/device/socket path and fail closed when a response is unavailable. A scheduler CR3-resume correction also closes the repeated-user-process regression exposed by the network harness.
 
 Checkpoint status: `CP0 SPEC PASS`, `CP1 BUILD PASS`, `CP2 UNIT PASS`, `CP3 BOOT PASS`, `CP4 INTEGRATION PASS`, `CP5 HARDWARE DEFERRED`, `CP6 REGRESSION PASS`, `CP7 SECURITY REVIEWED`, `CP8 PERFORMANCE DEFERRED`, `CP9 DOCS PASS`, `CP10 RELEASE DEFERRED`. Physical RTL8125 TX/RX, link, interrupt, recovery and final Ring 3 evidence remain assigned to the physical hardware qualification track; they are not claimed as QEMU evidence.
+
+
+### Phase 21 IPv6 foundation checkpoint — 2026-09-09
+
+IPv6 is no longer only an architecture placeholder. Ethernet now accepts `0x86DD`; bounded IPv6 header construction/parsing, payload validation, ICMPv6 pseudo-header checksums, Echo Request/Reply and option-free Neighbor Solicitation/Advertisement bodies are implemented and covered by host tests. Full IPv6 remains open for address autoconfiguration, Router Solicitation/Advertisement, neighbor-cache/device dispatch, routing, transport sockets and QEMU/physical traffic evidence.

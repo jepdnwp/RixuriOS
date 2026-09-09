@@ -723,3 +723,8 @@ The complete QEMU regression matrix now passes **26/26 tests**. The harnesses tr
 Phase 21 — **Full Network Stack** is complete for the software, host-test and QEMU virtual-network scope. The final validation includes strict host tests, RTL8125/E1000 unit coverage, DHCP, loopback ping/curl, QEMU external DHCP/DNS/TCP/HTTP traffic and ISO boot. A scheduler correction ensures that resumed user processes reload their address-space CR3 after the initial deferred Ring 3 entry; this fixed repeated QEMU network commands after the first user transition.
 
 The physical evidence boundary remains explicit: RTL8125 link/TX/RX, interrupt-driven RX, reset/recovery and final Ring 3 behavior on the Ryzen/ASUS target are `NOT TESTED` because this environment cannot execute on that machine. These items are deferred to the physical hardware qualification track and are not claimed as QEMU evidence.
+
+
+## IPv6 foundation — 2026-09-09
+
+The IPv6 wire foundation is implemented: Ethernet IPv6 EtherType support, bounded header parsing/building, ICMPv6 Echo checksum handling, and option-free Neighbor Solicitation/Advertisement messages. Host `net-test` passes. Full IPv6 transport and hardware evidence remain open because neighbor-cache integration, autoconfiguration, routing, IPv6 sockets and QEMU/physical traffic have not yet been completed.

@@ -70,3 +70,10 @@ The next work belongs to the physical qualification track rather than to the com
 [3]: https://github.com/jepdnwp/RixuriOS/blob/main/docs/VALIDATION_LOG.md "RixuriOS Validation Log"
 
 [4]: https://github.com/jepdnwp/RixuriOS/commit/b499c17 "Post-CR3 Ring 3 Trampoline Instrumentation"
+
+
+## IPv6 progress — 2026-09-09
+
+The IPv6 foundation is now implemented and host-tested. Ethernet accepts EtherType `0x86DD`; the kernel has bounded IPv6 version/header validation, traffic class and flow-label handling, payload-length enforcement, ICMPv6 pseudo-header checksums, Echo Request/Reply and option-free Neighbor Solicitation/Advertisement bodies. The host network test covers valid round trips and checksum/type corruption rejection.
+
+This is not yet a claim of full IPv6 networking. Address autoconfiguration, Router Solicitation/Advertisement, Neighbor Cache integration with the device stack, IPv6 routing, UDP/TCP socket endpoints, fragmentation policy and QEMU/physical IPv6 traffic remain open.

@@ -57,3 +57,10 @@ The device-to-stack path now emits a valid ARP request through E1000 and receive
 Phase 21 — **Full Network Stack** is complete for the host, loopback, QEMU virtual-network and software-integration scope. The same packet, Ethernet, ARP, IPv4, UDP, TCP, device and socket path is exercised by `ping` and `curl`; success requires a validated protocol response. DHCPv4, DNS, external TCP and validated HTTP redirects pass in the QEMU user-net harness. The scheduler CR3-resume correction also restores repeated user-process network commands after the initial Ring 3 transition.
 
 Physical RTL8125 TX/RX, link negotiation, interrupt delivery, reset/recovery and final Ring 3 qualification on the Ryzen/ASUS target remain `NOT TESTED`. These are hardware evidence gates and are not replaced by host or QEMU results. They are tracked in the physical qualification phase.
+
+
+## IPv6 foundation checkpoint — 2026-09-09
+
+The first IPv6 protocol slice is implemented. Ethernet now accepts IPv6 EtherType `0x86DD`. The wire layer validates IPv6 version, payload length, traffic class and flow label. ICMPv6 Echo Request/Reply uses the RFC pseudo-header checksum, and bounded Neighbor Solicitation/Advertisement bodies are available for later neighbor-cache integration. Host tests cover valid packets and corrupted checksum/type rejection.
+
+The full IPv6 gate remains open until address configuration, Router Advertisement handling, neighbor-cache/device dispatch, routing and IPv6 socket transport are integrated and exercised on QEMU or physical networking.

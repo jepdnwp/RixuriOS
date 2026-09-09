@@ -2,6 +2,7 @@
 #include "kernel/net/ethernet.h"
 #include "kernel/net/arp.h"
 #include "kernel/net/ipv4.h"
+#include "kernel/net/ipv6.h"
 #include "kernel/net/loopback.h"
 #include "kernel/net/socket.h"
 #include "kernel/net/tcp.h"
@@ -71,7 +72,7 @@ int main(void) {
     assert(memcmp(ethernet.destination, destination, 6) == 0);
     assert(memcmp(ethernet.source, source, 6) == 0);
     assert(ethernet.ethertype == RIX_NET_ETHERTYPE_ARP);
-    assert(rix_net_ethertype_supported(RIX_NET_ETHERTYPE_IPV6) == 0);
+    assert(rix_net_ethertype_supported(RIX_NET_ETHERTYPE_IPV6) != 0);
 
     rix_net_arp_cache_t cache;
     uint8_t learned[6];
@@ -105,6 +106,42 @@ int main(void) {
     assert(rix_net_icmp_echo_pull(&packet, &echo) == 0);
     assert(echo.type == RIX_NET_ICMP_ECHO_REQUEST && echo.identifier == 7 && echo.sequence == 9);
     assert(rix_net_packet_length(&packet) == sizeof(payload));
+
+    const uint8_t ipv6_source[16] = {0x20,0x01,0x0d,0xb8,0,0,0,0,0,0,0,0,0,0,0,1};
+    const uint8_t ipv6_destination[16] = {0x20,0x01,0x0d,0xb8,0,0,0,0,0,0,0,0,0,0,0,2};
+    const uint8_t ipv6_payload[] = {'v','6'};
+    rix_net_ipv6_header_t ipv6;
+    rix_net_icmpv6_echo_t echo6;
+    rix_net_packet_init(&packet);
+    assert(rix_net_icmpv6_echo_push(&packet, RIX_NET_ICMPV6_ECHO_REQUEST, 12, 3,
+                                    ipv6_source, ipv6_destination,
+                                    ipv6_payload, sizeof(ipv6_payload)) == 0);
+    assert(rix_net_ipv6_push(&packet, ipv6_source, ipv6_destination,
+                             RIX_NET_IP_PROTO_ICMPV6, 64, 0x2a, 0x12345) == 0);
+    assert(rix_net_ipv6_pull(&packet, &ipv6) == 0);
+    assert(ipv6.next_header == RIX_NET_IP_PROTO_ICMPV6 && ipv6.hop_limit == 64 &&
+           ipv6.traffic_class == 0x2a && ipv6.flow_label == 0x12345);
+    assert(rix_net_icmpv6_echo_pull(&packet, ipv6.source, ipv6.destination, &echo6) == 0);
+    assert(echo6.type == RIX_NET_ICMPV6_ECHO_REQUEST && echo6.identifier == 12 &&
+           echo6.sequence == 3 && rix_net_packet_length(&packet) == sizeof(ipv6_payload));
+
+    rix_net_packet_init(&packet);
+    assert(rix_net_icmpv6_neighbor_solicit_push(&packet, ipv6_source, ipv6_destination,
+                                                 ipv6_destination) == 0);
+    uint8_t nd_type = 0, nd_target[16] = {0}; uint32_t nd_flags = 0;
+    assert(rix_net_icmpv6_neighbor_pull(&packet, ipv6_source, ipv6_destination,
+                                        &nd_type, &nd_flags, nd_target) == 0);
+    assert(nd_type == RIX_NET_ICMPV6_NEIGHBOR_SOLICIT && nd_flags == 0 &&
+           memcmp(nd_target, ipv6_destination, 16) == 0);
+    rix_net_packet_init(&packet);
+    assert(rix_net_icmpv6_neighbor_advert_push(&packet, ipv6_destination, ipv6_source,
+                                                0x60000000u, ipv6_destination) == 0);
+    assert(rix_net_icmpv6_neighbor_pull(&packet, ipv6_destination, ipv6_source,
+                                        &nd_type, &nd_flags, nd_target) == 0);
+    assert(nd_type == RIX_NET_ICMPV6_NEIGHBOR_ADVERT && nd_flags == 0x60000000u);
+    ((uint8_t *)rix_net_packet_data(&packet))[1] ^= 1u;
+    assert(rix_net_icmpv6_neighbor_pull(&packet, ipv6_destination, ipv6_source,
+                                        &nd_type, &nd_flags, nd_target) != 0);
 
     rix_net_packet_init(&packet);
     assert(rix_net_udp_push(&packet, 0xc0a80102u, 0xc0a80101u, 12000, 53,
