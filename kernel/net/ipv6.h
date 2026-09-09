@@ -1,5 +1,7 @@
 #pragma once
 #include "net.h"
+#include "udp.h"
+#include "tcp.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -86,6 +88,23 @@ int rix_net_icmpv6_router_advert_pull(rix_net_packet_t *packet,
 int rix_net_ipv6_slaac_address(const uint8_t prefix[16], uint8_t prefix_length,
                                const uint8_t interface_id[8], uint8_t address[16]);
 int rix_net_ipv6_link_local_from_mac(const uint8_t mac[6], uint8_t address[16]);
+
+int rix_net_udp6_push(rix_net_packet_t *packet,
+                      const uint8_t source[16], const uint8_t destination[16],
+                      uint16_t source_port, uint16_t destination_port,
+                      const void *payload, size_t payload_length);
+int rix_net_udp6_pull(rix_net_packet_t *packet,
+                      const uint8_t source[16], const uint8_t destination[16],
+                      rix_net_udp_header_t *header);
+int rix_net_tcp6_push(rix_net_packet_t *packet,
+                      const uint8_t source[16], const uint8_t destination[16],
+                      uint16_t source_port, uint16_t destination_port,
+                      uint32_t sequence, uint32_t acknowledgment,
+                      uint16_t flags, uint16_t window,
+                      const void *payload, size_t payload_length);
+int rix_net_tcp6_pull(rix_net_packet_t *packet,
+                      const uint8_t source[16], const uint8_t destination[16],
+                      rix_net_tcp_header_t *header);
 
 #define RIX_NET_IPV6_NEIGHBOR_CACHE_SIZE 8u
 typedef struct {

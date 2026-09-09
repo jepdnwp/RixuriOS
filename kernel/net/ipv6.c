@@ -262,3 +262,95 @@ int rix_net_ipv6_neighbor_expire(rix_net_ipv6_neighbor_cache_t *cache, uint64_t 
         if (cache->entries[i].used && cache->entries[i].expires <= now) { cache->entries[i].used = 0; ++expired; }
     return expired;
 }
+
+
+static uint16_t transport6_checksum(const uint8_t source[16], const uint8_t destination[16],
+                                    uint8_t protocol, const uint8_t *message, size_t length) {
+    uint8_t pseudo[8] = {0, 0, 0, 0, 0, 0, 0, protocol};
+    uint32_t sum = 0;
+    uint32_t network_length = be32((uint32_t)length);
+    sum = sum_bytes(sum, source, 16); sum = sum_bytes(sum, destination, 16);
+    sum = sum_bytes(sum, (const uint8_t *)&network_length, 4);
+    sum = sum_bytes(sum, pseudo, sizeof(pseudo));
+    return finish_sum(sum_bytes(sum, message, length));
+}
+
+int rix_net_udp6_push(rix_net_packet_t *packet, const uint8_t source[16],
+                      const uint8_t destination[16], uint16_t source_port,
+                      uint16_t destination_port, const void *payload, size_t payload_length) {
+    if (!packet || !source || !destination || (payload_length && !payload) ||
+        payload_length > 65527u) return -1;
+    uint8_t *body = 0;
+    if (rix_net_packet_put(packet, payload_length, (void **)&body) != 0) return -1;
+    for (size_t i = 0; i < payload_length; ++i) body[i] = ((const uint8_t *)payload)[i];
+    uint8_t *wire = 0;
+    if (rix_net_packet_push(packet, 8, (void **)&wire) != 0) return -1;
+    uint16_t value = be16(source_port); wire[0] = ((uint8_t *)&value)[0]; wire[1] = ((uint8_t *)&value)[1];
+    value = be16(destination_port); wire[2] = ((uint8_t *)&value)[0]; wire[3] = ((uint8_t *)&value)[1];
+    value = be16((uint16_t)(payload_length + 8u)); wire[4] = ((uint8_t *)&value)[0]; wire[5] = ((uint8_t *)&value)[1];
+    wire[6] = wire[7] = 0;
+    value = be16(transport6_checksum(source, destination, 17, rix_net_packet_data(packet),
+                                     rix_net_packet_length(packet)));
+    wire[6] = ((uint8_t *)&value)[0]; wire[7] = ((uint8_t *)&value)[1];
+    return 0;
+}
+
+int rix_net_udp6_pull(rix_net_packet_t *packet, const uint8_t source[16],
+                      const uint8_t destination[16], rix_net_udp_header_t *header) {
+    if (!packet || !source || !destination || !header || rix_net_packet_length(packet) < 8) return -1;
+    const uint8_t *wire = rix_net_packet_data(packet);
+    uint16_t length = (uint16_t)(((uint16_t)wire[4] << 8) | wire[5]);
+    if (length < 8 || length != rix_net_packet_length(packet) ||
+        transport6_checksum(source, destination, 17, wire, length) != 0) return -2;
+    header->source_port = (uint16_t)(((uint16_t)wire[0] << 8) | wire[1]);
+    header->destination_port = (uint16_t)(((uint16_t)wire[2] << 8) | wire[3]);
+    header->length = length; header->checksum = (uint16_t)(((uint16_t)wire[6] << 8) | wire[7]);
+    if (rix_net_packet_pull(packet, 8, 0) != 0) return -1;
+    packet->length = length - 8u;
+    return 0;
+}
+
+int rix_net_tcp6_push(rix_net_packet_t *packet, const uint8_t source[16],
+                      const uint8_t destination[16], uint16_t source_port,
+                      uint16_t destination_port, uint32_t sequence,
+                      uint32_t acknowledgment, uint16_t flags, uint16_t window,
+                      const void *payload, size_t payload_length) {
+    if (!packet || !source || !destination || (payload_length && !payload) ||
+        payload_length > RIX_NET_MTU - 20u) return -1;
+    uint8_t *body = 0;
+    if (rix_net_packet_put(packet, payload_length, (void **)&body) != 0) return -1;
+    for (size_t i = 0; i < payload_length; ++i) body[i] = ((const uint8_t *)payload)[i];
+    uint8_t *wire = 0;
+    if (rix_net_packet_push(packet, 20, (void **)&wire) != 0) return -1;
+    uint16_t v16 = be16(source_port); wire[0] = ((uint8_t *)&v16)[0]; wire[1] = ((uint8_t *)&v16)[1];
+    v16 = be16(destination_port); wire[2] = ((uint8_t *)&v16)[0]; wire[3] = ((uint8_t *)&v16)[1];
+    uint32_t v32 = be32(sequence); for (size_t i = 0; i < 4; ++i) wire[4 + i] = ((uint8_t *)&v32)[i];
+    v32 = be32(acknowledgment); for (size_t i = 0; i < 4; ++i) wire[8 + i] = ((uint8_t *)&v32)[i];
+    wire[12] = 0x50; v16 = be16(flags); wire[13] = ((uint8_t *)&v16)[1];
+    v16 = be16(window); wire[14] = ((uint8_t *)&v16)[0]; wire[15] = ((uint8_t *)&v16)[1];
+    wire[16] = wire[17] = 0; wire[18] = wire[19] = 0;
+    v16 = be16(transport6_checksum(source, destination, 6, rix_net_packet_data(packet),
+                                   rix_net_packet_length(packet)));
+    wire[16] = ((uint8_t *)&v16)[0]; wire[17] = ((uint8_t *)&v16)[1];
+    return 0;
+}
+
+int rix_net_tcp6_pull(rix_net_packet_t *packet, const uint8_t source[16],
+                      const uint8_t destination[16], rix_net_tcp_header_t *header) {
+    if (!packet || !source || !destination || !header || rix_net_packet_length(packet) < 20) return -1;
+    const uint8_t *wire = rix_net_packet_data(packet);
+    size_t header_length = (size_t)(wire[12] >> 4) * 4u;
+    if (header_length < 20 || header_length > rix_net_packet_length(packet) ||
+        transport6_checksum(source, destination, 6, wire, rix_net_packet_length(packet)) != 0) return -2;
+    header->source_port = (uint16_t)(((uint16_t)wire[0] << 8) | wire[1]);
+    header->destination_port = (uint16_t)(((uint16_t)wire[2] << 8) | wire[3]);
+    header->sequence = ((uint32_t)wire[4] << 24) | ((uint32_t)wire[5] << 16) | ((uint32_t)wire[6] << 8) | wire[7];
+    header->acknowledgment = ((uint32_t)wire[8] << 24) | ((uint32_t)wire[9] << 16) | ((uint32_t)wire[10] << 8) | wire[11];
+    header->flags = (uint16_t)(((uint16_t)wire[12] & 0x0fu) << 8 | wire[13]);
+    header->window = (uint16_t)(((uint16_t)wire[14] << 8) | wire[15]);
+    header->checksum = (uint16_t)(((uint16_t)wire[16] << 8) | wire[17]);
+    header->urgent = (uint16_t)(((uint16_t)wire[18] << 8) | wire[19]);
+    if (rix_net_packet_pull(packet, header_length, 0) != 0) return -1;
+    packet->length = rix_net_packet_length(packet);
+    return 0;
+}

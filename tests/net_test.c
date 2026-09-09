@@ -124,6 +124,22 @@ int main(void) {
     assert(rix_net_icmpv6_echo_pull(&packet, ipv6.source, ipv6.destination, &echo6) == 0);
     assert(echo6.type == RIX_NET_ICMPV6_ECHO_REQUEST && echo6.identifier == 12 &&
            echo6.sequence == 3 && rix_net_packet_length(&packet) == sizeof(ipv6_payload));
+    rix_net_udp_header_t udp6;
+    rix_net_packet_init(&packet);
+    assert(rix_net_udp6_push(&packet, ipv6_source, ipv6_destination, 1234, 4321,
+                             ipv6_payload, sizeof(ipv6_payload)) == 0);
+    assert(rix_net_udp6_pull(&packet, ipv6_source, ipv6_destination, &udp6) == 0 &&
+           udp6.source_port == 1234 && udp6.destination_port == 4321 &&
+           rix_net_packet_length(&packet) == sizeof(ipv6_payload));
+    rix_net_tcp_header_t tcp6;
+    rix_net_packet_init(&packet);
+    assert(rix_net_tcp6_push(&packet, ipv6_source, ipv6_destination, 1234, 80,
+                             100, 200, RIX_NET_TCP_FLAG_ACK | RIX_NET_TCP_FLAG_PSH,
+                             4096, ipv6_payload, sizeof(ipv6_payload)) == 0);
+    assert(rix_net_tcp6_pull(&packet, ipv6_source, ipv6_destination, &tcp6) == 0 &&
+           tcp6.source_port == 1234 && tcp6.destination_port == 80 &&
+           tcp6.sequence == 100 && tcp6.acknowledgment == 200 &&
+           tcp6.flags == (RIX_NET_TCP_FLAG_ACK | RIX_NET_TCP_FLAG_PSH));
 
     rix_net_packet_init(&packet);
     assert(rix_net_icmpv6_neighbor_solicit_push(&packet, ipv6_source, ipv6_destination,

@@ -91,3 +91,8 @@ IPv6 transport sockets and device-stack dispatch are still separate integration 
 The network stack now owns an IPv6 Neighbor Cache, maintains a separate bounded IPv6 RX queue, accepts IPv6 Ethernet frames during device polling, exposes `rix_net_stack_take_ipv6()`, and provides `rix_net_stack_send_ipv6()` for cached-neighbor Ethernet transmission. Unknown neighbors fail closed with a bounded error instead of transmitting to an unverified MAC address.
 
 IPv6 transport socket endpoints and independent IPv6 wire evidence remain open. The current stack API is therefore a safe integration foundation, not a claim that IPv6 internet traffic is complete.
+
+
+## IPv6 transport-wire checkpoint — 2026-09-09
+
+IPv6 UDP and TCP wire serializers/parsers now use the RFC pseudo-header checksum over 128-bit addresses. UDP length/checksum validation and TCP data-offset, sequence, acknowledgment, flags and checksum validation are host-tested. This closes the IPv6 transport wire layer without changing the existing IPv4-only socket ABI.
