@@ -704,3 +704,12 @@ Target machine Ryzen 7 7700 + ASUS PRIME B650M-R hangs silently after `RIXURI:KE
 QEMU evidence (this sandbox): strict `make test` (incl. new `acpi-test`, `rixfs-mount-test`, extended `rtl-test`), `make iso`, `qemu_iso_boot_test`, `qemu_ring3_test`, `qemu_process_utils_test`, `qemu_file_utils_test`, `qemu_ping_test`, `qemu_curl_test`, `qemu_external_net_test`, `qemu_powerloss_test` all PASS; new `scripts/qemu_xhci_probe_test.py` (NEC xHCI + usb-kbd) shows class-code match, BAR sizing above 4 GB, handoff no-op, reset/run success and `ports=8`. USB keyboard attach was not observed in the settle window (enumeration path untouched); RTL8125 TX/RX has no QEMU device to exercise it.
 
 Open/NOT TESTED: physical-hardware runs of every item above; USB keyboard attach on real AMD xHCI; RTL8125 link/TX/RX on the 10EC:8125; userspace-transition root cause on the B650M-R (markers now pinpoint it); GPT partitions; IPv6, firewall, interrupt-driven RX, TCP retransmit/close semantics.
+
+
+## Kernel hardware-readiness regression matrix — 2026-09-09
+
+The complete `make test-all CROSS=` matrix was rerun after the physical bring-up and RTL8125/DHCP changes. The kernel and image build completed successfully, and the pipe/fork stress path now passes under QEMU with `pipe-stress:PASS`. The run recorded 15 passing targets and 11 failing targets. The passing set includes the strict host suite, RTL8125 and E1000 tests, ACPI validation, network tests, pipe/fork stress, ping, session lifecycle, signals, stat, touch, xHCI probe, and Phase 20 credential tests.
+
+The remaining failures are concentrated in QEMU shell-utility/error-observation harnesses: environment utilities, file/head-tail/ln utilities, process utilities, ring3, text utilities, the Phase 19 extended utility path, and the external-network harness. Their observed failures are missing or unsynchronized expected error-output markers rather than a kernel build failure. They remain open and must not be reported as an all-green regression matrix.
+
+The physical hardware evidence boundary is unchanged: the sandbox cannot execute on the Ryzen/ASUS B650M-R machine. Real-device validation is still required for RTL8125 link/TX/RX, AMD xHCI keyboard attachment, NVMe/GPT partition discovery, and final ring3 transition behavior on that board.
