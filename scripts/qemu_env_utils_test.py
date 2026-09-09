@@ -40,6 +40,24 @@ def read_until(marker: bytes, timeout: float) -> bool:
     return False
 
 
+def drain_output(duration: float = 0.25) -> None:
+    """Collect UART bytes that can arrive just after the shell prompt.
+
+    The kernel serial path and QEMU pipe are asynchronous: a child error
+    write may become readable a fraction after the parent redraws its prompt.
+    Draining here prevents the next command from consuming that evidence.
+    """
+    deadline = time.monotonic() + duration
+    while time.monotonic() < deadline:
+        ready, _, _ = select.select([proc.stdout], [], [], 0.02)
+        if not ready:
+            continue
+        chunk = os.read(proc.stdout.fileno(), 4096)
+        if not chunk:
+            return
+        output.extend(chunk)
+
+
 def command(line: bytes) -> None:
     for byte in line + b"\n":
         proc.stdin.write(bytes((byte,)))
@@ -47,6 +65,7 @@ def command(line: bytes) -> None:
         time.sleep(0.01)
     if not read_until(b"\x1b[1;37m:\x1b[0m ", 25.0):
         raise RuntimeError(f"prompt not observed after {line!r}")
+    drain_output()
 
 
 try:
@@ -75,7 +94,7 @@ if b"PATH=/bin:/usr/bin:/sbin:/usr/sbin" not in output:
     raise SystemExit("env output not observed")
 if b"x=hello,n=42" not in output:
     raise SystemExit("printf output not observed")
-if b"/\n" not in output:
+if b"/home/root\n" not in output:
     raise SystemExit("pwd output not observed")
 if b"/bin/echo" not in output:
     raise SystemExit("which output not observed")

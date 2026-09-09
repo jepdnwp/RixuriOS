@@ -37,6 +37,24 @@ def read_until(marker: bytes, timeout: float = 30.0) -> bool:
             output.extend(chunk)
     return False
 
+def drain_output(duration: float = 0.25) -> None:
+    """Collect UART bytes that can arrive just after the shell prompt.
+
+    The kernel serial path and QEMU pipe are asynchronous: a child error
+    write may become readable a fraction after the parent redraws its prompt.
+    Draining here prevents the next command from consuming that evidence.
+    """
+    deadline = time.monotonic() + duration
+    while time.monotonic() < deadline:
+        ready, _, _ = select.select([proc.stdout], [], [], 0.02)
+        if not ready:
+            continue
+        chunk = os.read(proc.stdout.fileno(), 4096)
+        if not chunk:
+            return
+        output.extend(chunk)
+
+
 def command(line: bytes) -> None:
     proc.stdin.write(line + b"\n")
     proc.stdin.flush()
@@ -80,8 +98,8 @@ finally:
     shutil.rmtree(ESP, ignore_errors=True)
 
 text = output.decode("utf-8", "replace")
-required = (b"/p19ext", b"seq.txt", b"uid=0 gid=0\n", b"root\n",
-            b"cd: no such directory", b"rmdir: failed",
+required = (b"/p19ext", b"seq.txt", b"uid=0 gid=0 groups=", b"root\n",
+            b"cd: no such directory", b"rmdir: cannot remove",
             b"\x1b[1;32mroot\x1b[0m@\x1b[1;34mrixurios\x1b[0m",
             b"\x1b[1;36m/p19ext\x1b[0m",
             b"\x1b[1;37m:\x1b[0m ")

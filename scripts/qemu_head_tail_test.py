@@ -41,6 +41,24 @@ def read_until(marker: bytes, timeout: float) -> bool:
     return False
 
 
+def drain_output(duration: float = 0.25) -> None:
+    """Collect UART bytes that can arrive just after the shell prompt.
+
+    The kernel serial path and QEMU pipe are asynchronous: a child error
+    write may become readable a fraction after the parent redraws its prompt.
+    Draining here prevents the next command from consuming that evidence.
+    """
+    deadline = time.monotonic() + duration
+    while time.monotonic() < deadline:
+        ready, _, _ = select.select([proc.stdout], [], [], 0.02)
+        if not ready:
+            continue
+        chunk = os.read(proc.stdout.fileno(), 4096)
+        if not chunk:
+            return
+        output.extend(chunk)
+
+
 def command(line: bytes) -> None:
     for byte in line + b"\n":
         proc.stdin.write(bytes((byte,)))
@@ -48,6 +66,7 @@ def command(line: bytes) -> None:
         time.sleep(0.01)
     if not read_until(b"\x1b[1;37m:\x1b[0m ", 25.0):
         raise RuntimeError(f"prompt not observed after {line!r}")
+    drain_output()
 
 
 try:
@@ -73,7 +92,7 @@ LOG.write_bytes(output)
 sys.stdout.buffer.write(output)
 if b"argc=3" not in output or b"argv[1]=alpha" not in output:
     raise SystemExit("head/tail pipeline output not observed")
-if b"head: failed" not in output or b"tail: failed" not in output:
+if b"head: cannot open" not in output or b"tail: cannot open" not in output:
     raise SystemExit("missing-path failures not observed")
 if b"CPU exception" in output or b"PANIC" in output:
     raise SystemExit("kernel fault marker observed")

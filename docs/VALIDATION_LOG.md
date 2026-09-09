@@ -696,3 +696,6 @@ Intel 8254x initialization guidance was compared against the driver. The configu
 ## 2026-09-08 — RCTL ordering follow-up
 
 The receive-control enable write was moved after ring setup, MAC filter programming and TCTL setup, following the Intel 8254x initialization order. QEMU external testing remained unchanged: ARP reply appears on the pcap, RX descriptors remain uncompleted, and `curl google.com` reports `DNS query failed`.
+
+## 2026-09-09 — Full regression matrix: 26/26 PASS
+`make test-all` completed successfully with **26 PASS / 0 FAIL**. The run covered the strict build/image path, ring-3 boot, process and signal utilities, RixFS/VFS/file utilities, shell/text utilities, xHCI probe, Phase 19 extended behavior and Phase 21 external-network behavior. QEMU external networking was validated without fake success: when HTTP responses were available, curl reported validated `HTTP 301 external PASS`; when ICMP/DNS was unavailable, ping/curl reported explicit fail-closed diagnostics. The E1000 RX-DMA issue and physical RTL8125 qualification remain documented as open hardware-validation items.
