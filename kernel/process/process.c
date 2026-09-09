@@ -378,6 +378,7 @@ int process_activate(pid_t pid){if(pid==0){uint64_t kb=vmm_kernel_pml4();cr3trac
  * If only the target value resets, the target root is implicated at CPU
  * level. Diagnostic only; never ship enabled. */
 #define RIX_DEBUG_CR3_RELOAD_SELF 0
+#define RIX_DEFER_USER_CR3_TO_ENTRY 1
 {uint64_t target=p->address_space.pml4_phys;cr3trace_push(1,(uint64_t)pid,target,read_cr3_hw());if(vmm_validate_pml4(target)!=0){kernel_log("DEBUG: process_activate REFUSED invalid target CR3\r\n");serial_drain();return -1;}int sc=address_space_sync_kernel(&p->address_space);{static unsigned n=0;if(n<2||sc>0){kernel_log("DEBUG: kernel sync slots=");if(sc<0){kernel_log("-1");}else{kernel_log_dec((uint64_t)sc);}kernel_log("\r\n");serial_drain();if(n<2){n++;}}}
 uint64_t loadval=target;
 /* Sync first, then validate the exact root that will reach CR3.  The old
@@ -385,7 +386,14 @@ uint64_t loadval=target;
  * real hardware can expose that unvalidated final state during a TLB flush. */
 int final_vr=vmm_validate_pml4(loadval);
 if(final_vr!=0){kernel_log("DEBUG: final PML4 validation failed reason=");kernel_log_dec((uint64_t)(final_vr<0?-final_vr:final_vr));kernel_log("\r\n");serial_drain();return -1;}
-#if RIX_DEBUG_CR3_RELOAD_SELF
+#if RIX_DEFER_USER_CR3_TO_ENTRY
+/* A user task is entered immediately afterward by x86_enter_user(), which
+ * loads CR3 and executes iretq without touching the old kernel stack.  Doing
+ * the same load here first made real hardware fault while returning through a
+ * stack that the target address space may not map identically. */
+{static unsigned n=0;if(n<2){kernel_log("DEBUG: user CR3 switch deferred to ring3 entry\r\n");serial_drain();n++;}}
+return 0;
+#elif RIX_DEBUG_CR3_RELOAD_SELF
 loadval=read_cr3_hw();
 {static unsigned n=0;if(n<2){kernel_log("DEBUG: CR3 SELFTEST reloading current CR3\r\n");serial_drain();n++;}}
 #endif
