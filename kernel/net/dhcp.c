@@ -14,6 +14,7 @@
 #define DHCP_OPT_LEASE 51u
 #define DHCP_OPT_SERVER 54u
 #define DHCP_OPT_PRL 55u
+#define DHCP_OPT_CLIENT_ID 61u
 
 static void put_be32(uint8_t *destination, uint32_t value) {
     destination[0] = (uint8_t)(value >> 24);
@@ -81,8 +82,9 @@ int rix_net_dhcp_build_discover(rix_net_packet_t *packet, uint32_t xid,
     return dhcp_pad(packet);
 }
 
-int rix_net_dhcp_build_request(rix_net_packet_t *packet, uint32_t xid,
-                               const uint8_t mac[6], uint32_t requested_ip) {
+int rix_net_dhcp_build_request_for_server(rix_net_packet_t *packet, uint32_t xid,
+                                          const uint8_t mac[6], uint32_t requested_ip,
+                                          uint32_t server) {
     uint8_t type = RIX_DHCP_MSG_REQUEST;
     uint8_t requested[4];
     uint8_t prl[3] = {1, 3, 6};
@@ -91,8 +93,20 @@ int rix_net_dhcp_build_request(rix_net_packet_t *packet, uint32_t xid,
     if (dhcp_option(packet, DHCP_OPT_MSGTYPE, &type, 1) != 0) return -1;
     put_be32(requested, requested_ip);
     if (dhcp_option(packet, DHCP_OPT_REQIP, requested, 4) != 0) return -1;
+    uint8_t client_id[7] = {1, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]};
+    if (dhcp_option(packet, DHCP_OPT_CLIENT_ID, client_id, sizeof(client_id)) != 0) return -1;
+    if (server) {
+        uint8_t server_id[4];
+        put_be32(server_id, server);
+        if (dhcp_option(packet, DHCP_OPT_SERVER, server_id, sizeof(server_id)) != 0) return -1;
+    }
     if (dhcp_option(packet, DHCP_OPT_PRL, prl, 3) != 0) return -1;
     return dhcp_pad(packet);
+}
+
+int rix_net_dhcp_build_request(rix_net_packet_t *packet, uint32_t xid,
+                               const uint8_t mac[6], uint32_t requested_ip) {
+    return rix_net_dhcp_build_request_for_server(packet, xid, mac, requested_ip, 0);
 }
 
 static int contiguous_mask(uint32_t mask) {
@@ -350,8 +364,8 @@ int rix_net_dhcp_run(void) {
         dhcp_stats_t stats = {0, 0, 0, 0, 0, 0};
         unsigned accepted = 0;
         rix_net_packet_init(&request);
-        if (rix_net_dhcp_build_request(&request, current, info->mac,
-                                       offer.address) != 0)
+        if (rix_net_dhcp_build_request_for_server(&request, current, info->mac,
+                                                  offer.address, offer.server) != 0)
             return -1;
         if (dhcp_transmit(&request, info->mac) < 0) return -1;
         for (poll = 0; poll < RIX_DHCP_POLLS_PER_ROUND; ++poll) {

@@ -31,6 +31,9 @@ int rix_net_dhcp_build_discover(rix_net_packet_t *packet, uint32_t xid,
                                 const uint8_t mac[6]);
 int rix_net_dhcp_build_request(rix_net_packet_t *packet, uint32_t xid,
                                const uint8_t mac[6], uint32_t requested_ip);
+int rix_net_dhcp_build_request_for_server(rix_net_packet_t *packet, uint32_t xid,
+                                          const uint8_t mac[6], uint32_t requested_ip,
+                                          uint32_t server);
 int rix_net_dhcp_parse_reply(const rix_net_packet_t *packet, uint32_t xid,
                              uint8_t expected_type, rix_dhcp_offer_t *offer);
 #ifndef RIX_HOST_TEST

@@ -393,5 +393,25 @@ int main(void) {
                dhcp[246] == 0 && dhcp[247] == 2 && dhcp[248] == 15);
         assert(rix_net_packet_length(&packet) == RIX_DHCP_MIN_SIZE);
     }
+    rix_net_packet_init(&packet);
+    assert(rix_net_dhcp_build_request_for_server(&packet, 0x9abcdef0u, test_mac,
+                                                 0x0a00020fu, 0x0a000202u) == 0);
+    {
+        const uint8_t *dhcp = rix_net_packet_data(&packet);
+        size_t found_server = 0, found_client = 0;
+        for (size_t i = 240; i + 1 < rix_net_packet_length(&packet); ) {
+            uint8_t code = dhcp[i++];
+            if (code == 255) break;
+            if (code == 0) continue;
+            uint8_t length = dhcp[i++];
+            if (i + length > rix_net_packet_length(&packet)) break;
+            if (code == 54 && length == 4 && dhcp[i] == 10 && dhcp[i + 3] == 2)
+                found_server = 1;
+            if (code == 61 && length == 7 && dhcp[i] == 1 && dhcp[i + 6] == 0x0f)
+                found_client = 1;
+            i += length;
+        }
+        assert(found_server && found_client);
+    }
     return 0;
 }
