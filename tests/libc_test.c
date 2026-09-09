@@ -10,6 +10,7 @@
 
 static unsigned char test_heap[128u * 1024u];
 static size_t test_break;
+static int compare_ints(const void *left, const void *right) { return *(const int *)left - *(const int *)right; }
 void *sbrk(ptrdiff_t increment) {
     if (increment < 0 || (size_t)increment > sizeof(test_heap) - test_break) return (void *)-1;
     void *old = test_heap + test_break;
@@ -61,5 +62,13 @@ int main(void) {
     assert(fputs("stdio", &stream) == 0);
     assert(fputc('!', &stream) == '!');
     assert(host_written == 0 && fflush(&stream) == 0 && host_written == 6);
+    char *end = 0;
+    assert(atoi("-42") == -42);
+    assert(strtol("0x2a", &end, 0) == 42 && *end == 0);
+    assert(strtoul("101", &end, 2) == 5 && *end == 0);
+    int values[5] = { 4, 1, 5, 2, 3 };
+    qsort(values, 5, sizeof(values[0]), compare_ints);
+    for (int i = 0; i < 5; ++i) assert(values[i] == i + 1);
+    assert(abs(-7) == 7 && labs(-9L) == 9L);
     return 0;
 }

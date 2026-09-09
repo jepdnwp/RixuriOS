@@ -224,3 +224,34 @@ struct dirent *readdir(DIR *directory) {
     return &directory->entries[directory->index++];
 }
 int closedir(DIR *directory) { if (!directory) { errno = RIX_EINVAL; return -1; } int rc = close(directory->fd); free(directory); return rc; }
+
+
+static int conversion_digit(int value) {
+    if (value >= '0' && value <= '9') return value - '0';
+    if (value >= 'a' && value <= 'z') return value - 'a' + 10;
+    if (value >= 'A' && value <= 'Z') return value - 'A' + 10;
+    return -1;
+}
+static unsigned long parse_unsigned(const char *text, char **end, int base, int *negative, int *range) {
+    const char *p=text; while (isspace((unsigned char)*p)) ++p;
+    *negative=0; if (*p=='+' || *p=='-') { *negative=*p=='-'; ++p; }
+    if (base==0) { base=10; if (*p=='0') { base=8; if (p[1]=='x'||p[1]=='X') { base=16; p+=2; } } }
+    else if (base==16 && p[0]=='0' && (p[1]=='x'||p[1]=='X')) p+=2;
+    if (base<2 || base>36) { errno=RIX_EINVAL; if(end)*end=(char*)text; return 0; }
+    const char *start=p; unsigned long value=0,limit=~0UL; *range=0;
+    for (;;) { int digit=conversion_digit((unsigned char)*p); if(digit<0||digit>=base)break; if(value>(limit-(unsigned long)digit)/(unsigned)base){*range=1;value=limit;}else if(!*range)value=value*(unsigned)base+(unsigned)digit; ++p; }
+    if (end) *end=(char*)(p==start?text:p);
+    return value;
+}
+unsigned long strtoul(const char *text, char **end, int base) { if(!text){errno=RIX_EINVAL;if(end)*end=0;return 0;}int negative=0,range=0;unsigned long value=parse_unsigned(text,end,base,&negative,&range);if(range)errno=RIX_ERANGE;return negative?0UL-value:value; }
+long strtol(const char *text, char **end, int base) { if(!text){errno=RIX_EINVAL;if(end)*end=0;return 0;}int negative=0,range=0;unsigned long value=parse_unsigned(text,end,base,&negative,&range);unsigned long max=(~0UL>>1),limit=negative?max+1UL:max;if(value>limit){value=limit;range=1;}if(range)errno=RIX_ERANGE;if(negative)return value==max+1UL?(long)(-(long)max-1L):-(long)value;return(long)value; }
+int atoi(const char *text) { return (int)strtol(text,0,10); }
+int abs(int value) { return value<0 ? -value : value; }
+long labs(long value) { return value<0 ? -value : value; }
+void qsort(void *base, size_t count, size_t size, int (*compare)(const void *, const void *)) {
+    if (!base || !size || !compare || count<2) return;
+    unsigned char *item=malloc(size); if(!item){errno=RIX_ENOMEM;return;}
+    unsigned char *bytes=base;
+    for(size_t i=1;i<count;++i){memcpy(item,bytes+i*size,size);size_t j=i;while(j>0&&compare(bytes+(j-1)*size,item)>0){memcpy(bytes+j*size,bytes+(j-1)*size,size);--j;}memcpy(bytes+j*size,item,size);}
+    free(item);
+}

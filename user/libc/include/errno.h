@@ -16,3 +16,4 @@ extern int errno;
 #define RIX_ENOSYS 38
 #define RIX_EPIPE 32
 #define RIX_EINTR 4
+#define RIX_ERANGE 34

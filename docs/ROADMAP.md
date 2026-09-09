@@ -1506,3 +1506,8 @@ Descriptor-backed character and line I/O now covers `fgetc`, `fputc`, `fgets` an
 ### Phase 22 real stdio buffering checkpoint — 2026-09-09
 
 The descriptor-backed `FILE` layer now performs real read and write buffering, preserves unread input across seek transitions, flushes on close/explicit `fflush`, and accepts caller-owned buffers through `setvbuf`. Host tests verify deferred output and flush delivery.
+
+
+### Phase 22 stdlib checkpoint — 2026-09-09
+
+Freestanding numeric conversion, absolute-value and comparator-based sorting helpers are now available, including base autodetection and errno-aware range handling. Broader environment, random and process utility APIs remain future work.

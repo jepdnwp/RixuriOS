@@ -790,3 +790,8 @@ The stdio surface now includes `fgetc`, `fputc`, `fgets`, `fputs`, `setvbuf` and
 ## Phase 22 real stdio buffering checkpoint — 2026-09-09
 
 `FILE` now tracks buffer ownership, read position, pending input and pending output. `fopen` provisions a default buffer when possible; `fgetc`/`fread` refill it, `fputc`/`fwrite` accumulate output, and `fflush`, `fclose` and seek operations reconcile pending data. `setvbuf` supports caller-provided buffers and unbuffered mode. The host libc test verifies that writes remain buffered until flush and then reach the descriptor.
+
+
+## Phase 22 stdlib checkpoint — 2026-09-09
+
+The freestanding libc now provides numeric conversion and utility APIs: `atoi`, base-aware `strtol`/`strtoul` with whitespace, sign, prefix and overflow handling, `abs`, `labs` and comparator-based `qsort`. Invalid bases and range overflow update `errno`. Conformance tests cover decimal/hex/binary conversion and integer sorting; strict builds and the complete host suite pass.
