@@ -743,3 +743,10 @@ The stack now polls IPv6 Ethernet frames into a dedicated bounded queue and tran
 ## IPv6 software closure — 2026-09-09
 
 A bounded longest-prefix route table and a separate IPv6 UDP socket ABI are implemented. IPv6 send now performs route lookup followed by Neighbor Cache resolution, and IPv6 receive dispatch fills the dedicated socket queue. Full host tests and kernel image build pass. Independent IPv6 external traffic remains untested in the current IPv4-only QEMU harness.
+
+
+## Phase 22 initial libc slice — 2026-09-09
+
+Phase 22 has started with a freestanding userspace libc foundation. The userspace image and program link rules now include `string.h`/`libc.c`, `errno`, and a deterministic 64 KiB arena allocator implementing `malloc`, `calloc`, `realloc` and `free`. Memory/string operations include `memcpy`, `memmove`, `memset`, `memcmp`, `strlen`, `strcmp`, `strncmp` and `strchr`. A dedicated host `libc-test` covers overlap-safe moves, comparison, zeroed allocation, resizing and allocation failure. `make CROSS= -j2 test` and the kernel image build pass.
+
+This is the first Phase 22 slice, not a musl-complete port. The allocator remains intentionally bounded until an anonymous-memory/brk-style kernel ABI is selected.

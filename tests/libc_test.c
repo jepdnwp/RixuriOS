@@ -1,0 +1,29 @@
+#include <string.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <assert.h>
+
+int main(void) {
+    char source[] = "rixurios";
+    char buffer[32];
+    assert(strlen(source) == 8);
+    assert(strcmp(source, "rixurios") == 0);
+    assert(strncmp(source, "rix", 3) == 0);
+    assert(strchr(source, 'u') == source + 3);
+    assert(memcpy(buffer, source, sizeof(source)) == buffer);
+    assert(memcmp(buffer, source, sizeof(source)) == 0);
+    memmove(buffer + 2, buffer, 6);
+    assert(buffer[2] == 'r' && buffer[7] == 'i');
+    memset(buffer, 'x', 4);
+    assert(buffer[0] == 'x' && buffer[3] == 'x');
+    void *a = malloc(32);
+    assert(a != 0);
+    void *b = calloc(4, 8);
+    assert(b != 0);
+    for (int i = 0; i < 32; ++i) assert(((unsigned char *)b)[i] == 0);
+    a = realloc(a, 64);
+    assert(a != 0);
+    free(a); free(b);
+    assert(malloc((size_t)-1) == 0 && errno == RIX_ENOMEM);
+    return 0;
+}

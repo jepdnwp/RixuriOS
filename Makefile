@@ -37,8 +37,10 @@ build/user_shell.o: user/shell/shell.c user/shell/shell.h | build
 	$(CC) $(USER_INIT_CFLAGS) -c $< -o $@
 build/user_unistd.o: user/libc/src/unistd.c user/libc/include/unistd.h | build
 	$(CC) $(USER_INIT_CFLAGS) -c $< -o $@
-build/user_init.elf: build/user_init.o build/user_shell.o build/user_unistd.o user/init.ld | build
-	$(LD) -nostdlib -z max-page-size=0x1000 -T user/init.ld -o $@ build/user_init.o build/user_shell.o build/user_unistd.o
+build/user_libc.o: user/libc/src/libc.c user/libc/include/string.h user/libc/include/stdlib.h user/libc/include/errno.h | build
+	$(CC) $(USER_INIT_CFLAGS) -c $< -o $@
+build/user_init.elf: build/user_init.o build/user_shell.o build/user_unistd.o build/user_libc.o user/init.ld | build
+	$(LD) -nostdlib -z max-page-size=0x1000 -T user/init.ld -o $@ build/user_init.o build/user_shell.o build/user_unistd.o build/user_libc.o
 	$(READELF) -h $@ >/dev/null
 	$(READELF) -l $@ >/dev/null
 kernel/user_init_blob.o: build/user_init.elf | build
@@ -58,20 +60,20 @@ build/programs/hosts.o: user/programs/hosts.c user/programs/hosts.h user/libc/in
 build/programs/start.o: user/programs/start.S | build
 	mkdir -p build/programs
 	$(CC) $(USER_INIT_CFLAGS) -c $< -o $@
-build/programs/%.elf: build/programs/%.o $(PROGRAM_START_OBJ) build/user_unistd.o user/init.ld | build
-	$(LD) -nostdlib -z max-page-size=0x1000 -T user/init.ld -o $@ $(PROGRAM_START_OBJ) build/programs/$*.o build/user_unistd.o
+build/programs/%.elf: build/programs/%.o $(PROGRAM_START_OBJ) build/user_unistd.o build/user_libc.o user/init.ld | build
+	$(LD) -nostdlib -z max-page-size=0x1000 -T user/init.ld -o $@ $(PROGRAM_START_OBJ) build/programs/$*.o build/user_unistd.o build/user_libc.o
 	$(READELF) -h $@ >/dev/null
 	$(READELF) -l $@ >/dev/null
-build/programs/curl.elf: build/programs/curl.o build/programs/hosts.o $(PROGRAM_START_OBJ) build/user_unistd.o user/init.ld | build
-	$(LD) -nostdlib -z max-page-size=0x1000 -T user/init.ld -o $@ $(PROGRAM_START_OBJ) build/programs/curl.o build/programs/hosts.o build/user_unistd.o
+build/programs/curl.elf: build/programs/curl.o build/programs/hosts.o $(PROGRAM_START_OBJ) build/user_unistd.o build/user_libc.o user/init.ld | build
+	$(LD) -nostdlib -z max-page-size=0x1000 -T user/init.ld -o $@ $(PROGRAM_START_OBJ) build/programs/curl.o build/programs/hosts.o build/user_unistd.o build/user_libc.o
 	$(READELF) -h $@ >/dev/null
 	$(READELF) -l $@ >/dev/null
-build/programs/host.elf: build/programs/host.o build/programs/hosts.o $(PROGRAM_START_OBJ) build/user_unistd.o user/init.ld | build
-	$(LD) -nostdlib -z max-page-size=0x1000 -T user/init.ld -o $@ $(PROGRAM_START_OBJ) build/programs/host.o build/programs/hosts.o build/user_unistd.o
+build/programs/host.elf: build/programs/host.o build/programs/hosts.o $(PROGRAM_START_OBJ) build/user_unistd.o build/user_libc.o user/init.ld | build
+	$(LD) -nostdlib -z max-page-size=0x1000 -T user/init.ld -o $@ $(PROGRAM_START_OBJ) build/programs/host.o build/programs/hosts.o build/user_unistd.o build/user_libc.o
 	$(READELF) -h $@ >/dev/null
 	$(READELF) -l $@ >/dev/null
-build/programs/ping.elf: build/programs/ping.o build/programs/hosts.o $(PROGRAM_START_OBJ) build/user_unistd.o user/init.ld | build
-	$(LD) -nostdlib -z max-page-size=0x1000 -T user/init.ld -o $@ $(PROGRAM_START_OBJ) build/programs/ping.o build/programs/hosts.o build/user_unistd.o
+build/programs/ping.elf: build/programs/ping.o build/programs/hosts.o $(PROGRAM_START_OBJ) build/user_unistd.o build/user_libc.o user/init.ld | build
+	$(LD) -nostdlib -z max-page-size=0x1000 -T user/init.ld -o $@ $(PROGRAM_START_OBJ) build/programs/ping.o build/programs/hosts.o build/user_unistd.o build/user_libc.o
 	$(READELF) -h $@ >/dev/null
 	$(READELF) -l $@ >/dev/null
 programs: $(PROGRAM_ELFS)
@@ -220,6 +222,9 @@ pipe-test: | build
 net-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -DRIX_HOST_TEST -I. -Iinclude tests/net_test.c kernel/net/net.c kernel/net/ethernet.c kernel/net/arp.c kernel/net/ipv4.c kernel/net/udp.c kernel/net/ipv6.c kernel/net/tcp.c kernel/net/loopback.c kernel/net/socket.c kernel/net/dhcp.c -o build/net_test
 			build/net_test
+libc-test: | build
+	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -fno-builtin -Iuser/libc/include tests/libc_test.c user/libc/src/libc.c -o build/libc_test
+	build/libc_test
 
 hosts-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. -Iuser/programs -Iuser/libc/include tests/hosts_test.c user/programs/hosts.c -o build/hosts_test
@@ -249,7 +254,7 @@ e1000-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/e1000_test.c kernel/net/e1000.c -o build/e1000_test
 		build/e1000_test
 
-test: check usb-test hid-test tty-test shell-test pipe-test net-test hosts-test rtl-test e1000-test acpi-test rixfs-mount-test symlink-test
+test: check usb-test hid-test tty-test shell-test pipe-test net-test libc-test hosts-test rtl-test e1000-test acpi-test rixfs-mount-test symlink-test
 	@echo 'Static kernel build checks completed.'
 
 clean:

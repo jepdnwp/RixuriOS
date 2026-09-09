@@ -1461,3 +1461,8 @@ The network stack now has a separate bounded IPv6 RX queue, IPv6 Ethernet pollin
 ### Phase 21 IPv6 software closure — 2026-09-09
 
 The IPv6 software path now includes a bounded longest-prefix/default route table and a separate IPv6 UDP endpoint ABI with open, bind, send, poll and receive operations. The stack performs route lookup, Neighbor Cache resolution and IPv6 Ethernet transmission, and dispatches received UDPv6 payloads into the IPv6 socket queue. External IPv6 traffic evidence remains a hardware/network qualification item because the available QEMU harness is IPv4-only.
+
+
+### Phase 22 initial libc checkpoint — 2026-09-09
+
+The first Phase 22 slice adds freestanding memory/string APIs, errno storage, and a bounded deterministic allocator to the userspace image and program link chain. Host libc tests and the complete strict test suite pass. A future slice must replace the fixed arena with a kernel-backed memory-growth ABI before claiming musl/POSIX completion.

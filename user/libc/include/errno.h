@@ -1,0 +1,18 @@
+#pragma once
+extern int errno;
+#define RIX_EPERM 1
+#define RIX_ENOENT 2
+#define RIX_EIO 5
+#define RIX_EBADF 9
+#define RIX_ECHILD 10
+#define RIX_EAGAIN 11
+#define RIX_ENOMEM 12
+#define RIX_EACCES 13
+#define RIX_EFAULT 14
+#define RIX_EBUSY 16
+#define RIX_EEXIST 17
+#define RIX_EINVAL 22
+#define RIX_ENOSPC 28
+#define RIX_ENOSYS 38
+#define RIX_EPIPE 32
+#define RIX_EINTR 4
