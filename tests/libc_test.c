@@ -73,6 +73,8 @@ int main(void) {
     assert(fgetc(&formatted_stream) == EOF && ferror(&formatted_stream) && !feof(&formatted_stream));
     clearerr(&formatted_stream);
     assert(!ferror(&formatted_stream) && !feof(&formatted_stream));
+    assert(ungetc('Q', &formatted_stream) == 'Q' && fgetc(&formatted_stream) == 'Q');
+    assert(ungetc(EOF, &formatted_stream) == EOF);
     assert(fileno(&formatted_stream) == 1);
     errno = 0;
     assert(remove(0) == -1 && errno == RIX_EINVAL);

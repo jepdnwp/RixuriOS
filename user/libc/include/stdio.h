@@ -1,7 +1,7 @@
 #pragma once
 #include <stddef.h>
 #include <stdarg.h>
-typedef struct { int fd; unsigned char *buffer; size_t buffer_size; size_t buffer_pos; size_t buffer_len; int mode; int writing; int owns_buffer; int error; int eof; char *temporary_path; } FILE;
+typedef struct { int fd; unsigned char *buffer; size_t buffer_size; size_t buffer_pos; size_t buffer_len; int mode; int writing; int owns_buffer; int error; int eof; int has_pushback; int pushback; char *temporary_path; } FILE;
 #define EOF (-1)
 #define SEEK_SET 0
 #define SEEK_CUR 1
@@ -31,6 +31,7 @@ int fseek(FILE *stream, long offset, int whence);
 long ftell(FILE *stream);
 void rewind(FILE *stream);
 int fgetc(FILE *stream);
+int ungetc(int value, FILE *stream);
 int fputc(int value, FILE *stream);
 char *fgets(char *buffer, int capacity, FILE *stream);
 int fputs(const char *text, FILE *stream);
