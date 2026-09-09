@@ -366,6 +366,23 @@ static int cr3_diagnose_target(rix_process_t*p,uint64_t old_cr3){
  serial_drain();
  return 0;
 }
+int process_validate_user_entry(pid_t pid,uint64_t user_rip,uint64_t user_rsp){
+ rix_process_t*p=process_lookup(pid);uint64_t phys=0,flags=0;
+ if(!p||!p->address_space.pml4_phys||!user_rip||!user_rsp)return -1;
+ int rc=vmm_walk_in_pml4(p->address_space.pml4_phys,user_rip&~0xfffULL,0,0,0,0,&phys,&flags);
+ if(rc!=0||(flags&(RIXURI_PTE_PRESENT|RIXURI_PTE_USER|RIXURI_PTE_NX))!=(RIXURI_PTE_PRESENT|RIXURI_PTE_USER)){
+  kernel_log("DEBUG: user entry RIP permission failure rip=");kernel_log_hex(user_rip);kernel_log(" rc=");kernel_log_dec((uint64_t)(rc<0?-rc:rc));kernel_log(" flags=");kernel_log_hex(flags);kernel_log("\r\n");return -2;
+ }
+ /* The initial stack pointer may equal the exclusive top boundary; the
+    first user push then touches user_rsp-1.  Validate that byte rather than
+    the boundary itself, and require a writable user leaf. */
+ if(user_rsp>USER_STACK_TOP||user_rsp<=USER_STACK_BASE)return -3;
+ phys=0;flags=0;rc=vmm_walk_in_pml4(p->address_space.pml4_phys,(user_rsp-1ULL)&~0xfffULL,0,0,0,0,&phys,&flags);
+ if(rc!=0||(flags&(RIXURI_PTE_PRESENT|RIXURI_PTE_USER|RIXURI_PTE_WRITE))!=(RIXURI_PTE_PRESENT|RIXURI_PTE_USER|RIXURI_PTE_WRITE)){
+  kernel_log("DEBUG: user entry RSP permission failure rsp=");kernel_log_hex(user_rsp);kernel_log(" rc=");kernel_log_dec((uint64_t)(rc<0?-rc:rc));kernel_log(" flags=");kernel_log_hex(flags);kernel_log("\r\n");return -4;
+ }
+ return 0;
+}
 /* Last-instant read-only freshness check of the target root. Called with IF=0
  * just before load_cr3_raw: re-reads PML4[0..3] straight from the page so any
  * corruption between the earlier dump and the switch would show here.

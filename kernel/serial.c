@@ -47,5 +47,5 @@ void serial_drain(void){if(!serial_has_com1)return;for(int i=0;i<4096;i++)if(inb
 void kernel_log(const char *s){serial_write(s);}
 void kernel_log_n(const char *s,size_t n){serial_write_n(s,n);}
 void kernel_log_hex(uint64_t v){char buf[20];static const char d[]="0123456789abcdef";buf[0]='0';buf[1]='x';for(int i=2;i<18;i++)buf[i]=d[(v>>(60-((i-2)*4)))&0xFULL];buf[18]=0;kernel_log(buf);}
-void kernel_log_dec(uint64_t v){char buf[21];size_t i=sizeof(buf);if(v==0){kernel_log("0");return;}while(v){buf[--i]=(char)('0'+v%10ULL);v/=10ULL;}kernel_log(&buf[i]);}
+void kernel_log_dec(uint64_t v){char buf[21];size_t i=sizeof(buf)-1;buf[i]=0;if(v==0){kernel_log("0");return;}while(v){buf[--i]=(char)('0'+v%10ULL);v/=10ULL;}kernel_log(&buf[i]);}
 void panic(const char *reason){kernel_log("RixuriOS PANIC: ");kernel_log(reason?reason:"unknown");kernel_log("\r\n");for(;;)__asm__ volatile("cli; hlt");}

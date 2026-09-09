@@ -33,6 +33,10 @@ int process_exec_user_with_args(pid_t pid,const void *image,uint64_t image_size,
                                 const char *const *envp, size_t envc,
                                 uint64_t *out_entry, uint64_t *out_user_stack);
 int process_activate(pid_t pid);
+/* Validate the exact user RIP/RSP that will be placed in an IRETQ frame.
+ * Returns zero only when RIP is a present user executable page and RSP points
+ * into a present user writable stack page in the target address space. */
+int process_validate_user_entry(pid_t pid, uint64_t user_rip, uint64_t user_rsp);
 int process_set_state(pid_t pid,rix_process_state_t state);
 /* In-memory CR3 event ring (no output at record time): every scheduler
  * selection and every address-space activation pushes one entry; the fault

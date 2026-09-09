@@ -67,6 +67,10 @@ static __attribute__((noreturn)) void task_bootstrap(void){
         rix_process_t *p=process_lookup(t->process_pid);
         if(!p){kernel_log("DEBUG: bootstrap process lookup FAILED\r\n");task_returned();}
         if(process_activate(t->process_pid)!=0){kernel_log("DEBUG: bootstrap process_activate FAILED\r\n");task_returned();}
+        if(process_validate_user_entry(t->process_pid,t->user_entry,t->user_stack)!=0){
+            kernel_log("DEBUG: bootstrap user entry validation FAILED\r\n");
+            task_returned();
+        }
         boot_user_entry_marker(t->process_pid,t->user_entry,t->user_stack,p->address_space.pml4_phys);
         {static unsigned n=0;if(n<2){kernel_log("DEBUG: entering ring3\r\n");kernel_log("RING3: iretq prepare rip=");kernel_log_hex(t->user_entry);kernel_log(" rsp=");kernel_log_hex(t->user_stack);kernel_log(" cr3=");kernel_log_hex(p->address_space.pml4_phys);kernel_log(" cs=0x1b ss=0x23\r\n");n++;}}
         /* Exactly one enter path runs: context restore for fork children,

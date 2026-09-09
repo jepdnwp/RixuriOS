@@ -1,9 +1,15 @@
 .section .text
+.extern current_pml4_phys
 .global x86_enter_user
 .type x86_enter_user,@function
 x86_enter_user:
     cli
     movq %rdi,%cr3
+    /* process_activate defers the user CR3 load to this trampoline.  Keep
+       the software walker/uaccess view in lockstep before the first user
+       instruction can issue int 0x80.  current_pml4_phys is in the shared
+       low identity mapping, so this store remains valid after the CR3 load. */
+    movq %rdi,current_pml4_phys(%rip)
     movw $0x23,%ax
     movw %ax,%ds
     movw %ax,%es
@@ -23,6 +29,7 @@ x86_enter_user:
 x86_enter_user_return:
     cli
     movq %rdi,%cr3
+    movq %rdi,current_pml4_phys(%rip)
     movw $0x23,%ax
     movw %ax,%ds
     movw %ax,%es
@@ -43,6 +50,7 @@ x86_enter_user_return:
 x86_enter_user_context:
     cli
     movq %rdi,%cr3
+    movq %rdi,current_pml4_phys(%rip)
     pushq $0x23
     movq 136(%rsi),%rax
     pushq %rax
