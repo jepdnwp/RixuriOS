@@ -34,6 +34,14 @@ int main(void) {
     assert(strncmp(source, "rix", 3) == 0);
     assert(strchr(source, 'u') == source + 3);
     assert(memchr(source, 'u', sizeof(source)) == source + 3);
+    assert(strrchr(source, 'i') == source + 5);
+    assert(strstr(source, "uri") == source + 3);
+    assert(strspn("123abc", "123") == 3 && strcspn("abc123", "123") == 3);
+    assert(*strpbrk("rixurios", "xz") == 'x' && *strpbrk("rixurios", "uo") == 'u');
+    char tokens[] = "one,,two three";
+    assert(strcmp(strtok(tokens, ", "), "one") == 0);
+    assert(strcmp(strtok(0, ", "), "two") == 0);
+    assert(strcmp(strtok(0, ", "), "three") == 0 && strtok(0, ", ") == 0);
     char strings[32] = "rix";
     assert(strcmp(strcpy(strings, "rixuri"), "rixuri") == 0);
     assert(strncpy(strings, "os", 5) == strings && strings[2] == 0);

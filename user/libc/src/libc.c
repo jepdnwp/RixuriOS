@@ -56,6 +56,13 @@ char *strchr(const char *text, int value) {
     if (!text) return 0;
     for (;;) { if ((unsigned char)*text == (unsigned char)value) return (char *)text; if (!*text) return 0; ++text; }
 }
+char *strrchr(const char *text, int value) { if (!text) return 0;const char *last=0;for(;;++text){if((unsigned char)*text==(unsigned char)value)last=text;if(!*text)return(char *)last;} }
+static int string_contains(const char *set, unsigned char value) { if (!set) return 0;while(*set)if((unsigned char)*set++==value)return 1;return 0; }
+char *strstr(const char *text, const char *needle) { if(!text||!needle)return 0;if(!*needle)return(char *)text;for(;*text;++text){const char *a=text,*b=needle;while(*a&&*b&&*a==*b){++a;++b;}if(!*b)return(char *)text;}return 0; }
+size_t strspn(const char *text, const char *accept) { if(!text)return 0;size_t n=0;while(text[n]&&string_contains(accept,(unsigned char)text[n]))++n;return n; }
+size_t strcspn(const char *text, const char *reject) { if(!text)return 0;size_t n=0;while(text[n]&&!string_contains(reject,(unsigned char)text[n]))++n;return n; }
+char *strpbrk(const char *text, const char *accept) { if(!text)return 0;while(*text){if(string_contains(accept,(unsigned char)*text))return(char *)text;++text;}return 0; }
+char *strtok(char *text, const char *delimiters) { static char *cursor; if(text)cursor=text;if(!cursor||!delimiters)return 0;while(*cursor&&string_contains(delimiters,(unsigned char)*cursor))++cursor;if(!*cursor){cursor=0;return 0;}char *token=cursor;while(*cursor&&!string_contains(delimiters,(unsigned char)*cursor))++cursor;if(*cursor)*cursor++=0;return token; }
 char *strcpy(char *destination, const char *source) { if (!destination || !source) return destination; size_t i=0;do{destination[i]=source[i];}while(source[i++]);return destination; }
 char *strncpy(char *destination, const char *source, size_t length) { if (!destination || !source) return destination;size_t i=0;for(;i<length&&source[i];++i)destination[i]=source[i];for(;i<length;++i)destination[i]=0;return destination; }
 char *strcat(char *destination, const char *source) { if (!destination || !source) return destination;size_t offset=strlen(destination),i=0;do{destination[offset+i]=source[i];}while(source[i++]);return destination; }
