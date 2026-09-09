@@ -140,7 +140,7 @@ int rix_rtl8125_hw_reset(volatile uint8_t *mmio, size_t mmio_size) {
 int rix_rtl8125_hw_enable(volatile uint8_t *mmio, size_t mmio_size,
                            uint32_t interrupt_mask) {
     if (!mmio || mmio_size < RIX_RTL8125_REG_IMR + 4u) return -1;
-    mmio_write32(mmio, RIX_RTL8125_REG_IMR, interrupt_mask);
+    mmio_write16(mmio, RIX_RTL8125_REG_IMR, (uint16_t)interrupt_mask);
     mmio_write8(mmio, RIX_RTL8125_REG_COMMAND,
                 mmio_read8(mmio, RIX_RTL8125_REG_COMMAND) |
                 RIX_RTL8125_CMD_RX_ENABLE | RIX_RTL8125_CMD_TX_ENABLE);
@@ -190,9 +190,9 @@ int rix_rtl8125_program_rx_filter(volatile uint8_t *mmio, size_t mmio_size) {
 int rix_rtl8125_ack_interrupts(volatile uint8_t *mmio, size_t mmio_size,
                                uint32_t *pending) {
     if (!mmio || !pending || mmio_size < RIX_RTL8125_REG_ISR + 4u) return -1;
-    uint32_t status = mmio_read32(mmio, RIX_RTL8125_REG_ISR);
+    uint32_t status = mmio_read16(mmio, RIX_RTL8125_REG_ISR);
     *pending = status;
-    if (status) mmio_write32(mmio, RIX_RTL8125_REG_ISR, status);
+    if (status) mmio_write16(mmio, RIX_RTL8125_REG_ISR, (uint16_t)status);
     return 0;
 }
 

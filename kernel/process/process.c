@@ -297,6 +297,16 @@ static int cr3_diagnose_target(rix_process_t*p,uint64_t old_cr3){
  vmm_log_pml4_range(vmm_kernel_pml4(),np,0,16);
  vmm_log_pml4_compare(vmm_kernel_pml4(),np);
  uint64_t rip=read_rip_hw(),rsp=read_rsp_hw();
+ uint64_t old_stack_phys=0,new_stack_phys=0;
+ (void)vmm_walk_in_pml4(old_cr3,rsp,0,0,0,0,&old_stack_phys,0);
+ (void)vmm_walk_in_pml4(np,rsp,0,0,0,0,&new_stack_phys,0);
+ kernel_log("DEBUG: active stack phys old=");kernel_log_hex(old_stack_phys);
+ kernel_log(" new=");kernel_log_hex(new_stack_phys);kernel_log("\r\n");
+ if(!old_stack_phys||!new_stack_phys||
+    (old_stack_phys&~0xfffULL)!=(new_stack_phys&~0xfffULL)){
+  kernel_log("DEBUG: CR3 REFUSED active stack alias mismatch\r\n");
+  serial_drain();return -1;
+ }
  uint64_t ret=(uint64_t)__builtin_return_address(0);
  uint64_t kstack_base=p->kernel_stack,kstack_top=p->kernel_stack+p->kernel_stack_size-1ULL;
  const x86_tss_t*tss=tss_current();
