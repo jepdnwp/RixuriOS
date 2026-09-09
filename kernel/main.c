@@ -224,10 +224,11 @@ void kernel_main(const rixuri_boot_info_t *boot){
  serial_write("[EARLY] TTY done\r\n");
  /* Attach GOP immediately after TTY setup so all following diagnostics are
   * visible on the physical display, not only on a debug serial console. */
- if(boot->framebuffer_base&&boot->framebuffer_width&&boot->framebuffer_height)
-  tty_set_framebuffer(boot->framebuffer_base,(uint32_t)boot->framebuffer_size,
+  if(boot->framebuffer_base&&boot->framebuffer_width&&boot->framebuffer_height)
+   tty_set_framebuffer(boot->framebuffer_base,(uint32_t)boot->framebuffer_size,
                        boot->framebuffer_width,boot->framebuffer_height,
                        boot->framebuffer_pitch,boot->framebuffer_format);
+  serial_console_enable();
  klog_ready=1;
  klog_write("RixuriOS kernel: display diagnostics enabled\r\n");
  klog_write("PMM: total=");klog_write_dec(pmm_total_pages());klog_write(" free=");klog_write_dec(pmm_free_pages());klog_write("\r\n");
