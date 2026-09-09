@@ -307,13 +307,24 @@ int rix_rtl8125_configure(rix_rtl8125_t *driver) {
         for (size_t i = 0; i < 6; ++i) driver->mac[i] = mac[i];
     }
 
-    rix_rtl8125_hw_enable(driver->mmio, driver->mmio_size, 0u);
     /* RTL8125 RxMaxSize is a 16-bit byte-count register at 0xda. */
     if (rix_rtl8125_validate_mmio(driver, RIX_RTL8125_REG_RX_MAX_SIZE, 2u) != 0)
         return -8;
     mmio_write16(driver->mmio, RIX_RTL8125_REG_RX_MAX_SIZE,
                  (uint16_t)RIX_RTL8125_RX_BUFFER_SIZE);
-    if (rix_rtl8125_program_rx_filter(driver->mmio, driver->mmio_size) != 0) return -7;
+    /* The reset value is not sufficient on RTL8125/B650 systems: without a
+       finite DMA burst and FIFO threshold the MAC may leave RX descriptors
+       owned forever while TX still appears to work. */
+    if (rix_rtl8125_validate_mmio(driver, RIX_RTL8125_REG_RCR, 4u) != 0 ||
+        rix_rtl8125_validate_mmio(driver, RIX_RTL8125_REG_TX_CONFIG, 4u) != 0)
+        return -7;
+    mmio_write32(driver->mmio, RIX_RTL8125_REG_RCR,
+                 RIX_RTL8125_RCR_DMA_BURST | RIX_RTL8125_RCR_FIFO_THRESHOLD |
+                 RIX_RTL8125_RCR_ACCEPT);
+    mmio_write32(driver->mmio, RIX_RTL8125_REG_TX_CONFIG, 7u << 8);
+    /* Clear stale status before handing ownership of the RX ring to hardware. */
+    mmio_write32(driver->mmio, RIX_RTL8125_REG_ISR, 0xffffffffu);
+    if (rix_rtl8125_hw_enable(driver->mmio, driver->mmio_size, 0u) != 0) return -9;
     rix_rtl8125_read_link(driver->mmio, driver->mmio_size, &driver->link_up);
     return 0;
 }
