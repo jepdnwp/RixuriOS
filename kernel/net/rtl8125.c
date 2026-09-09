@@ -91,6 +91,7 @@ int rix_rtl8125_prepare_descriptor(rix_rtl8125_descriptor_t *descriptor,
     if (!descriptor || !buffer_address || !length || length > RIX_NET_MTU) return -1;
     descriptor->buffer_address = buffer_address;
     descriptor->flags = (flags & (RIX_RTL8125_DESC_OWN | RIX_RTL8125_DESC_EOR)) |
+                        RIX_RTL8125_DESC_FS | RIX_RTL8125_DESC_LS |
                         (length & RIX_RTL8125_DESC_LEN_MASK);
     descriptor->length = 0;
     return 0;
@@ -324,7 +325,8 @@ int rix_rtl8125_transmit(rix_rtl8125_t *driver, const void *data, size_t length)
     for (size_t i = 0; i < length; ++i) buffer[i] = ((const uint8_t *)data)[i];
     descriptors[slot].buffer_address = driver->tx_buffers[slot];
     descriptors[slot].length = 0;
-    descriptors[slot].flags = RIX_RTL8125_DESC_OWN | (uint32_t)length |
+    descriptors[slot].flags = RIX_RTL8125_DESC_OWN | RIX_RTL8125_DESC_FS |
+        RIX_RTL8125_DESC_LS | (uint32_t)length |
         (slot + 1 == RIX_RTL8125_TX_RING_SIZE ? RIX_RTL8125_DESC_EOR : 0);
     driver->tx_ring[slot].buffer_address = driver->tx_buffers[slot];
     driver->tx_ring[slot].length = (uint32_t)length;

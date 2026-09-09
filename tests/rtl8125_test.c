@@ -46,7 +46,8 @@ int main(void) {
     rix_rtl8125_descriptor_t descriptor;
     assert(rix_rtl8125_prepare_descriptor(&descriptor, 0x1000, 128,
                                            RIX_RTL8125_DESC_OWN | 0x80) == 0);
-    assert(descriptor.flags == (RIX_RTL8125_DESC_OWN | 128u));
+    assert(descriptor.flags == (RIX_RTL8125_DESC_OWN | RIX_RTL8125_DESC_FS |
+                                RIX_RTL8125_DESC_LS | 128u));
     assert(rix_rtl8125_prepare_descriptor(&descriptor, 0, 128, 0) != 0);
     rix_rtl8125_t driver = {0};
     assert(rix_rtl8125_validate_mmio(&driver, 0, 1) != 0);
@@ -119,8 +120,10 @@ int main(void) {
         assert(rix_rtl8125_transmit(&driver, payload, sizeof(payload)) ==
                (int)sizeof(payload));
         assert(txring[0].length == 0);
-        assert((txring[0].flags & (RIX_RTL8125_DESC_OWN | RIX_RTL8125_DESC_LEN_MASK)) ==
-               (RIX_RTL8125_DESC_OWN | sizeof(payload)));
+        assert((txring[0].flags & (RIX_RTL8125_DESC_OWN | RIX_RTL8125_DESC_FS |
+                                   RIX_RTL8125_DESC_LS | RIX_RTL8125_DESC_LEN_MASK)) ==
+               (RIX_RTL8125_DESC_OWN | RIX_RTL8125_DESC_FS |
+                RIX_RTL8125_DESC_LS | sizeof(payload)));
         assert(memcmp(txbuf, payload, sizeof(payload)) == 0);
         assert(txmmio[RIX_RTL8125_REG_TPPOLL] == RIX_RTL8125_TPPOLL_NPQ);
         memcpy(rxbuf, payload, sizeof(payload));
