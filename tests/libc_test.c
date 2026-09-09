@@ -85,6 +85,9 @@ int main(void) {
     assert(setenv("RIX_TEST", "two", 0) == 0 && strcmp(getenv("RIX_TEST"), "one") == 0);
     assert(setenv("RIX_TEST", "two", 1) == 0 && strcmp(getenv("RIX_TEST"), "two") == 0);
     assert(unsetenv("RIX_TEST") == 0 && getenv("RIX_TEST") == 0);
+    char putenv_value[] = "RIX_PUT=ok";
+    assert(putenv(putenv_value) == 0 && strcmp(getenv("RIX_PUT"), "ok") == 0);
+    assert(clearenv() == 0 && getenv("RIX_PUT") == 0);
     srand(1234u); int first = rand(); srand(1234u); assert(rand() == first);
     assert(arc4random() != arc4random());
     return 0;

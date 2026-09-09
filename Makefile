@@ -223,7 +223,7 @@ net-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -DRIX_HOST_TEST -I. -Iinclude tests/net_test.c kernel/net/net.c kernel/net/ethernet.c kernel/net/arp.c kernel/net/ipv4.c kernel/net/udp.c kernel/net/ipv6.c kernel/net/tcp.c kernel/net/loopback.c kernel/net/socket.c kernel/net/dhcp.c -o build/net_test
 			build/net_test
 libc-test: | build
-	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -fno-builtin -Iuser/libc/include tests/libc_test.c user/libc/src/libc.c -o build/libc_test
+	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -fno-builtin -DRIX_HOST_TEST -Iuser/libc/include tests/libc_test.c user/libc/src/libc.c -o build/libc_test
 	build/libc_test
 
 hosts-test: | build

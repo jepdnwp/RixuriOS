@@ -1516,6 +1516,8 @@ Freestanding numeric conversion, absolute-value and comparator-based sorting hel
 ### Phase 22 environment/random checkpoint — 2026-09-09
 
 A bounded heap-backed environment API and deterministic random helpers are now available. The random helpers are explicitly non-cryptographic until a kernel entropy source is added; security-sensitive consumers must not use them.
+### Phase 22 POSIX environment checkpoint — 2026-09-09
+The freestanding libc environment surface now includes `putenv` and `clearenv` in addition to `getenv`, `setenv` and `unsetenv`. Target userspace exports a rebuilt `environ` vector containing owned `NAME=VALUE` strings after every mutation; host tests use an isolated mode to avoid collision with the host C runtime. Strict libc, complete host-suite and kernel image checks pass.
 ### Phase 22 errno and stream-status checkpoint — 2026-09-09
 The freestanding libc now provides static errno descriptions through `strerror` and bounded `strerror_r`, including truncation reporting. `FILE` tracks EOF and I/O-error state; `feof`, `ferror` and `clearerr` expose and reset those states. Read, write and flush paths now distinguish EOF from operational failure. Strict libc, host-suite and kernel image checks pass.
 ### Phase 22 stdio formatting checkpoint — 2026-09-09
