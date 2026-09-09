@@ -6,7 +6,8 @@
 static rix_rtl8125_t controller;
 
 static volatile uint8_t *map_regs(uint64_t base, uint64_t size) {
-    if (!base || size < 0x100u) return 0;
+    if (!base || size < 0x100u || size > 0x1000000ULL ||
+        base > UINT64_MAX - (size - 1u)) return 0;
     uint64_t mapped = (size + 0xfffu) & ~0xfffULL;
     for (uint64_t offset = 0; offset < mapped; offset += 0x1000u)
         if (vmm_map_page((base & ~0xfffULL) + offset, (base & ~0xfffULL) + offset,
@@ -34,6 +35,10 @@ static uint8_t mmio_read8(volatile uint8_t *mmio, uint32_t offset) {
 
 static void mmio_write16(volatile uint8_t *mmio, uint32_t offset, uint16_t value) {
     *(volatile uint16_t *)(mmio + offset) = value;
+}
+
+static uint16_t mmio_read16(volatile uint8_t *mmio, uint32_t offset) {
+    return *(volatile uint16_t *)(mmio + offset);
 }
 
 static void mmio_write32(volatile uint8_t *mmio, uint32_t offset, uint32_t value) {
@@ -329,6 +334,7 @@ int rix_rtl8125_poll_tx(rix_rtl8125_t *driver) {
 }
 
 int rix_rtl8125_transmit(rix_rtl8125_t *driver, const void *data, size_t length) {
+    static unsigned diagnostic_frames;
     if (!driver || !driver->present || !data || !length || length > RIX_NET_FRAME_CAPACITY ||
         !driver->tx_ring_phys) return -1;
     (void)rix_rtl8125_poll_tx(driver);
@@ -351,6 +357,15 @@ int rix_rtl8125_transmit(rix_rtl8125_t *driver, const void *data, size_t length)
      * handed-off descriptor. */
     if (rix_rtl8125_validate_mmio(driver, RIX_RTL8125_REG_TPPOLL, 1u) != 0) return -3;
     driver->mmio[RIX_RTL8125_REG_TPPOLL] = RIX_RTL8125_TPPOLL_NPQ;
+    if (diagnostic_frames < 8u) {
+        uint32_t isr = mmio_read16(driver->mmio, RIX_RTL8125_REG_ISR);
+        serial_write("RTL8125: tx slot="); serial_write_dec(slot);
+        serial_write(" len="); serial_write_dec(length);
+        serial_write(" flags="); serial_write_hex(descriptors[slot].flags);
+        serial_write(" isr="); serial_write_hex(isr);
+        serial_write(" poll=0x90\r\n");
+        ++diagnostic_frames;
+    }
     return (int)length;
 }
 
