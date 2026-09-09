@@ -46,7 +46,7 @@ int main(void) {
     rix_rtl8125_descriptor_t descriptor;
     assert(rix_rtl8125_prepare_descriptor(&descriptor, 0x1000, 128,
                                            RIX_RTL8125_DESC_OWN | 0x80) == 0);
-    assert(descriptor.flags == RIX_RTL8125_DESC_OWN);
+    assert(descriptor.flags == (RIX_RTL8125_DESC_OWN | 128u));
     assert(rix_rtl8125_prepare_descriptor(&descriptor, 0, 128, 0) != 0);
     rix_rtl8125_t driver = {0};
     assert(rix_rtl8125_validate_mmio(&driver, 0, 1) != 0);
@@ -63,7 +63,7 @@ int main(void) {
     uint8_t mmio[0x100] = {0};
     assert(rix_rtl8125_hw_enable(mmio, sizeof(mmio), 0x55aa) == 0);
     assert(*(uint32_t *)(mmio + RIX_RTL8125_REG_IMR) == 0x55aa);
-    assert(*(uint32_t *)(mmio + RIX_RTL8125_REG_COMMAND) ==
+    assert(mmio[RIX_RTL8125_REG_COMMAND] ==
            (RIX_RTL8125_CMD_RX_ENABLE | RIX_RTL8125_CMD_TX_ENABLE));
     assert(rix_rtl8125_hw_reset(mmio, RIX_RTL8125_REG_COMMAND) != 0);
     mmio[0] = 0x02; mmio[1] = 0x11; mmio[2] = 0x22;
@@ -118,18 +118,20 @@ int main(void) {
         driver.tx_head = driver.tx_tail = driver.rx_head = 0;
         assert(rix_rtl8125_transmit(&driver, payload, sizeof(payload)) ==
                (int)sizeof(payload));
-        assert(txring[0].length == sizeof(payload));
-        assert(txring[0].flags & RIX_RTL8125_DESC_OWN);
+        assert(txring[0].length == 0);
+        assert((txring[0].flags & (RIX_RTL8125_DESC_OWN | RIX_RTL8125_DESC_LEN_MASK)) ==
+               (RIX_RTL8125_DESC_OWN | sizeof(payload)));
         assert(memcmp(txbuf, payload, sizeof(payload)) == 0);
         assert(txmmio[RIX_RTL8125_REG_TPPOLL] == RIX_RTL8125_TPPOLL_NPQ);
         memcpy(rxbuf, payload, sizeof(payload));
-        rxring[0].length = (uint32_t)sizeof(payload);
-        rxring[0].flags = 0;
+        rxring[0].length = 0;
+        rxring[0].flags = (uint32_t)sizeof(payload);
         assert(rix_rtl8125_receive(&driver, sink, sizeof(sink), &got) == 1);
         assert(got == sizeof(payload));
         assert(memcmp(sink, payload, sizeof(payload)) == 0);
-        assert(rxring[0].length == RIX_RTL8125_RX_BUFFER_SIZE);
-        assert(rxring[0].flags & RIX_RTL8125_DESC_OWN);
+        assert(rxring[0].length == 0);
+        assert((rxring[0].flags & (RIX_RTL8125_DESC_OWN | RIX_RTL8125_DESC_LEN_MASK)) ==
+               (RIX_RTL8125_DESC_OWN | RIX_RTL8125_RX_BUFFER_SIZE));
         assert(driver.rx_head == 1);
         free(txring);
         free(rxring);
