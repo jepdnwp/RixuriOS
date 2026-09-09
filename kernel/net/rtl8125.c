@@ -328,6 +328,14 @@ int rix_rtl8125_configure(rix_rtl8125_t *driver) {
     mmio_write16(driver->mmio, RIX_RTL8125_REG_ISR, 0xffffu);
     if (rix_rtl8125_hw_enable(driver->mmio, driver->mmio_size, 0u) != 0) return -9;
     rix_rtl8125_read_link(driver->mmio, driver->mmio_size, &driver->link_up);
+    serial_write("RTL8125: rx_ring="); serial_write_hex(driver->rx_ring_phys);
+    serial_write(" tx_ring="); serial_write_hex(driver->tx_ring_phys);
+    serial_write(" rx0_buf="); serial_write_hex(driver->rx_buffers[0]);
+    serial_write(" rx0_flags="); serial_write_hex(((volatile rix_rtl8125_descriptor_t *)(uintptr_t)driver->rx_ring_phys)[0].flags);
+    serial_write(" rcr="); serial_write_hex(mmio_read32(driver->mmio, RIX_RTL8125_REG_RCR));
+    serial_write(" isr="); serial_write_hex(mmio_read16(driver->mmio, RIX_RTL8125_REG_ISR));
+    serial_write(" link="); serial_write_dec((uint64_t)(driver->link_up ? 1 : 0));
+    serial_write("\r\n");
     return 0;
 }
 
