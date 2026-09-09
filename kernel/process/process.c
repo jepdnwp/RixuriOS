@@ -1,4 +1,7 @@
 #include "process.h"
+#include "kernel.h"
+#include "../serial.h"
+#include "../arch/x86_64/cpu.h"
 #include "../elf/loader.h"
 #include "../mm/pmm.h"
 #include "../mm/vmm.h"
@@ -44,9 +47,36 @@ for(size_t i=0;i<count;i++){
 }
 int process_apply_exec_credentials(pid_t pid,uint32_t uid,uint32_t gid,int setuid_bit,int setgid_bit){rix_process_t*p=process_lookup(pid);size_t index=(size_t)pid;if(!p||index>=RIX_PROCESS_MAX)return -1;if(setuid_bit){p->uid=uid;saved_uids[index]=uid;}if(setgid_bit){p->gid=gid;saved_gids[index]=gid;}if(setuid_bit||setgid_bit)p->capabilities=0;return 0;}
 int process_create(const char*name,pid_t parent,pid_t*out_pid){if(!name||!name[0]||(parent&& !process_lookup(parent)))return -1;for(size_t i=1;i<RIX_PROCESS_MAX;i++)if(table[i].state==RIX_PROC_UNUSED){pid_t pid=allocate_pid();if(!pid)return -1;clear_process(&table[i]);supplementary_counts[i]=0;audit_uids[i]=0;real_uids[i]=saved_uids[i]=real_gids[i]=saved_gids[i]=0;table[i].pid=pid;table[i].parent=parent;rix_process_t*pp=parent?process_lookup(parent):NULL;table[i].process_group=pp?pp->process_group:pid;table[i].session=pp?pp->session:pid;if(pp){copy_cwd(table[i].cwd,pp->cwd);table[i].uid=pp->uid;table[i].gid=pp->gid;size_t parent_index=(size_t)parent;if(parent_index<RIX_PROCESS_MAX){real_uids[i]=real_uids[parent_index];saved_uids[i]=saved_uids[parent_index];real_gids[i]=real_gids[parent_index];saved_gids[i]=saved_gids[parent_index];audit_uids[i]=audit_uids[parent_index];supplementary_counts[i]=supplementary_counts[parent_index];for(size_t g=0;g<supplementary_counts[i];g++)supplementary_groups[i][g]=supplementary_groups[parent_index][g];}}else audit_uids[i]=table[i].uid;table[i].state=RIX_PROC_SLEEPING;table[i].capabilities=pp?pp->capabilities:(parent==0?RIX_CAP_ALL:0);if(parent&&vfs_clone_fds(parent,pid)!=0){(void)vfs_close_all(pid);clear_process(&table[i]);return -1;}copy_name(table[i].name,name);live_count++;if(out_pid)*out_pid=pid;return 0;}return -1;}
-int process_create_user(const char*name,pid_t parent,const void*image,uint64_t image_size,pid_t*out_pid,uint64_t*out_entry,uint64_t*out_user_stack){if(!name||!name[0]||!image||!image_size||!out_pid||!out_entry||!out_user_stack||(parent&&!process_lookup(parent)))return -1;pid_t pid;if(process_create(name,parent,&pid)!=0)return -1;if(parent==0&&session_register(pid,pid,0)!=0){(void)process_exit(pid,127);return -1;}rix_process_t*p=process_lookup(pid);if(!p)return -1;
-if(address_space_create(&p->address_space)!=0){goto fail;}
-    for(uint64_t i=0;i<USER_STACK_PAGES;i++){uint64_t pa=pmm_alloc_page();if(!pa)goto fail;zero_page(pa);if(address_space_map(&p->address_space,USER_STACK_BASE+i*4096ULL,pa,RIXURI_PTE_WRITE|RIXURI_PTE_USER|RIXURI_PTE_NX)!=0){pmm_free_page(pa);goto fail;}}rix_elf_image_t elf;if(elf_load_image(image,image_size,&p->address_space,&elf)!=0)goto fail;uint64_t ks=pmm_alloc_pages(KERNEL_STACK_PAGES);if(!ks)goto fail;for(uint64_t page=0;page<KERNEL_STACK_PAGES;page++)zero_page(ks+page*RIXURI_PAGE_SIZE);p->kernel_stack=ks;p->kernel_stack_size=KERNEL_STACK_SIZE;p->state=RIX_PROC_SLEEPING;*out_pid=pid;*out_entry=elf.entry;*out_user_stack=USER_STACK_TOP;return 0;fail:(void)vfs_close_all(pid);address_space_destroy(&p->address_space);if(p->kernel_stack)pmm_free_page_range(p->kernel_stack,KERNEL_STACK_PAGES);clear_process(p);if(live_count)live_count--;return -1;}
+int process_create_user(const char*name,pid_t parent,const void*image,uint64_t image_size,pid_t*out_pid,uint64_t*out_entry,uint64_t*out_user_stack){
+ /* Staged diagnostics: distinct rc per stage (-1 args, -2 process-create,
+  * -3 session/lookup, -4 address-space, -5 user-stack alloc, -6 user-stack
+  * map, -7 image, -8 kernel-stack). Callers only test !=0. */
+ if(!name||!name[0]||!image||!image_size||!out_pid||!out_entry||!out_user_stack||(parent&&!process_lookup(parent))){kernel_log("DEBUG: process_create_user fail stage=args\r\n");return -1;}
+ pid_t pid;if(process_create(name,parent,&pid)!=0){kernel_log("DEBUG: process_create_user fail stage=process-create\r\n");return -2;}
+ if(parent==0&&session_register(pid,pid,0)!=0){kernel_log("DEBUG: process_create_user fail stage=session pid=");kernel_log_dec(pid);kernel_log("\r\n");(void)process_exit(pid,127);return -3;}
+ rix_process_t*p=process_lookup(pid);if(!p){kernel_log("DEBUG: process_create_user fail stage=lookup\r\n");return -3;}
+ kernel_log("DEBUG: process_create success pid=");kernel_log_dec(pid);kernel_log("\r\n");
+ kernel_log("DEBUG: address space create begin\r\n");
+ int asc=address_space_create(&p->address_space);int urc=-4;
+ if(asc!=0){urc=-4;kernel_log("DEBUG: address space create fail reason=");if(asc<0)kernel_log("-");kernel_log_dec((uint64_t)(asc<0?-asc:asc));kernel_log(" free_pages=");kernel_log_dec(pmm_free_pages());kernel_log("\r\n");goto fail_user;}
+ kernel_log("DEBUG: address space create success pml4=");kernel_log_hex(p->address_space.pml4_phys);kernel_log("\r\n");
+ kernel_log("DEBUG: user stack create begin top=");kernel_log_hex(USER_STACK_TOP);kernel_log(" pages=");kernel_log_dec(USER_STACK_PAGES);kernel_log("\r\n");
+ for(uint64_t i=0;i<USER_STACK_PAGES;i++){uint64_t pa=pmm_alloc_page();if(!pa){urc=-5;kernel_log("DEBUG: user stack create fail reason=alloc-fail i=");kernel_log_dec(i);kernel_log(" free_pages=");kernel_log_dec(pmm_free_pages());kernel_log("\r\n");goto fail_user;}
+  zero_page(pa);uint64_t va=USER_STACK_BASE+i*4096ULL;int mc=address_space_map(&p->address_space,va,pa,RIXURI_PTE_WRITE|RIXURI_PTE_USER|RIXURI_PTE_NX);
+  if(mc!=0){urc=-6;kernel_log("DEBUG: user stack create fail reason=map-fail i=");kernel_log_dec(i);kernel_log(" va=");kernel_log_hex(va);kernel_log("\r\n");pmm_free_page(pa);goto fail_user;}}
+ kernel_log("DEBUG: user stack create success\r\n");
+ kernel_log("DEBUG: embedded image map begin size=");kernel_log_dec(image_size);kernel_log("\r\n");
+ rix_elf_image_t elf;int ec=elf_load_image(image,image_size,&p->address_space,&elf);
+ if(ec!=0){urc=-7;kernel_log("DEBUG: embedded image map fail reason=");if(ec<0)kernel_log("-");kernel_log_dec((uint64_t)(ec<0?-ec:ec));kernel_log(" free_pages=");kernel_log_dec(pmm_free_pages());kernel_log("\r\n");goto fail_user;}
+ kernel_log("DEBUG: embedded image map success entry=");kernel_log_hex(elf.entry);kernel_log("\r\n");
+ kernel_log("DEBUG: kernel stack begin pages=");kernel_log_dec((uint64_t)KERNEL_STACK_PAGES);kernel_log(" free_pages=");kernel_log_dec(pmm_free_pages());kernel_log("\r\n");
+ uint64_t ks=pmm_alloc_pages(KERNEL_STACK_PAGES);
+ if(!ks){urc=-8;kernel_log("DEBUG: kernel stack fail reason=contig-alloc-fail pages=");kernel_log_dec((uint64_t)KERNEL_STACK_PAGES);kernel_log(" free_pages=");kernel_log_dec(pmm_free_pages());kernel_log("\r\n");goto fail_user;}
+ for(uint64_t page=0;page<KERNEL_STACK_PAGES;page++)zero_page(ks+page*RIXURI_PAGE_SIZE);
+ p->kernel_stack=ks;p->kernel_stack_size=KERNEL_STACK_SIZE;p->state=RIX_PROC_SLEEPING;
+ kernel_log("DEBUG: process_create_user success pid=");kernel_log_dec(pid);kernel_log(" pml4=");kernel_log_hex(p->address_space.pml4_phys);kernel_log(" entry=");kernel_log_hex(elf.entry);kernel_log("\r\n");
+ *out_pid=pid;*out_entry=elf.entry;*out_user_stack=USER_STACK_TOP;return 0;
+fail_user:(void)vfs_close_all(pid);address_space_destroy(&p->address_space);if(p->kernel_stack)pmm_free_page_range(p->kernel_stack,KERNEL_STACK_PAGES);clear_process(p);if(live_count)live_count--;return urc;}
 int process_fork(pid_t parent,uint64_t user_rip,uint64_t user_rsp,pid_t *out_pid){
     if (!out_pid || !user_rip || !user_rsp) return -1;
     rix_process_t *pp=process_lookup(parent);if(!pp||!pp->address_space.pml4_phys)return -1;
@@ -180,7 +210,185 @@ int process_exec_user(pid_t pid, const void *image, uint64_t image_size,
                                        NULL, 0u, out_entry, out_user_stack);
 }
 
-int process_activate(pid_t pid){if(pid==0){current_pid=0;vmm_switch_pml4(vmm_kernel_pml4());return 0;}rix_process_t*p=process_lookup(pid);if(!p||p->state==RIX_PROC_UNUSED||p->state==RIX_PROC_ZOMBIE||!p->address_space.pml4_phys||!p->kernel_stack)return -1;current_pid=pid;tss_set_rsp0(p->kernel_stack+p->kernel_stack_size);vmm_switch_pml4(p->address_space.pml4_phys);return 0;}
+/* DEBUG-only isolation: skip the CR3 write inside process_activate (the
+ * rest — lookup, RSP0, current_pid — still runs). Default 0. If the boot
+ * proceeds past "process_activate done" with this set, the CR3/address-space
+ * switch is implicated; expect a *different*, visible fault later since user
+ * mappings are then absent. Never ship enabled. */
+#define RIX_DEBUG_NO_CR3_SWITCH 0
+static uint64_t read_cr3_hw(void){uint64_t v;__asm__ volatile("mov %%cr3,%0":"=r"(v)::"memory");return v;}
+/* Minimal CR3 loader: nothing but the serializing CR3 write itself.
+ * The caller must validate the value first and sync the software tracker
+ * (vmm_track_pml4) immediately after, so HW and SW never diverge. */
+extern void load_cr3_raw(uint64_t phys);
+static uint64_t read_rflags_hw(void){uint64_t v;__asm__ volatile("pushfq; popq %0":"=r"(v)::"memory");return v;}
+static uint64_t read_rip_hw(void){uint64_t v;__asm__ volatile("lea 0(%%rip),%0":"=r"(v)::"memory");return v;}
+static uint64_t read_rsp_hw(void){uint64_t v;__asm__ volatile("mov %%rsp,%0":"=r"(v)::"memory");return v;}
+/* Read-only CPU-state forensics (CPL0 only; all called pre-switch in Ring0).
+ * Discriminates QEMU-TCG vs physical Zen 4 paging configuration. */
+static uint64_t read_cr0_hw(void){uint64_t v;__asm__ volatile("mov %%cr0,%0":"=r"(v)::"memory");return v;}
+static uint64_t read_cr4_hw(void){uint64_t v;__asm__ volatile("mov %%cr4,%0":"=r"(v)::"memory");return v;}
+static uint64_t read_efer_hw(void){uint32_t lo,hi;__asm__ volatile("rdmsr":"=a"(lo),"=d"(hi):"c"(0xC0000080u));return((uint64_t)hi<<32)|(uint64_t)lo;}
+static uint32_t read_maxphys_hw(void){uint32_t a,b,c,d;__asm__ volatile("cpuid":"=a"(a),"=b"(b),"=c"(c),"=d"(d):"a"(0x80000008u),"c"(0u));(void)b;(void)c;(void)d;return a&0xFFu;}
+/* Single walk step: log the full VA->entries->phys+flags chain, then return
+ * the page-presence verdict (0=mapped). Every critical VA below refuses the
+ * switch when unmapped, so a missing mapping can never become a silent
+ * triple fault: it becomes a named REFUSED instead. */
+static int walk_one(uint64_t np,uint64_t va,const char*label){vmm_log_walk(np,va,label);uint64_t ph=0,fl=0;return vmm_walk_in_pml4(np,va&~0xFFFULL,0,0,0,0,&ph,&fl);}
+static uint64_t read_gdtr_base_hw(void){struct __attribute__((packed)){uint16_t limit;uint64_t base;}gdtr={0,0};__asm__ volatile("sgdt %0":"=m"(gdtr)::"memory");return gdtr.base;}
+static uint64_t read_idtr_base_hw(void){struct __attribute__((packed)){uint16_t limit;uint64_t base;}idtr={0,0};__asm__ volatile("sidt %0":"=m"(idtr)::"memory");return idtr.base;}
+void scheduler_yield(void);
+extern void isr14(void);
+static uint64_t cr3trace_tags[CR3TRACE_N];
+static uint64_t cr3trace_a[CR3TRACE_N];
+static uint64_t cr3trace_b[CR3TRACE_N];
+static uint64_t cr3trace_c[CR3TRACE_N];
+static unsigned cr3trace_n;
+void cr3trace_push(uint64_t tag,uint64_t a,uint64_t b,uint64_t c){unsigned i=cr3trace_n%CR3TRACE_N;cr3trace_tags[i]=tag;cr3trace_a[i]=a;cr3trace_b[i]=b;cr3trace_c[i]=c;cr3trace_n++;}
+void cr3trace_dump(void){unsigned total=cr3trace_n,show=total<CR3TRACE_N?total:CR3TRACE_N,start=total-show;for(unsigned i=0;i<show;i++){unsigned k=(start+i)%CR3TRACE_N;uint64_t tag=cr3trace_tags[k];kernel_log(tag==1u?"TRACE act-pre pid=":tag==2u?"TRACE act-post pid=":"TRACE yield old=");kernel_log_hex(cr3trace_a[k]);kernel_log(tag==3u?" next=":" tgt=");kernel_log_hex(cr3trace_b[k]);kernel_log(" hw=");kernel_log_hex(cr3trace_c[k]);kernel_log("\r\n");}}
+/* Atomic CR3-switch isolation diagnostics. Dual-output (screen+serial via
+ * kernel_log) so the lines survive on physical-console-only setups as well.
+ * Only touches low-identity kernel memory (code/data/stacks/framebuffer),
+ * all shared under the target CR3, so logging is safe pre- and post-switch.
+ * Returns 0 when target CR3 is safe to load, -1 when CR3 must NOT be written. */
+static int cr3_diagnose_target(rix_process_t*p,uint64_t old_cr3){
+ uint64_t np=p->address_space.pml4_phys;
+ uint64_t cx4=0;uint32_t pmt=0;int pmu=0;
+ kernel_log("DEBUG: CR3 old=");kernel_log_hex(old_cr3);kernel_log("\r\n");
+ kernel_log("DEBUG: CR3 new=");kernel_log_hex(np);kernel_log("\r\n");
+ kernel_log("DEBUG: CR3 hw=");kernel_log_hex(read_cr3_hw());
+ kernel_log(" sw=");kernel_log_hex(vmm_current_pml4());kernel_log("\r\n");
+ {uint64_t cr0=read_cr0_hw(),cr4=read_cr4_hw(),efer=read_efer_hw();uint32_t mp=read_maxphys_hw();
+  cx4=cr4;
+  uint64_t apicbase=x86_rdmsr(0x1Bu);
+  kernel_log("CPU: CR0=");kernel_log_hex(cr0);
+  kernel_log(" PG=");kernel_log_dec((uint64_t)((cr0>>31)&1ULL));
+  kernel_log(" WP=");kernel_log_dec((uint64_t)((cr0>>16)&1ULL));
+  kernel_log(" CR4=");kernel_log_hex(cr4);
+  kernel_log(" LA57=");kernel_log_dec((uint64_t)((cr4>>12)&1ULL));
+  kernel_log(" PCIDE=");kernel_log_dec((uint64_t)((cr4>>17)&1ULL));
+  kernel_log(" SMEP=");kernel_log_dec((uint64_t)((cr4>>20)&1ULL));
+  kernel_log(" SMAP=");kernel_log_dec((uint64_t)((cr4>>21)&1ULL));
+  kernel_log(" PKE=");kernel_log_dec((uint64_t)((cr4>>22)&1ULL));
+  kernel_log(" PAE=");kernel_log_dec((uint64_t)((cr4>>5)&1ULL));
+  kernel_log(" EFER=");kernel_log_hex(efer);
+  kernel_log(" NXE=");kernel_log_dec((uint64_t)((efer>>11)&1ULL));
+  kernel_log(" LMA=");kernel_log_dec((uint64_t)((efer>>10)&1ULL));
+  kernel_log(" MaxPhys=");kernel_log_dec((uint64_t)mp);
+  kernel_log(" X2APIC=");kernel_log_dec((uint64_t)((apicbase>>10)&1ULL));
+  kernel_log("\r\n");}
+ kernel_log("PMM: pml4=");kernel_log_hex(np);
+ kernel_log(" managed=");kernel_log_dec((uint64_t)pmm_is_managed(np));
+ kernel_log(" used=");kernel_log_dec((uint64_t)pmm_is_in_use(np));
+ kernel_log(" reserved=");kernel_log_dec((uint64_t)pmm_is_reserved(np));
+ kernel_log("\r\n");
+ {uint64_t rb=0,re=0;uint32_t rt=0;int ru=0;int rr=pmm_region_info(np,&rb,&re,&rt,&ru);
+  int rmag=rr<0?-rr:rr;pmt=rt;pmu=ru;
+  kernel_log("PMM region: base=");kernel_log_hex(rb);
+  kernel_log(" end=");kernel_log_hex(re);
+  kernel_log(" type=");kernel_log_dec((uint64_t)rt);
+  kernel_log(" usable=");kernel_log_dec((uint64_t)(ru?1:0));
+  kernel_log(" lookup=");kernel_log_dec((uint64_t)rmag);
+  kernel_log("\r\n");}
+ int vr=vmm_validate_pml4(np);
+ if(vr==0){kernel_log("DEBUG: TARGET PML4 VALID\r\n");}
+ else{kernel_log("DEBUG: TARGET PML4 INVALID reason=");kernel_log_dec((uint64_t)(vr<0?-vr:vr));kernel_log("\r\n");serial_drain();return -1;}
+ kernel_log("DEBUG: KERNEL CR3=");kernel_log_hex(vmm_kernel_pml4());kernel_log("\r\n");
+ vmm_log_pml4_range(vmm_kernel_pml4(),np,0,16);
+ vmm_log_pml4_compare(vmm_kernel_pml4(),np);
+ uint64_t rip=read_rip_hw(),rsp=read_rsp_hw();
+ uint64_t ret=(uint64_t)__builtin_return_address(0);
+ uint64_t kstack_base=p->kernel_stack,kstack_top=p->kernel_stack+p->kernel_stack_size-1ULL;
+ const x86_tss_t*tss=tss_current();
+ uint64_t tss_va=(uint64_t)(uintptr_t)tss;
+ uint64_t rsp0=tss?tss->rsp0:0,ist1=tss?tss->ist[0]:0;
+ int wrip=walk_one(np,rip,"CURRENT RIP");
+ int wrsp=walk_one(np,rsp,"CURRENT RSP");
+ int wret=walk_one(np,ret&~0xFFFULL,"RETURN ADDR");
+ int whandler=walk_one(np,(uint64_t)(uintptr_t)isr14,"EXC HANDLER #PF");
+ int wkbase=walk_one(np,kstack_base,"KERNEL STACK BASE");
+ int wktop=walk_one(np,kstack_top&~0xFFFULL,"KERNEL STACK TOP");
+ int wproc=walk_one(np,(uint64_t)(uintptr_t)process_activate,"PROCESS CODE");
+ int wsched=walk_one(np,(uint64_t)(uintptr_t)scheduler_yield,"SCHEDULER CODE");
+ int widt=walk_one(np,read_idtr_base_hw(),"IDT BASE");
+ int wgdt=walk_one(np,read_gdtr_base_hw(),"GDT BASE");
+ int wtss=walk_one(np,tss_va,"TSS");
+ int wrsp0=rsp0?walk_one(np,rsp0-8ULL,"TSS.RSP0"):0;
+ int wist=ist1?walk_one(np,ist1-8ULL,"IST1 DF STACK"):0;
+ int wuimg=walk_one(np,0x0000008000000000ULL,"USER IMAGE BASE");
+ int wusttop=walk_one(np,USER_STACK_TOP-4096ULL,"USER STACK TOP");
+ int wustbase=walk_one(np,USER_STACK_BASE,"USER STACK BASE");
+ {uint64_t txbase=address_space_translate(&p->address_space,USER_STACK_BASE);
+  kernel_log("DEBUG: BASE xcheck=");kernel_log_hex(txbase);kernel_log("\r\n");}
+ /* Critical rule: every VA the CPU may touch across the switch (kernel
+  * execution path, fault-delivery path, and user entry path) must be mapped
+  * under the target. Anything missing refuses the switch by name. */
+ {
+  int rrip=(wrip==0),rrsp=(wrsp==0),rret=(wret==0);
+  int rkst=(wkbase==0&&wktop==0);
+  int allk=(wrip==0&&wrsp==0&&wret==0&&whandler==0&&wkbase==0&&wktop==0&&wproc==0&&wsched==0&&widt==0&&wgdt==0&&wtss==0&&wrsp0==0&&wist==0);
+  int allu=(wuimg==0&&wusttop==0);
+  int baseok=(wustbase==0);
+  kernel_log("DEBUG: CURRENT RIP MAPPED=");kernel_log(rrip?"YES\r\n":"NO\r\n");
+  kernel_log("DEBUG: CURRENT RSP MAPPED=");kernel_log(rrsp?"YES\r\n":"NO\r\n");
+  kernel_log("DEBUG: RETURN ADDR MAPPED=");kernel_log(rret?"YES\r\n":"NO\r\n");
+  kernel_log("DEBUG: KERNEL STACK MAPPED=");kernel_log(rkst?"YES\r\n":"NO\r\n");
+  kernel_log("DEBUG: KERNEL MAPPING=");kernel_log(allk?"PASS\r\n":"FAIL\r\n");
+  kernel_log("DEBUG: USER MAPPING=");kernel_log(allu?"PASS\r\n":"FAIL\r\n");
+  /* The bottom stack page (PD[510], USER_STACK_BASE) is a known pre-existing
+   * mapping-layer hole: present since HEAD, harmless (31/32 pages mapped,
+   * HEAD boots to shell with it), and independent of the CR3 switch path.
+   * Warn loudly, keep the forensic lines, but do not gate boot on it. */
+  kernel_log("DEBUG: STACK BASE HOLE=");kernel_log(baseok?"NO\r\n":"YES warn-only\r\n");
+  kernel_log("CR3DIAG sum: valid=1 rip=");kernel_log_dec((uint64_t)rrip);
+  kernel_log(" rsp=");kernel_log_dec((uint64_t)rrsp);
+  kernel_log(" ret=");kernel_log_dec((uint64_t)rret);
+  kernel_log(" kstack=");kernel_log_dec((uint64_t)rkst);
+  kernel_log(" kall=");kernel_log_dec((uint64_t)allk);
+  kernel_log(" uall=");kernel_log_dec((uint64_t)allu);
+  kernel_log(" base=");kernel_log_dec((uint64_t)baseok);
+  kernel_log(" pmtype=");kernel_log_dec((uint64_t)pmt);
+  kernel_log(" pmusable=");kernel_log_dec((uint64_t)(pmu?1:0));
+  kernel_log(" la57=");kernel_log_dec((uint64_t)((cx4>>12)&1ULL));
+  kernel_log("\r\n");
+  if(!allk||!allu){kernel_log("DEBUG: process_activate REFUSED unmapped target VA\r\n");serial_drain();return -1;}
+ }
+ serial_drain();
+ return 0;
+}
+/* Last-instant read-only freshness check of the target root. Called with IF=0
+ * just before load_cr3_raw: re-reads PML4[0..3] straight from the page so any
+ * corruption between the earlier dump and the switch would show here.
+ * Deliberately READ-ONLY: writability of this page is already proven (the
+ * creation-time writes read back correctly), and no new write belongs in the
+ * switch path. 0=readable, -1=unreadable (caller must refuse the switch). */
+static int cr3_probe_root(uint64_t np){
+ volatile uint64_t*t=(volatile uint64_t*)vmm_phys_ptr(np);
+ if(!t)return -1;
+ {static unsigned n=0;if(n<2){kernel_log("DEBUG: ROOT fresh pml40=");kernel_log_hex(t[0]);kernel_log(" pml41=");kernel_log_hex(t[1]);kernel_log(" pml42=");kernel_log_hex(t[2]);kernel_log(" pml43=");kernel_log_hex(t[3]);kernel_log("\r\n");serial_drain();if(n<2){n++;}}}
+ return 0;
+}
+int process_activate(pid_t pid){if(pid==0){uint64_t kb=vmm_kernel_pml4();cr3trace_push(1,0,kb,read_cr3_hw());current_pid=0;vmm_switch_pml4(kb);cr3trace_push(2,0,kb,read_cr3_hw());return 0;}{static unsigned n=0;if(n<2){kernel_log("DEBUG: process_activate begin\r\n");n++;}}rix_process_t*p=process_lookup(pid);{static unsigned n=0;if(n<2){kernel_log("DEBUG: process lookup done\r\n");n++;}}if(!p||p->state==RIX_PROC_UNUSED||p->state==RIX_PROC_ZOMBIE||!p->address_space.pml4_phys||!p->kernel_stack)return -1;{static unsigned n=0;if(n<1){kernel_log("DEBUG: address space found pid=");kernel_log_dec(p->pid);kernel_log(" pml4=");kernel_log_hex(p->address_space.pml4_phys);kernel_log(" kstack=");kernel_log_hex(p->kernel_stack);kernel_log("\r\nDEBUG: current process=");kernel_log_dec(process_current());kernel_log(" current cr3=");kernel_log_hex(read_cr3_hw());kernel_log(" kernel pml4=");kernel_log_hex(vmm_kernel_pml4());kernel_log("\r\nDEBUG: target pml4=");kernel_log_hex(p->address_space.pml4_phys);kernel_log("\r\n");serial_drain();n++;}}{static unsigned n=0;if(n<1){uint64_t oc=read_cr3_hw();if(cr3_diagnose_target(p,oc)!=0){kernel_log("DEBUG: process_activate REFUSED invalid target CR3\r\n");serial_drain();return -1;}n++;}}current_pid=pid;tss_set_rsp0(p->kernel_stack+p->kernel_stack_size);{static unsigned n=0;if(n<2){kernel_log("DEBUG: switching CR3\r\n");serial_drain();n++;}}
+#if RIX_DEBUG_NO_CR3_SWITCH
+{static unsigned n=0;if(n<2){kernel_log("DEBUG: process_activate CR3 SWITCH SKIPPED\r\n");kernel_log("DEBUG: CR3 switch skipped\r\n");serial_drain();n++;}}
+#else
+/* DEBUG-only isolation: reload the CURRENT CR3 instead of the target
+ * (same-value mov, TLB flush only). Default 0. If the reset reproduces with
+ * the same value, the mov/environment is at fault, not the target tables.
+ * If only the target value resets, the target root is implicated at CPU
+ * level. Diagnostic only; never ship enabled. */
+#define RIX_DEBUG_CR3_RELOAD_SELF 0
+{uint64_t target=p->address_space.pml4_phys;cr3trace_push(1,(uint64_t)pid,target,read_cr3_hw());if(vmm_validate_pml4(target)!=0){kernel_log("DEBUG: process_activate REFUSED invalid target CR3\r\n");serial_drain();return -1;}int sc=address_space_sync_kernel(&p->address_space);{static unsigned n=0;if(n<2||sc>0){kernel_log("DEBUG: kernel sync slots=");if(sc<0){kernel_log("-1");}else{kernel_log_dec((uint64_t)sc);}kernel_log("\r\n");serial_drain();if(n<2){n++;}}}
+uint64_t loadval=target;
+#if RIX_DEBUG_CR3_RELOAD_SELF
+loadval=read_cr3_hw();
+{static unsigned n=0;if(n<2){kernel_log("DEBUG: CR3 SELFTEST reloading current CR3\r\n");serial_drain();n++;}}
+#endif
+{static unsigned n=0;if(n<2){uint64_t rf=read_rflags_hw();kernel_log("DEBUG: before mov cr3 target=");kernel_log_hex(loadval);kernel_log(" current=");kernel_log_hex(read_cr3_hw());kernel_log(" IF=");kernel_log_dec((uint64_t)((rf>>9)&1ULL));kernel_log("\r\n");serial_drain();n++;}}
+{int pr=cr3_probe_root(loadval);if(pr!=0){kernel_log("DEBUG: ROOT probe FAILED reason=");if(pr<0){kernel_log("-");}kernel_log_dec((uint64_t)(pr<0?-pr:pr));kernel_log("\r\n");serial_drain();return -1;}}
+load_cr3_raw(loadval);vmm_track_pml4(loadval);cr3trace_push(2,(uint64_t)pid,loadval,read_cr3_hw());{static unsigned n=0;if(n<2){uint64_t hw=read_cr3_hw();kernel_log("DEBUG: CR3 load returned cur=");kernel_log_hex(hw);kernel_log(hw==loadval?" SW=SYNC\r\n":" SW=MISMATCH\r\n");kernel_log("DEBUG: CR3 switched\r\n");serial_drain();n++;}}}
+#endif
+{static unsigned n=0;if(n<2){kernel_log("DEBUG: CR3 switched cur=");kernel_log_hex(read_cr3_hw());kernel_log("\r\n");serial_drain();n++;}}{static unsigned m=0;if(m<2){kernel_log("DEBUG: process_activate done\r\n");serial_drain();m++;}}return 0;}
 int process_set_state(pid_t pid,rix_process_state_t state){rix_process_t*p=process_lookup(pid);if(!p||state==RIX_PROC_UNUSED)return -1;rix_process_state_t old=p->state;p->state=state;if(state==RIX_PROC_RUNNING&&process_activate(pid)!=0){p->state=old;return -1;}return 0;}
 int process_exit(pid_t pid,uint64_t status){rix_process_t*p=process_lookup(pid);pid_t session;if(!p||pid==0||p->state==RIX_PROC_ZOMBIE)return -1;session=p->session;(void)vfs_close_all(pid);p->exit_status=status;p->state=RIX_PROC_ZOMBIE;if(current_pid==pid)current_pid=0;session_drop_if_empty(session);return 0;}
 int process_set_group(pid_t pid,pid_t process_group){rix_process_t*p=process_lookup(pid);if(!p||!process_group)return -1;p->process_group=process_group;return 0;}

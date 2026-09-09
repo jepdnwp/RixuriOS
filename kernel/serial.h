@@ -9,3 +9,7 @@ void serial_write_hex(uint64_t value);
 void serial_write_dec(uint64_t value);
 int serial_read_byte(uint8_t *byte);
 void panic(const char *reason);
+/* Spin until the UART transmit FIFO is fully empty (bounded). Call after
+ * crash-forensic lines so a subsequent reset cannot strand bytes that were
+ * accepted into the FIFO but never reached the wire. */
+void serial_drain(void);

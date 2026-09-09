@@ -5,10 +5,10 @@ LD := $(CROSS)ld
 OBJCOPY := $(CROSS)objcopy
 READELF := $(CROSS)readelf
 OBJDUMP := $(CROSS)objdump
-CFLAGS := -std=c17 -ffreestanding -fno-stack-protector -fno-pie -fcf-protection=none -mno-red-zone -m64 -Wall -Wextra -Werror -O2 -Iinclude
+CFLAGS := -std=c17 -ffreestanding -fno-stack-protector -fno-pie -fcf-protection=none -mno-red-zone -m64 -Wall -Wextra -Werror -O2 -Iinclude -Ibuild
 LDFLAGS := -nostdlib -z max-page-size=0x1000 -T linker/kernel.ld
 OBJ := kernel/boot.o kernel/main.o kernel/serial.o kernel/user_init_blob.o \
- kernel/arch/x86_64/cpu.o kernel/arch/x86_64/gdt.o kernel/arch/x86_64/idt.o kernel/arch/x86_64/interrupts.o kernel/arch/x86_64/irq.o kernel/arch/x86_64/apic.o kernel/arch/x86_64/acpi.o kernel/arch/x86_64/ioapic.o kernel/arch/x86_64/pic.o kernel/arch/x86_64/pit.o kernel/arch/x86_64/ps2_keyboard.o kernel/arch/x86_64/user_entry.o \
+ kernel/arch/x86_64/cpu.o kernel/arch/x86_64/gdt.o kernel/arch/x86_64/idt.o kernel/arch/x86_64/interrupts.o kernel/arch/x86_64/irq.o kernel/arch/x86_64/apic.o kernel/arch/x86_64/acpi.o kernel/arch/x86_64/ioapic.o kernel/arch/x86_64/pic.o kernel/arch/x86_64/pit.o kernel/arch/x86_64/ps2_keyboard.o kernel/arch/x86_64/user_entry.o kernel/arch/x86_64/cr3.o \
  kernel/pci/pci.o kernel/pci/dma.o kernel/pci/iommu.o kernel/pci/msix.o kernel/sched/scheduler.o kernel/sched/switch.o kernel/process/process.o kernel/process/signal.o kernel/process/address_space.o kernel/syscall/syscall.o kernel/vfs/vfs.o kernel/fs/rixfs.o kernel/fs/rixfs_ops.o kernel/fs/rixfs_dir.o kernel/fs/rixfs_fsck.o kernel/elf/elf.o kernel/elf/loader.o \
  kernel/mm/pmm.o kernel/mm/vmm.o kernel/mm/ptmap.o kernel/mm/uaccess.o kernel/mm/heap.o kernel/sync/lock.o kernel/sync/waitqueue.o kernel/ipc/channel.o kernel/ipc/pipe.o kernel/ipc/shared_memory.o kernel/tty/tty.o \
          kernel/storage/block.o kernel/storage/block_cache.o kernel/storage/nvme.o kernel/net/net.o kernel/net/ethernet.o kernel/net/arp.o kernel/net/ipv4.o kernel/net/udp.o kernel/net/tcp.o kernel/net/loopback.o kernel/net/socket.o kernel/net/device.o kernel/net/stack.o kernel/net/dhcp.o kernel/net/rtl8125.o kernel/net/e1000.o kernel/usb/xhci.o kernel/usb/usb.o kernel/usb/hid.o kernel/time/rtc.o kernel/time/time.o kernel/power/power.o kernel/tty/font_psf.o
@@ -22,6 +22,13 @@ all: build/kernel.elf
 
 build:
 	mkdir -p build
+
+FORCE:
+
+build/build_id.h: FORCE | build
+	printf '#pragma once\n#define RIXURI_BUILD_ID "%s"\n' "$$(git rev-parse --short HEAD 2>/dev/null)$$(git diff --quiet 2>/dev/null || echo -dirty)-$$(date -u +%Y%m%d-%H%M%S)" > $@
+
+kernel/main.o: build/build_id.h
 
 USER_INIT_CFLAGS := $(CFLAGS) -mcmodel=large -Iuser/shell -Iuser/libc/include
 build/user_init.o: user/init.c user/shell/shell.h user/libc/include/unistd.h | build
@@ -230,11 +237,15 @@ rixfs-mount-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/rixfs_mount_test.c kernel/fs/rixfs.c -o build/rixfs_mount_test
 		build/rixfs_mount_test
 
+symlink-test: | build
+	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/symlink_test.c kernel/fs/rixfs.c kernel/fs/rixfs_ops.c kernel/fs/rixfs_dir.c kernel/fs/rixfs_fsck.c -o build/symlink_test
+		build/symlink_test
+
 e1000-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/e1000_test.c kernel/net/e1000.c -o build/e1000_test
 		build/e1000_test
 
-test: check usb-test hid-test tty-test shell-test pipe-test net-test hosts-test rtl-test e1000-test acpi-test rixfs-mount-test
+test: check usb-test hid-test tty-test shell-test pipe-test net-test hosts-test rtl-test e1000-test acpi-test rixfs-mount-test symlink-test
 	@echo 'Static kernel build checks completed.'
 
 clean:

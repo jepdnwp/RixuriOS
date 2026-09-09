@@ -48,16 +48,31 @@ static void sti(void){__asm__ volatile("sti" ::: "memory");}
 
 static __attribute__((noreturn)) void task_returned(void){ tasks[current_index].state=TASK_DEAD; for(;;) scheduler_yield(); }
 static void boot_user_entry_marker(uint64_t pid,uint64_t entry,uint64_t stack,uint64_t pml4){kernel_log("BOOT: user entry pid=");kernel_log_dec(pid);kernel_log(" entry=");kernel_log_hex(entry);kernel_log(" stack=");kernel_log_hex(stack);kernel_log(" pml4=");kernel_log_hex(pml4);kernel_log("\r\n");}
+static void trace_yield_begin(void){static unsigned n=0;if(n<2){kernel_log("DEBUG: scheduler_yield begin\r\n");n++;}}
+static void trace_flags(void){static unsigned n=0;if(n<2){kernel_log("DEBUG: flags read\r\nDEBUG: cli done\r\n");n++;}}
+static void trace_searching(void){static unsigned n=0;if(n<2){kernel_log("DEBUG: searching runnable task\r\n");n++;}}
+static void trace_old_next(uint32_t old,uint32_t next){static unsigned n=0;if(n<4){kernel_log("DEBUG: old=");kernel_log_dec(tasks[old].id);kernel_log(" next=");kernel_log_dec(tasks[next].id);kernel_log("\r\n");n++;}}
+static void trace_old_updated(uint32_t old){static unsigned n=0;if(n<4){kernel_log("DEBUG: old state updated\r\n");(void)old;n++;}}
+static void trace_activating(uint64_t pid){static unsigned n=0;if(n<4){kernel_log("DEBUG: activating next process\r\n");(void)pid;n++;}}
+/* First user task selected: full transition inputs in one bounded block. */
+static void trace_first_task(uint32_t idx){static unsigned n=0;if(n<1&&tasks[idx].process_pid){kernel_log("DEBUG: first task id=");kernel_log_dec(tasks[idx].id);kernel_log(" state=");kernel_log_dec(tasks[idx].state);kernel_log(" pid=");kernel_log_dec(tasks[idx].process_pid);kernel_log(" rsp=");kernel_log_hex(tasks[idx].rsp);kernel_log(" entry=");kernel_log_hex(tasks[idx].user_entry);kernel_log(" user_stack=");kernel_log_hex(tasks[idx].user_stack);kernel_log("\r\n");n++;}}
+static void trace_selected(uint64_t id,uint64_t pid){static unsigned n=0;if(n<4){kernel_log("DEBUG: scheduler selected task=");kernel_log_dec(id);kernel_log(" pid=");kernel_log_dec(pid);kernel_log("\r\n");n++;}}
+static void trace_switched(void){static unsigned n=0;if(n<4){kernel_log("DEBUG: context_switch returned\r\n");n++;}}
+static void trace_switching(void){static unsigned n=0;if(n<4){kernel_log("DEBUG: switching context\r\n");n++;}}
+static void trace_resumed(void){static unsigned n=0;if(n<4){kernel_log("DEBUG: resumed task id=");kernel_log_dec(tasks[current_index].id);kernel_log("\r\n");n++;}}
 static __attribute__((noreturn)) void task_bootstrap(void){
     rix_task_t *t=&tasks[current_index];
     if(t->process_pid){
+        {static unsigned n=0;if(n<2){kernel_log("DEBUG: userspace bootstrap begin pid=");kernel_log_dec(t->process_pid);kernel_log("\r\n");n++;}}
         rix_process_t *p=process_lookup(t->process_pid);
         if(!p){kernel_log("DEBUG: bootstrap process lookup FAILED\r\n");task_returned();}
         if(process_activate(t->process_pid)!=0){kernel_log("DEBUG: bootstrap process_activate FAILED\r\n");task_returned();}
         boot_user_entry_marker(t->process_pid,t->user_entry,t->user_stack,p->address_space.pml4_phys);
+        {static unsigned n=0;if(n<2){kernel_log("DEBUG: entering ring3\r\n");n++;}}
+        /* Exactly one enter path runs: context restore for fork children,
+         * fresh entry otherwise. Both end in iretq and never return. */
         if(t->user_context_valid)x86_enter_user_context(p->address_space.pml4_phys,&t->user_context);
-        if(t->user_context_valid)x86_enter_user_context(p->address_space.pml4_phys,&t->user_context);
-        if(t->user_return==UINT64_MAX)x86_enter_user(p->address_space.pml4_phys,t->user_entry,t->user_stack);
+        else x86_enter_user(p->address_space.pml4_phys,t->user_entry,t->user_stack);
         kernel_log("DEBUG: ring3 entry returned unexpectedly\r\n");
         x86_enter_user_return(p->address_space.pml4_phys,t->user_entry,t->user_stack,t->user_return);
     }
@@ -87,6 +102,10 @@ static int task_alloc(rix_task_t **out){
 }
 static void task_init_stack(rix_task_t *t){
     uintptr_t top=(uintptr_t)t->stack+RIX_STACK_SIZE;top&=~(uintptr_t)0xFULL;uint64_t *sp=(uint64_t*)top;
+    /* Padding qword first: after the 6 register pops + ret, task entry must
+     * observe SysV rsp%16==8 (as if entered via call). Without it every call
+     * inside the first task function runs 8 bytes off alignment. */
+    *--sp=0;
     *--sp=(uint64_t)(uintptr_t)task_bootstrap;
     for(unsigned r=0;r<6;r++)*--sp=0;
     t->rsp=(uint64_t)(uintptr_t)sp;
@@ -102,9 +121,9 @@ int scheduler_create_kernel_thread(rix_kernel_thread_fn entry,void *arg,rix_task
 }
 
 int scheduler_create_user_process(uint64_t pid,uint64_t entry,uint64_t user_stack,rix_task_id_t *out_id){
-    if(!pid||!entry||!user_stack)return -1;
-    rix_process_t*p=process_lookup(pid);if(!p||!p->address_space.pml4_phys||!p->kernel_stack)return -1;
-    rix_task_t*t;if(task_alloc(&t)!=0)return -1;
+    if(!pid||!entry||!user_stack){kernel_log("DEBUG: scheduler task create fail stage=args\r\n");return -1;}
+    rix_process_t*p=process_lookup(pid);if(!p||!p->address_space.pml4_phys||!p->kernel_stack){kernel_log("DEBUG: scheduler task create fail stage=lookup pid=");kernel_log_dec(pid);kernel_log("\r\n");return -2;}
+    rix_task_t*t;if(task_alloc(&t)!=0){kernel_log("DEBUG: scheduler task create fail stage=task-alloc\r\n");return -3;}
     t->id=next_id++;if(!t->id)t->id=next_id++;t->entry=NULL;t->arg=NULL;t->process_pid=pid;
     t->user_entry=entry;t->user_stack=user_stack;t->user_return=UINT64_MAX;t->user_context_valid=0;t->state=TASK_RUNNABLE;task_init_stack(t);
     if(out_id)*out_id=t->id;
@@ -138,16 +157,42 @@ __attribute__((noreturn)) void scheduler_exit_current(void){
     for(;;) scheduler_yield();
 }
 
+/* DEBUG-only isolation: skip the context-switch call itself (selection
+ * and process activation still run). Default 0. If a bootloop vanishes
+ * with this set, the switch/task-stack path is implicated. */
+#define RIX_DEBUG_NO_CTX_SWITCH 0
 void scheduler_yield(void){
-    uint64_t flags=read_rflags();cli();
+    uint64_t flags=read_rflags();
+    trace_flags();
+    cli();
+    trace_yield_begin();
     uint32_t old=current_index,next=old;
+    trace_searching();
     for(uint32_t n=1;n<RIX_MAX_TASKS;n++){uint32_t i=(old+n)%RIX_MAX_TASKS;if(tasks[i].state==TASK_RUNNABLE){next=i;break;}}
+    trace_old_next(old,next);
+    cr3trace_push(3,(uint64_t)tasks[old].id,(uint64_t)tasks[next].id,0);
     if(next==old){if(flags&0x200ULL)sti();return;}
     if(tasks[old].state==TASK_RUNNING)tasks[old].state=TASK_RUNNABLE;
+    trace_old_updated(old);
+    trace_activating(tasks[next].process_pid);
     if(tasks[next].process_pid){if(process_activate(tasks[next].process_pid)!=0){kernel_log("DEBUG: scheduler process_activate FAILED\r\n");tasks[next].state=TASK_DEAD;if(flags&0x200ULL)sti();return;}}
     else if(tasks[next].id==0){if(process_activate(0)!=0){if(flags&0x200ULL)sti();return;}}
     tasks[next].state=TASK_RUNNING;current_index=next;
+    trace_selected(tasks[next].id,tasks[next].process_pid);
+    trace_first_task(next);
+    trace_switching();
+#if RIX_DEBUG_NO_CTX_SWITCH
+    {static unsigned n=0;if(n<4){kernel_log("DEBUG: context switch SKIPPED\r\n");n++;}}
+    if(tasks[old].state==TASK_RUNNABLE)tasks[old].state=TASK_RUNNING;
+    if(tasks[old].process_pid){(void)process_activate(tasks[old].process_pid);}
+    else if(tasks[old].id==0){(void)process_activate(0);}
+    current_index=old;
+    if(flags&0x200ULL){sti();}
+    return;
+#endif
     rix_context_switch(&tasks[old].rsp,tasks[next].rsp);
+    trace_switched();
+    trace_resumed();
     /* The context switch returns in the task that was waiting in this
        function. The address space must follow the resumed task, not the task
        that ran immediately before it. */

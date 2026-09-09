@@ -1,5 +1,6 @@
 #include "idt.h"
 #include "kernel.h"
+#include "../../serial.h"
 #include "../../mm/ptmap.h"
 #include "../../mm/vmm.h"
 #include "../../process/process.h"
@@ -24,10 +25,22 @@ static void lidt(const struct idt_ptr *ptr){__asm__ volatile("lidt (%0)"::"r"(pt
 static void cli(void){__asm__ volatile("cli":::"memory");}
 static void sti(void){__asm__ volatile("sti":::"memory");}
 static uint64_t read_cr2(void){uint64_t value;__asm__ volatile("mov %%cr2,%0":"=r"(value));return value;}
+static uint64_t read_cr3_hw(void){uint64_t value;__asm__ volatile("mov %%cr3,%0":"=r"(value)::"memory");return value;}
 static void fault_entry(const char *name,uint64_t entry){kernel_log(name);kernel_log_hex(entry);kernel_log("\r\n");}
 static void page_fault_diagnostics(const struct interrupt_frame *frame){
-    uint64_t va=read_cr2(),cr3=vmm_current_pml4();
+    /* Dual-output (screen+serial): physical-console-only setups must see
+     * faults too. The framebuffer lives in the shared low identity window,
+     * so it is mapped under any process CR3. CR3HW is read from hardware;
+     * CR3SW is the software tracker: if they differ, the tracker desynced. */
+    uint64_t va=read_cr2(),cr3hw=read_cr3_hw(),cr3=vmm_current_pml4();
     rix_process_t *process=process_lookup(process_current());
+    kernel_log("#PF: CR2=");kernel_log_hex(va);
+    kernel_log(" RIP=");kernel_log_hex(frame?frame->rip:0);
+    kernel_log(" RSP=");kernel_log_hex(frame?frame->rsp:0);
+    kernel_log(" CR3HW=");kernel_log_hex(cr3hw);
+    kernel_log(" CR3SW=");kernel_log_hex(cr3);
+    kernel_log(" error_code=");kernel_log_hex(frame?frame->error:0);
+    kernel_log("\r\n");
     kernel_log("PAGE FAULT: pid=");kernel_log_dec(process_current());
     kernel_log(" parent=");kernel_log_dec(process?process->parent:0);
     kernel_log(" cr3=");kernel_log_hex(cr3);kernel_log(" cr2=");kernel_log_hex(va);
@@ -40,12 +53,16 @@ static void page_fault_diagnostics(const struct interrupt_frame *frame){
     fault_entry("  PML4E=",pml4e);fault_entry("  PDPTE=",pdpte);fault_entry("  PDE=",pde);fault_entry("  PTE=",pte);
     kernel_log("  physical_page=");kernel_log_hex((pte?pte:pde?pde:pdpte?pdpte:pml4e)&~0xfffULL);kernel_log("\r\n");
 }
-void x86_exception_dispatch(const struct interrupt_frame *frame){if(frame){if(frame->vector==14)page_fault_diagnostics(frame);else{kernel_log("CPU exception vector=");kernel_log_dec(frame->vector);kernel_log(" error=");kernel_log_hex(frame->error);kernel_log(" rip=");kernel_log_hex(frame->rip);kernel_log("\r\n");}}cli();for(;;)__asm__ volatile("hlt");}
+void x86_exception_dispatch(const struct interrupt_frame *frame){static volatile unsigned in_fault=0;if(in_fault){cli();for(;;)__asm__ volatile("hlt");}in_fault=1;if(frame){if(frame->vector==14)page_fault_diagnostics(frame);else{kernel_log("CPU exception vector=");kernel_log_dec(frame->vector);kernel_log(" error=");kernel_log_hex(frame->error);kernel_log(" rip=");kernel_log_hex(frame->rip);kernel_log("\r\n");}kernel_log(" cs=");kernel_log_hex(frame->cs);kernel_log(" rflags=");kernel_log_hex(frame->rflags);kernel_log(" rsp=");kernel_log_hex(frame->rsp);kernel_log(" ss=");kernel_log_hex(frame->ss);kernel_log(" cr3hw=");kernel_log_hex(read_cr3_hw());kernel_log(" cr3sw=");kernel_log_hex(vmm_current_pml4());kernel_log("\r\n");cr3trace_dump();}serial_drain();cli();for(;;)__asm__ volatile("hlt");}
 void idt_init(void){
     for(unsigned i=0;i<256;i++)set_gate(i,isr_default,0,0x8E);
     void (*exceptions[32])(void)={isr0,isr1,isr2,isr3,isr4,isr5,isr6,isr7,isr8,isr9,isr10,isr11,isr12,isr13,isr14,isr15,isr16,isr17,isr18,isr19,isr20,isr21,isr22,isr23,isr24,isr25,isr26,isr27,isr28,isr29,isr30,isr31};
     void (*irqs[16])(void)={isr32,isr33,isr34,isr35,isr36,isr37,isr38,isr39,isr40,isr41,isr42,isr43,isr44,isr45,isr46,isr47};
     for(unsigned i=0;i<32;i++)set_gate(i,exceptions[i],0,0x8E);
+    /* Double fault gets IST#1 so its diagnostics can print even when the
+     * interrupted stack is unusable; otherwise #DF during delivery resets
+     * the machine with zero evidence. */
+    set_gate(8,isr8,1,0x8E);
     for(unsigned i=0;i<16;i++)set_gate(32+i,irqs[i],0,0x8E);
     set_gate(0x80,isr128,0,0xEE);
     struct idt_ptr ptr={(uint16_t)(sizeof(idt)-1U),(uint64_t)(uintptr_t)idt};lidt(&ptr);

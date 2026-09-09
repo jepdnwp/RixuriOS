@@ -13,6 +13,12 @@ static uint64_t managed_bitmap[RIXURI_BITMAP_WORDS];
 static uint64_t reserved_bitmap[RIXURI_BITMAP_WORDS];
 static uint64_t total_pages_count;
 static uint64_t free_pages_count;
+/* Saved UEFI map for post-init region queries (buffer is reserved at init
+ * so it stays intact; identity-mapped low memory, readable under any CR3
+ * that shares the low identity window). */
+static const unsigned char *saved_map;
+static uint64_t saved_map_size;
+static uint64_t saved_desc_size;
 
 static int usable_type(uint32_t type) { return type == 1 || type == 2 || type == 3 || type == 4 || type == 7; }
 static uint64_t align_up_page(uint64_t value) { if(value>UINT64_MAX-(RIXURI_PAGE_SIZE-1ULL))return UINT64_MAX;return(value+RIXURI_PAGE_SIZE-1ULL)&~(RIXURI_PAGE_SIZE-1ULL); }
@@ -39,6 +45,7 @@ void pmm_init(const void*memory_map,uint64_t memory_map_size,uint64_t descriptor
     for(size_t i=0;i<RIXURI_BITMAP_WORDS;i++){page_bitmap[i]=UINT64_MAX;managed_bitmap[i]=0;reserved_bitmap[i]=0;}
     total_pages_count=free_pages_count=0;
     if(!memory_map||descriptor_size<EFI_DESCRIPTOR_MIN_SIZE||descriptor_size>4096||memory_map_size<descriptor_size)return;
+    saved_map=(const unsigned char*)memory_map;saved_map_size=memory_map_size;saved_desc_size=descriptor_size;
     uint64_t offset=0;
     while(offset<=memory_map_size-descriptor_size){
         const unsigned char*d=(const unsigned char*)memory_map+offset;
@@ -114,3 +121,40 @@ void pmm_free_page(uint64_t physical_address){
 }
 uint64_t pmm_total_pages(void){return total_pages_count;}
 uint64_t pmm_free_pages(void){return free_pages_count;}
+int pmm_is_managed(uint64_t physical_address){
+    if((physical_address&(RIXURI_PAGE_SIZE-1ULL))!=0)return 0;
+    uint64_t page=physical_address/RIXURI_PAGE_SIZE;if(page>=PMM_MAX_PAGES)return 0;
+    return (managed_bitmap[page>>6]&(1ULL<<(page&63ULL)))!=0;
+}
+int pmm_is_in_use(uint64_t physical_address){
+    if((physical_address&(RIXURI_PAGE_SIZE-1ULL))!=0)return 0;
+    uint64_t page=physical_address/RIXURI_PAGE_SIZE;if(page>=PMM_MAX_PAGES)return 0;
+    return (page_bitmap[page>>6]&(1ULL<<(page&63ULL)))!=0;
+}
+int pmm_is_reserved(uint64_t physical_address){
+    if((physical_address&(RIXURI_PAGE_SIZE-1ULL))!=0)return 0;
+    uint64_t page=physical_address/RIXURI_PAGE_SIZE;if(page>=PMM_MAX_PAGES)return 0;
+    return (reserved_bitmap[page>>6]&(1ULL<<(page&63ULL)))!=0;
+}
+int pmm_region_info(uint64_t physical_address,uint64_t *out_base,uint64_t *out_end,uint32_t *out_type,int *out_usable){
+    if(out_base){*out_base=0;}if(out_end){*out_end=0;}if(out_type){*out_type=0;}if(out_usable){*out_usable=0;}
+    if(!saved_map||saved_desc_size<EFI_DESCRIPTOR_MIN_SIZE||saved_desc_size>4096||saved_map_size<saved_desc_size)return -1;
+    uint64_t offset=0;
+    while(offset<=saved_map_size-saved_desc_size){
+        const unsigned char*d=saved_map+offset;
+        uint32_t type;uint64_t base,pages;
+        __builtin_memcpy(&type,d,sizeof(type));
+        __builtin_memcpy(&base,d+8,sizeof(base));
+        __builtin_memcpy(&pages,d+24,sizeof(pages));
+        if(pages&&base<PMM_MAX_PHYS&&physical_address>=base){
+            uint64_t span=pages*RIXURI_PAGE_SIZE;
+            if(span/RIXURI_PAGE_SIZE==pages&&physical_address<base+span){
+                if(out_base){*out_base=base;}if(out_end){*out_end=base+span;}
+                if(out_type){*out_type=type;}if(out_usable){*out_usable=usable_type(type);}
+                return 0;
+            }
+        }
+        offset+=saved_desc_size;
+    }
+    return 1;
+}

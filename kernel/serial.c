@@ -22,6 +22,7 @@ void serial_write_n(const char *s,size_t length){if(!s||!serial_has_com1)return;
 void serial_write_hex(uint64_t value){if(!serial_has_com1)return;static const char digits[]="0123456789abcdef";serial_write("0x");for(int shift=60;shift>=0;shift-=4)serial_putc(digits[(value>>shift)&0xFULL]);}
 void serial_write_dec(uint64_t value){if(!serial_has_com1)return;char buf[21];size_t i=sizeof(buf);if(value==0){serial_putc('0');return;}while(value){buf[--i]=(char)('0'+value%10ULL);value/=10ULL;}serial_write(&buf[i]);}
 int serial_read_byte(uint8_t *byte){if(!serial_has_com1||!byte||(inb(COM1+5)&0x01u)==0)return -1;*byte=inb(COM1);return 0;}
+void serial_drain(void){if(!serial_has_com1)return;for(int i=0;i<1000000;i++)if(inb(COM1+5)&0x40u)return;}
 
 static size_t klog_strlen(const char *s){size_t n=0;while(s[n])n++;return n;}
 void kernel_log(const char *s){serial_write(s);size_t w=0;tty_output(0,s,klog_strlen(s),&w);}

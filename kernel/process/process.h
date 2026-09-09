@@ -34,6 +34,14 @@ int process_exec_user_with_args(pid_t pid,const void *image,uint64_t image_size,
                                 uint64_t *out_entry, uint64_t *out_user_stack);
 int process_activate(pid_t pid);
 int process_set_state(pid_t pid,rix_process_state_t state);
+/* In-memory CR3 event ring (no output at record time): every scheduler
+ * selection and every address-space activation pushes one entry; the fault
+ * handler dumps the last 16 on any CPU exception. Tags: 1=activate-pre
+ * (a=pid,b=target,c=hw-before), 2=activate-post (a=pid,b=target,c=hw-after),
+ * 3=yield-select (a=old task id,b=next task id,c=0). */
+#define CR3TRACE_N 16u
+void cr3trace_push(uint64_t tag,uint64_t a,uint64_t b,uint64_t c);
+void cr3trace_dump(void);
 int process_exit(pid_t pid,uint64_t status);
 int process_wait(pid_t parent,pid_t wanted,uint64_t *status,pid_t *child_pid);
 int process_set_group(pid_t pid, pid_t process_group);

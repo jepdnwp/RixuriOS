@@ -20,3 +20,11 @@ void pmm_reserve_page(uint64_t physical_address);
 void pmm_free_page(uint64_t physical_address);
 uint64_t pmm_total_pages(void);
 uint64_t pmm_free_pages(void);
+/* CR3-switch diagnostics: query PMM ownership of a 4 KiB-aligned page. */
+int pmm_is_managed(uint64_t physical_address);
+int pmm_is_in_use(uint64_t physical_address);
+int pmm_is_reserved(uint64_t physical_address);
+/* Describe the UEFI memory-map region containing pa (0=found, 1=not found,
+ * -1=no map saved). end is exclusive. usable follows the allocator's own
+ * usable_type() so the report cannot disagree with PMM behavior. */
+int pmm_region_info(uint64_t physical_address,uint64_t *out_base,uint64_t *out_end,uint32_t *out_type,int *out_usable);
