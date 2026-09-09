@@ -28,9 +28,17 @@ static uint32_t mmio_read32(volatile uint8_t *mmio, uint32_t offset) {
     return *value;
 }
 
+static uint8_t mmio_read8(volatile uint8_t *mmio, uint32_t offset) {
+    return *(volatile uint8_t *)(mmio + offset);
+}
+
 static void mmio_write32(volatile uint8_t *mmio, uint32_t offset, uint32_t value) {
     volatile uint32_t *destination = (volatile uint32_t *)(mmio + offset);
     *destination = value;
+}
+
+static void mmio_write8(volatile uint8_t *mmio, uint32_t offset, uint8_t value) {
+    *(volatile uint8_t *)(mmio + offset) = value;
 }
 
 int rix_rtl8125_is_supported(const rix_pci_device_t *device) {
@@ -108,10 +116,12 @@ int rix_rtl8125_init_rings(rix_rtl8125_t *driver) {
 
 int rix_rtl8125_hw_reset(volatile uint8_t *mmio, size_t mmio_size) {
     if (!mmio || mmio_size < RIX_RTL8125_REG_COMMAND + 4u) return -1;
-    uint32_t command = mmio_read32(mmio, RIX_RTL8125_REG_COMMAND);
-    mmio_write32(mmio, RIX_RTL8125_REG_COMMAND, command | RIX_RTL8125_CMD_RESET);
+    /* ChipCmd is an 8-bit register at 0x37. Reading/writing it as a dword
+     * corrupts adjacent RTL8125 registers and leaves the real NIC in reset. */
+    uint8_t command = mmio_read8(mmio, RIX_RTL8125_REG_COMMAND);
+    mmio_write8(mmio, RIX_RTL8125_REG_COMMAND, command | RIX_RTL8125_CMD_RESET);
     for (unsigned attempt = 0; attempt < 100000u; ++attempt)
-        if (!(mmio_read32(mmio, RIX_RTL8125_REG_COMMAND) & RIX_RTL8125_CMD_RESET)) return 0;
+        if (!(mmio_read8(mmio, RIX_RTL8125_REG_COMMAND) & RIX_RTL8125_CMD_RESET)) return 0;
     return -2;
 }
 
@@ -119,8 +129,9 @@ int rix_rtl8125_hw_enable(volatile uint8_t *mmio, size_t mmio_size,
                            uint32_t interrupt_mask) {
     if (!mmio || mmio_size < RIX_RTL8125_REG_IMR + 4u) return -1;
     mmio_write32(mmio, RIX_RTL8125_REG_IMR, interrupt_mask);
-    mmio_write32(mmio, RIX_RTL8125_REG_COMMAND,
-                 RIX_RTL8125_CMD_RX_ENABLE | RIX_RTL8125_CMD_TX_ENABLE);
+    mmio_write8(mmio, RIX_RTL8125_REG_COMMAND,
+                mmio_read8(mmio, RIX_RTL8125_REG_COMMAND) |
+                RIX_RTL8125_CMD_RX_ENABLE | RIX_RTL8125_CMD_TX_ENABLE);
     return 0;
 }
 
