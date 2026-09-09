@@ -795,3 +795,8 @@ The stdio surface now includes `fgetc`, `fputc`, `fgets`, `fputs`, `setvbuf` and
 ## Phase 22 stdlib checkpoint — 2026-09-09
 
 The freestanding libc now provides numeric conversion and utility APIs: `atoi`, base-aware `strtol`/`strtoul` with whitespace, sign, prefix and overflow handling, `abs`, `labs` and comparator-based `qsort`. Invalid bases and range overflow update `errno`. Conformance tests cover decimal/hex/binary conversion and integer sorting; strict builds and the complete host suite pass.
+
+
+## Phase 22 environment/random checkpoint — 2026-09-09
+
+The freestanding libc now includes a bounded environment table with `getenv`, `setenv` and `unsetenv`, including overwrite semantics and heap-owned strings. Deterministic `srand`/`rand` and a lightweight `arc4random`-named generator are also available for non-security use. These generators are not cryptographically secure because no entropy syscall is currently exposed. Conformance tests cover environment lifecycle and repeatable seeding; strict builds and the full host suite pass.

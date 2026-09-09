@@ -255,3 +255,17 @@ void qsort(void *base, size_t count, size_t size, int (*compare)(const void *, c
     for(size_t i=1;i<count;++i){memcpy(item,bytes+i*size,size);size_t j=i;while(j>0&&compare(bytes+(j-1)*size,item)>0){memcpy(bytes+j*size,bytes+(j-1)*size,size);--j;}memcpy(bytes+j*size,item,size);}
     free(item);
 }
+
+
+#define RIX_ENV_MAX 32u
+typedef struct { char *name; char *value; } rix_environment_entry_t;
+static rix_environment_entry_t environment[RIX_ENV_MAX];
+static uint32_t random_state = 1u;
+static int environment_name_valid(const char *name) { if(!name||!*name)return 0;while(*name){if(*name=='=')return 0;++name;}return 1; }
+static int environment_index(const char *name) { if(!environment_name_valid(name))return -1;for(size_t i=0;i<RIX_ENV_MAX;++i)if(environment[i].name&&strcmp(environment[i].name,name)==0)return(int)i;return -1; }
+char *getenv(const char *name) { int index=environment_index(name);return index<0?0:environment[(size_t)index].value; }
+int setenv(const char *name,const char *value,int overwrite) { if(!environment_name_valid(name)||!value){errno=RIX_EINVAL;return -1;}int index=environment_index(name);if(index>=0&&!overwrite)return 0;char *new_name=0,*new_value=0;if(index<0){for(size_t i=0;i<RIX_ENV_MAX;++i)if(!environment[i].name){index=(int)i;break;}if(index<0){errno=RIX_ENOMEM;return -1;}size_t name_len=strlen(name);new_name=malloc(name_len+1u);if(!new_name){errno=RIX_ENOMEM;return -1;}memcpy(new_name,name,name_len+1u);}size_t value_len=strlen(value);new_value=malloc(value_len+1u);if(!new_value){free(new_name);errno=RIX_ENOMEM;return -1;}memcpy(new_value,value,value_len+1u);if(environment[(size_t)index].value)free(environment[(size_t)index].value);if(new_name)environment[(size_t)index].name=new_name;environment[(size_t)index].value=new_value;return 0; }
+int unsetenv(const char *name) { if(!environment_name_valid(name)){errno=RIX_EINVAL;return -1;}int index=environment_index(name);if(index<0)return 0;free(environment[(size_t)index].name);free(environment[(size_t)index].value);environment[(size_t)index].name=0;environment[(size_t)index].value=0;return 0; }
+void srand(unsigned seed) { random_state=seed?seed:1u; }
+int rand(void) { random_state=random_state*1103515245u+12345u;return(int)((random_state>>1)&0x7fffffffU); }
+uint32_t arc4random(void) { random_state=random_state*1664525u+1013904223u;return random_state; }

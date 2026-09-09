@@ -1511,3 +1511,8 @@ The descriptor-backed `FILE` layer now performs real read and write buffering, p
 ### Phase 22 stdlib checkpoint — 2026-09-09
 
 Freestanding numeric conversion, absolute-value and comparator-based sorting helpers are now available, including base autodetection and errno-aware range handling. Broader environment, random and process utility APIs remain future work.
+
+
+### Phase 22 environment/random checkpoint — 2026-09-09
+
+A bounded heap-backed environment API and deterministic random helpers are now available. The random helpers are explicitly non-cryptographic until a kernel entropy source is added; security-sensitive consumers must not use them.

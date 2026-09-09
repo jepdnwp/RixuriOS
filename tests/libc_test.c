@@ -70,5 +70,11 @@ int main(void) {
     qsort(values, 5, sizeof(values[0]), compare_ints);
     for (int i = 0; i < 5; ++i) assert(values[i] == i + 1);
     assert(abs(-7) == 7 && labs(-9L) == 9L);
+    assert(setenv("RIX_TEST", "one", 1) == 0 && strcmp(getenv("RIX_TEST"), "one") == 0);
+    assert(setenv("RIX_TEST", "two", 0) == 0 && strcmp(getenv("RIX_TEST"), "one") == 0);
+    assert(setenv("RIX_TEST", "two", 1) == 0 && strcmp(getenv("RIX_TEST"), "two") == 0);
+    assert(unsetenv("RIX_TEST") == 0 && getenv("RIX_TEST") == 0);
+    srand(1234u); int first = rand(); srand(1234u); assert(rand() == first);
+    assert(arc4random() != arc4random());
     return 0;
 }
