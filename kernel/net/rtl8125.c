@@ -32,6 +32,10 @@ static uint8_t mmio_read8(volatile uint8_t *mmio, uint32_t offset) {
     return *(volatile uint8_t *)(mmio + offset);
 }
 
+static void mmio_write16(volatile uint8_t *mmio, uint32_t offset, uint16_t value) {
+    *(volatile uint16_t *)(mmio + offset) = value;
+}
+
 static void mmio_write32(volatile uint8_t *mmio, uint32_t offset, uint32_t value) {
     volatile uint32_t *destination = (volatile uint32_t *)(mmio + offset);
     *destination = value;
@@ -293,6 +297,11 @@ int rix_rtl8125_configure(rix_rtl8125_t *driver) {
     }
 
     rix_rtl8125_hw_enable(driver->mmio, driver->mmio_size, 0u);
+    /* RTL8125 RxMaxSize is a 16-bit byte-count register at 0xda. */
+    if (rix_rtl8125_validate_mmio(driver, RIX_RTL8125_REG_RX_MAX_SIZE, 2u) != 0)
+        return -8;
+    mmio_write16(driver->mmio, RIX_RTL8125_REG_RX_MAX_SIZE,
+                 (uint16_t)RIX_RTL8125_RX_BUFFER_SIZE);
     if (rix_rtl8125_program_rx_filter(driver->mmio, driver->mmio_size) != 0) return -7;
     rix_rtl8125_read_link(driver->mmio, driver->mmio_size, &driver->link_up);
     return 0;
@@ -348,6 +357,10 @@ int rix_rtl8125_receive(rix_rtl8125_t *driver, void *data, size_t capacity, size
     uint32_t flags = descriptors[slot].flags;
     if (flags & RIX_RTL8125_DESC_OWN) return 0;
     size_t received = flags & RIX_RTL8125_DESC_LEN_MASK;
+    /* The NIC reports the Ethernet FCS in the descriptor length; software
+     * receives an L2 frame without the four-byte FCS. */
+    if (received < 4u) return -2;
+    received -= 4u;
     if (received > capacity || received > RIX_NET_FRAME_CAPACITY) return -3;
     uint8_t *buffer = (uint8_t *)(uintptr_t)driver->rx_buffers[slot];
     for (size_t i = 0; i < received; ++i) ((uint8_t *)data)[i] = buffer[i];

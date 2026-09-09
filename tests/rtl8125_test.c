@@ -128,7 +128,7 @@ int main(void) {
         assert(txmmio[RIX_RTL8125_REG_TPPOLL] == RIX_RTL8125_TPPOLL_NPQ);
         memcpy(rxbuf, payload, sizeof(payload));
         rxring[0].length = 0;
-        rxring[0].flags = (uint32_t)sizeof(payload);
+        rxring[0].flags = (uint32_t)(sizeof(payload) + 4u);
         assert(rix_rtl8125_receive(&driver, sink, sizeof(sink), &got) == 1);
         assert(got == sizeof(payload));
         assert(memcmp(sink, payload, sizeof(payload)) == 0);
