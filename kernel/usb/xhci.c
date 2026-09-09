@@ -139,15 +139,12 @@ static xhci_runtime_t runtimes[XHCI_MAX];
 static size_t count;
 static int is_xhci_device(const rix_pci_device_t *d) {
     if (!d) return 0;
-    if (d->class_code == PCI_CLASS_SERIAL && d->subclass == PCI_SUBCLASS_USB &&
-        d->prog_if == PCI_PROGIF_XHCI) return 1;
-    /* Fallback for AMD controllers whose class codes firmware may leave
-     * unprogrammed. IDs observed as xHCI on ASUS PRIME B650M-R (Windows). */
-    if (d->vendor_id != PCI_VENDOR_AMD) return 0;
-    return d->device_id == PCI_AMD_XHCI_15B6 ||
-           d->device_id == PCI_AMD_XHCI_15B7 ||
-           d->device_id == PCI_AMD_XHCI_43F7 ||
-           d->device_id == PCI_AMD_XHCI_15B8;
+    /* The B650 chipset exposes several AMD functions with xHCI-like IDs.
+     * Do not probe those as controllers unless PCI class/progif confirms
+     * serial-bus USB xHCI; probing a false positive reads unrelated BARs. */
+    return d->class_code == PCI_CLASS_SERIAL &&
+           d->subclass == PCI_SUBCLASS_USB &&
+           d->prog_if == PCI_PROGIF_XHCI;
 }
 
 /* Take OS ownership from firmware via the USB Legacy Support capability.

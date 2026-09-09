@@ -36,9 +36,9 @@
 #define RIX_RTL8125_DESC_LEN_MASK 0x00003fffu
 
 typedef struct {
-    uint64_t buffer_address;
     uint32_t flags;
     uint32_t length;
+    uint64_t buffer_address;
 } rix_rtl8125_descriptor_t;
 
 typedef struct {
