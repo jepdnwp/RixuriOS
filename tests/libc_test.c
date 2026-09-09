@@ -76,6 +76,8 @@ int main(void) {
     assert(snprintf(formatted, sizeof(formatted), "%08x", 0xbeef) == 8 && strcmp(formatted, "0000beef") == 0);
     assert(snprintf(formatted, sizeof(formatted), "%-6s", "ok") == 6 && strcmp(formatted, "ok    ") == 0);
     assert(snprintf(formatted, sizeof(formatted), "%i:%o:%X:%%", -7, 012u, 0xbeefu) == 12 && strcmp(formatted, "-7:12:BEEF:%") == 0);
+    assert(snprintf(formatted, sizeof(formatted), "%#x %#X %#o", 0xbeefu, 0xbeefu, 012u) == 17 && strcmp(formatted, "0xbeef 0XBEEF 012") == 0);
+    assert(snprintf(formatted, sizeof(formatted), "%p", (void *)(uintptr_t)0x1234u) == 6 && strcmp(formatted, "0x1234") == 0);
     struct dirent entry = {0};
     entry.d_ino = 7;
     assert(entry.d_ino == 7 && AT_FDCWD == -100 && O_CREAT == 4u);

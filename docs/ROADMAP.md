@@ -1522,6 +1522,8 @@ The freestanding libc now exposes a UTC-oriented `time.h` surface: `time`, `gmti
 `vsnprintf` now parses basic `-` and `0` flags plus decimal field widths for character, string and integer conversions. Left alignment, space padding and zero padding are covered by tests, including `%08x`; this also makes the existing calendar rendering helpers produce fixed-width fields. Strict libc, complete host-suite, kernel image and whitespace checks pass.
 ### Phase 22 printf conversion checkpoint — 2026-09-09
 Integer formatting now accepts `%i` as a signed-decimal alias and supports octal `%o` plus uppercase hexadecimal `%X`, including the existing width, alignment and zero-padding rules. Literal `%%` remains supported. Regression coverage includes truncation, mixed conversions and exact output lengths. Strict libc, complete host-suite, kernel image and whitespace checks pass.
+### Phase 22 printf alternate-form checkpoint — 2026-09-09
+`vsnprintf` now recognizes the `#` alternate-form flag for nonzero octal, lowercase hexadecimal and uppercase hexadecimal output, producing `0`, `0x` and `0X` prefixes respectively. Pointer formatting remains explicitly `0x`-prefixed. Regression tests cover mixed alternate forms and pointer output alongside the existing truncation checks.
 ### Phase 22 stdlib search/allocation checkpoint — 2026-09-09
 The freestanding libc now provides comparator-based `bsearch`, complementing `qsort`. The allocator rejects size-plus-header and alignment-rounding overflow before invoking `sbrk`; sorted lookup tests cover hits and misses, while existing heap tests continue to cover zeroing and reallocation. Strict libc, complete host-suite, kernel image and whitespace checks pass.
 ### Phase 22 ctype compatibility checkpoint — 2026-09-09
