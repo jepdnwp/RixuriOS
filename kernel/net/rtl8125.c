@@ -323,7 +323,9 @@ int rix_rtl8125_configure(rix_rtl8125_t *driver) {
                  RIX_RTL8125_RCR_ACCEPT);
     mmio_write32(driver->mmio, RIX_RTL8125_REG_TX_CONFIG, 7u << 8);
     /* Clear stale status before handing ownership of the RX ring to hardware. */
-    mmio_write32(driver->mmio, RIX_RTL8125_REG_ISR, 0xffffffffu);
+    if (rix_rtl8125_validate_mmio(driver, RIX_RTL8125_REG_ISR, 2u) != 0)
+        return -10;
+    mmio_write16(driver->mmio, RIX_RTL8125_REG_ISR, 0xffffu);
     if (rix_rtl8125_hw_enable(driver->mmio, driver->mmio_size, 0u) != 0) return -9;
     rix_rtl8125_read_link(driver->mmio, driver->mmio_size, &driver->link_up);
     return 0;
