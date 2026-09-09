@@ -193,11 +193,30 @@ FILE *fopen(const char *path, const char *mode) {
     if (fd < 0) return 0;
     FILE *stream = malloc(sizeof(*stream));
     if (!stream) { (void)close(fd); return 0; }
-    stream->fd = fd; stream->mode = _IOFBF;
+    stream->fd = fd; stream->mode = _IOFBF; stream->temporary_path = 0;
     stream->buffer = malloc(BUFSIZ);
     if (stream->buffer) { stream->buffer_size = BUFSIZ; stream->owns_buffer = 1; }
     return stream;
 }
+FILE *tmpfile(void) {
+    char path[48];
+    for (unsigned attempt = 0; attempt < 16u; ++attempt) {
+        (void)snprintf(path, sizeof(path), "/tmp/.rix-tmp-%x", (unsigned)arc4random());
+        int fd = open(path, O_RDWR | O_CREAT | O_EXCL, 0600u);
+        if (fd < 0) continue;
+        FILE *stream = malloc(sizeof(*stream));
+        if (!stream) { (void)close(fd); (void)unlink(path); return 0; }
+        stream->fd = fd; stream->mode = _IOFBF; stream->temporary_path = 0; stream->buffer = malloc(BUFSIZ);
+        stream->buffer_size = stream->buffer ? BUFSIZ : 0; stream->owns_buffer = stream->buffer != 0;
+        stream->temporary_path = malloc(strlen(path) + 1u);
+        if (!stream->temporary_path) { (void)fclose(stream); (void)unlink(path); return 0; }
+        memcpy(stream->temporary_path, path, strlen(path) + 1u);
+        return stream;
+    }
+    errno = RIX_EEXIST; return 0;
+}
+int remove(const char *path) { if (!path) { errno = RIX_EINVAL; return -1; } return unlink(path); }
+int fileno(FILE *stream) { if (!stream) { errno = RIX_EINVAL; return -1; } return stream->fd; }
 static int stream_flush(FILE *stream) {
     if (!stream || !stream->writing || !stream->buffer || !stream->buffer_pos) return 0;
     size_t done=0; while (done<stream->buffer_pos) { rix_ssize_t n=write(stream->fd,stream->buffer+done,stream->buffer_pos-done); if (n<=0) { stream->error=1; return -1; } done+=(size_t)n; }
@@ -213,7 +232,7 @@ static int stream_fill(FILE *stream) {
     rix_ssize_t n=read(stream->fd,stream->buffer,stream->buffer_size); if (n==0) { stream->eof=1; return -1; } if (n<0) { stream->error=1; return -1; }
     stream->buffer_pos=0; stream->buffer_len=(size_t)n; stream->writing=0; return 0;
 }
-int fclose(FILE *stream) { if (!stream) { errno = RIX_EINVAL; return -1; } int rc=stream_flush(stream); if (stream->owns_buffer) free(stream->buffer); int close_rc=close(stream->fd); free(stream); return rc<0?rc:close_rc; }
+int fclose(FILE *stream) { if (!stream) { errno = RIX_EINVAL; return -1; } int rc=stream_flush(stream); if (stream->owns_buffer) free(stream->buffer); int close_rc=close(stream->fd); if (stream->temporary_path) { (void)unlink(stream->temporary_path); free(stream->temporary_path); } free(stream); return rc<0?rc:close_rc; }
 size_t fread(void *buffer, size_t size, size_t count, FILE *stream) {
     if (!stream || (!buffer && size && count)) { errno = RIX_EINVAL; return 0; }
     if (!size || count > (size_t)-1 / size) return 0;

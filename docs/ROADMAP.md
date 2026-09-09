@@ -1516,6 +1516,8 @@ Freestanding numeric conversion, absolute-value and comparator-based sorting hel
 ### Phase 22 environment/random checkpoint — 2026-09-09
 
 A bounded heap-backed environment API and deterministic random helpers are now available. The random helpers are explicitly non-cryptographic until a kernel entropy source is added; security-sensitive consumers must not use them.
+### Phase 22 file stream helper checkpoint — 2026-09-09
+The freestanding libc now exposes `tmpfile`, `remove` and `fileno`. Temporary streams use exclusive creation under `/tmp`, retain their path for close-time cleanup, and use the existing buffered `FILE` machinery. The stream structure now safely initializes temporary-file ownership state. Strict libc tests, the complete host suite, kernel image checks and whitespace validation pass.
 ### Phase 22 POSIX environment checkpoint — 2026-09-09
 The freestanding libc environment surface now includes `putenv` and `clearenv` in addition to `getenv`, `setenv` and `unsetenv`. Target userspace exports a rebuilt `environ` vector containing owned `NAME=VALUE` strings after every mutation; host tests use an isolated mode to avoid collision with the host C runtime. Strict libc, complete host-suite and kernel image checks pass.
 ### Phase 22 errno and stream-status checkpoint — 2026-09-09

@@ -73,6 +73,9 @@ int main(void) {
     assert(fgetc(&formatted_stream) == EOF && ferror(&formatted_stream) && !feof(&formatted_stream));
     clearerr(&formatted_stream);
     assert(!ferror(&formatted_stream) && !feof(&formatted_stream));
+    assert(fileno(&formatted_stream) == 1);
+    errno = 0;
+    assert(remove(0) == -1 && errno == RIX_EINVAL);
     char *end = 0;
     assert(atoi("-42") == -42);
     assert(strtol("0x2a", &end, 0) == 42 && *end == 0);
