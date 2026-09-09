@@ -29,11 +29,16 @@ static int send_arp_request(const rix_net_device_info_t *info, uint32_t target) 
 int rix_net_stack_init(rix_net_stack_t *stack) {
     if (!stack || !rix_net_device_info()) return -1;
     rix_net_arp_init(&stack->arp);
+    rix_net_ipv6_neighbor_init(&stack->ipv6_neighbors);
     rix_net_packet_init(&stack->pending);
     for (size_t i = 0; i < RIX_NET_RX_QUEUE; ++i)
         rix_net_packet_init(&stack->incoming[i]);
+    for (size_t i = 0; i < RIX_NET_RX_QUEUE; ++i)
+        rix_net_packet_init(&stack->incoming_ipv6[i]);
     stack->incoming_head = 0;
     stack->incoming_count = 0;
+    stack->incoming_ipv6_head = 0;
+    stack->incoming_ipv6_count = 0;
     stack->pending_next_hop = 0;
     stack->pending_valid = 0;
     stack->pending_since_ns = 0;
@@ -63,6 +68,18 @@ int rix_net_stack_send_ipv4(rix_net_stack_t *stack, rix_net_packet_t *packet,
     }
     if (rix_net_eth_push(packet, mac, info->mac, RIX_NET_ETHERTYPE_IPV4) != 0)
         return -1;
+    return rix_net_device_transmit(packet) < 0 ? -1 : 0;
+}
+
+int rix_net_stack_send_ipv6(rix_net_stack_t *stack, rix_net_packet_t *packet,
+                            const uint8_t destination[16]) {
+    const rix_net_device_info_t *info = rix_net_device_info();
+    uint8_t mac[6];
+    if (!stack || !stack->initialized || !packet || !destination ||
+        !rix_net_packet_length(packet) || !info) return -1;
+    if (rix_net_ipv6_neighbor_lookup(&stack->ipv6_neighbors, destination,
+                                     time_monotonic_ns(), mac) != 0) return -2;
+    if (rix_net_eth_push(packet, mac, info->mac, RIX_NET_ETHERTYPE_IPV6) != 0) return -1;
     return rix_net_device_transmit(packet) < 0 ? -1 : 0;
 }
 
@@ -182,6 +199,15 @@ int rix_net_stack_poll(rix_net_stack_t *stack, uint64_t now) {
             ++stack_stores;
         }
     }
+    if (ethernet.ethertype == RIX_NET_ETHERTYPE_IPV6) {
+        if (stack->incoming_ipv6_count >= RIX_NET_RX_QUEUE) {
+            stack->incoming_ipv6_head = (stack->incoming_ipv6_head + 1u) % RIX_NET_RX_QUEUE;
+            --stack->incoming_ipv6_count;
+        }
+        size_t tail = (stack->incoming_ipv6_head + stack->incoming_ipv6_count) % RIX_NET_RX_QUEUE;
+        copy_packet(&stack->incoming_ipv6[tail], &packet);
+        ++stack->incoming_ipv6_count;
+    }
     return 1;
 }
 
@@ -191,5 +217,13 @@ int rix_net_stack_take_ipv4(rix_net_stack_t *stack, rix_net_packet_t *packet) {
     stack->incoming_head = (stack->incoming_head + 1u) % RIX_NET_RX_QUEUE;
     --stack->incoming_count;
     ++stack_takes;
+    return 1;
+}
+
+int rix_net_stack_take_ipv6(rix_net_stack_t *stack, rix_net_packet_t *packet) {
+    if (!stack || !packet || !stack->initialized || !stack->incoming_ipv6_count) return 0;
+    copy_packet(packet, &stack->incoming_ipv6[stack->incoming_ipv6_head]);
+    stack->incoming_ipv6_head = (stack->incoming_ipv6_head + 1u) % RIX_NET_RX_QUEUE;
+    --stack->incoming_ipv6_count;
     return 1;
 }

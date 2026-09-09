@@ -1451,3 +1451,8 @@ IPv6 is no longer only an architecture placeholder. Ethernet now accepts `0x86DD
 ### Phase 21 IPv6 control-plane checkpoint — 2026-09-09
 
 Router Solicitation/Advertisement, Prefix Information parsing, `/64` SLAAC construction, modified-EUI-64 link-local generation and an expiring Neighbor Cache are implemented and host-tested. IPv6 transport sockets, device-stack dispatch and independent QEMU/physical IPv6 evidence remain the final IPv6 integration gate.
+
+
+### Phase 21 IPv6 device-stack checkpoint — 2026-09-09
+
+The network stack now has a separate bounded IPv6 RX queue, IPv6 Ethernet polling, and Neighbor Cache-backed IPv6 transmission. Unknown neighbors fail closed. IPv6 transport sockets and independent QEMU/physical traffic evidence remain the final integration work.

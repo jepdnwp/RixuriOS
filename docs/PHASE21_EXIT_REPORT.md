@@ -84,3 +84,10 @@ This is not yet a claim of full IPv6 networking. Address autoconfiguration, Rout
 The IPv6 control-plane foundation now includes Router Solicitation and Router Advertisement messages with a Prefix Information option, deterministic `/64` SLAAC address construction, modified-EUI-64 link-local address generation, and a bounded eight-entry Neighbor Cache with expiry and lookup semantics. Host tests cover RA parsing, prefix extraction, SLAAC, link-local generation, cache learning, expiration and rejection of malformed messages.
 
 IPv6 transport sockets and device-stack dispatch are still separate integration work. Until that work and an independent QEMU/physical IPv6 observation exist, the IPv6 portion remains an implementation checkpoint rather than a full-network PASS.
+
+
+## IPv6 stack integration checkpoint — 2026-09-09
+
+The network stack now owns an IPv6 Neighbor Cache, maintains a separate bounded IPv6 RX queue, accepts IPv6 Ethernet frames during device polling, exposes `rix_net_stack_take_ipv6()`, and provides `rix_net_stack_send_ipv6()` for cached-neighbor Ethernet transmission. Unknown neighbors fail closed with a bounded error instead of transmitting to an unverified MAC address.
+
+IPv6 transport socket endpoints and independent IPv6 wire evidence remain open. The current stack API is therefore a safe integration foundation, not a claim that IPv6 internet traffic is complete.

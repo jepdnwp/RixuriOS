@@ -733,3 +733,8 @@ The IPv6 wire foundation is implemented: Ethernet IPv6 EtherType support, bounde
 ## IPv6 control plane — 2026-09-09
 
 Router Solicitation/Advertisement, Prefix Information, `/64` SLAAC, modified-EUI-64 link-local generation and an expiring Neighbor Cache are implemented and host-tested. IPv6 transport sockets and device-stack dispatch remain open; no independent IPv6 QEMU or physical-hardware PASS is claimed.
+
+
+## IPv6 device-stack integration — 2026-09-09
+
+The stack now polls IPv6 Ethernet frames into a dedicated bounded queue and transmits IPv6 packets only when the destination is present in the expiring Neighbor Cache. The kernel image and complete host test suite pass. IPv6 transport socket integration and independent IPv6 traffic evidence remain open.

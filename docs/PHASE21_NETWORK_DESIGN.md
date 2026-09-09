@@ -69,3 +69,8 @@ The full IPv6 gate remains open until address configuration, Router Advertisemen
 ## IPv6 control-plane checkpoint — 2026-09-09
 
 Router Solicitation and Router Advertisement support now carries a bounded Prefix Information option. The implementation derives a `/64` SLAAC address, generates a modified-EUI-64 link-local address from a MAC address, and maintains an expiring eight-entry Neighbor Cache. These semantics are host-tested. IPv6 transport sockets and device-stack dispatch remain the final integration gate for full Phase 21 IPv6 closure.
+
+
+## IPv6 stack integration checkpoint — 2026-09-09
+
+The device stack now accepts IPv6 Ethernet frames into a dedicated bounded RX queue and exposes a Neighbor Cache-backed IPv6 transmit path. Unknown neighbors are rejected until a verified cache entry exists. IPv6 transport socket endpoints and independent IPv6 traffic evidence are still required before a full-network IPv6 PASS.
