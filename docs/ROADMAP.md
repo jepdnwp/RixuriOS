@@ -1516,6 +1516,8 @@ Freestanding numeric conversion, absolute-value and comparator-based sorting hel
 ### Phase 22 environment/random checkpoint — 2026-09-09
 
 A bounded heap-backed environment API and deterministic random helpers are now available. The random helpers are explicitly non-cryptographic until a kernel entropy source is added; security-sensitive consumers must not use them.
+### Phase 22 stdlib search/allocation checkpoint — 2026-09-09
+The freestanding libc now provides comparator-based `bsearch`, complementing `qsort`. The allocator rejects size-plus-header and alignment-rounding overflow before invoking `sbrk`; sorted lookup tests cover hits and misses, while existing heap tests continue to cover zeroing and reallocation. Strict libc, complete host-suite, kernel image and whitespace checks pass.
 ### Phase 22 ctype compatibility checkpoint — 2026-09-09
 The freestanding libc ctype layer now covers blank, control, graph, printable, punctuation and hexadecimal-digit classification through `isblank`, `iscntrl`, `isgraph`, `isprint`, `ispunct` and `isxdigit`, in addition to the existing classification and case-conversion functions. Tests cover ASCII boundaries and representative characters. Strict libc, complete host-suite, kernel image and whitespace checks pass.
 ### Phase 22 string search/token checkpoint — 2026-09-09

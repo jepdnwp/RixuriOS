@@ -103,6 +103,10 @@ int main(void) {
     int values[5] = { 4, 1, 5, 2, 3 };
     qsort(values, 5, sizeof(values[0]), compare_ints);
     for (int i = 0; i < 5; ++i) assert(values[i] == i + 1);
+    int needle = 3;
+    assert(*(int *)bsearch(&needle, values, 5, sizeof(values[0]), compare_ints) == 3);
+    needle = 9;
+    assert(bsearch(&needle, values, 5, sizeof(values[0]), compare_ints) == 0);
     assert(abs(-7) == 7 && labs(-9L) == 9L);
     assert(setenv("RIX_TEST", "one", 1) == 0 && strcmp(getenv("RIX_TEST"), "one") == 0);
     assert(setenv("RIX_TEST", "two", 0) == 0 && strcmp(getenv("RIX_TEST"), "one") == 0);

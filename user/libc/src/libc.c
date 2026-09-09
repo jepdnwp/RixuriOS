@@ -94,7 +94,9 @@ typedef struct { uint32_t magic; uint32_t used; size_t size; } rix_alloc_header_
 static size_t align_up(size_t value) { return (value + 15u) & ~(size_t)15u; }
 void *malloc(size_t size) {
     if (!size || size > (size_t)-1 - sizeof(rix_alloc_header_t)) { errno = RIX_ENOMEM; return 0; }
-    size_t total = align_up(sizeof(rix_alloc_header_t) + size);
+    size_t raw = sizeof(rix_alloc_header_t) + size;
+    if (raw > (size_t)-1 - 15u) { errno = RIX_ENOMEM; return 0; }
+    size_t total = align_up(raw);
     void *memory = sbrk((ptrdiff_t)total);
     if (memory == (void *)-1) { errno = RIX_ENOMEM; return 0; }
     rix_alloc_header_t *header = (rix_alloc_header_t *)memory;
@@ -337,6 +339,7 @@ void qsort(void *base, size_t count, size_t size, int (*compare)(const void *, c
     for(size_t i=1;i<count;++i){memcpy(item,bytes+i*size,size);size_t j=i;while(j>0&&compare(bytes+(j-1)*size,item)>0){memcpy(bytes+j*size,bytes+(j-1)*size,size);--j;}memcpy(bytes+j*size,item,size);}
     free(item);
 }
+void *bsearch(const void *key, const void *base, size_t count, size_t size, int (*compare)(const void *, const void *)) { if(!key||!base||!size||!compare)return 0;size_t low=0,high=count;const unsigned char *bytes=base;while(low<high){size_t middle=low+(high-low)/2;const void *item=bytes+middle*size;int result=compare(key,item);if(result==0)return(void *)item;if(result<0)high=middle;else low=middle+1u;}return 0; }
 
 
 #define RIX_ENV_MAX 32u
