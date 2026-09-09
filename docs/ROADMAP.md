@@ -1516,6 +1516,8 @@ Freestanding numeric conversion, absolute-value and comparator-based sorting hel
 ### Phase 22 environment/random checkpoint — 2026-09-09
 
 A bounded heap-backed environment API and deterministic random helpers are now available. The random helpers are explicitly non-cryptographic until a kernel entropy source is added; security-sensitive consumers must not use them.
+### Phase 22 string compatibility checkpoint — 2026-09-09
+The freestanding libc string surface now includes `memchr`, bounded and unbounded copy/concatenation (`strcpy`, `strncpy`, `strcat`, `strncat`) and heap-backed duplication (`strdup`, `strndup`). The bounded operations preserve terminators and zero-fill `strncpy` tails; allocation failures use the existing errno contract. Strict libc, complete host-suite, kernel image and whitespace checks pass.
 ### Phase 22 stdio pushback checkpoint — 2026-09-09
 `FILE` now supports one-character pushback through `ungetc`. The pushed character is returned before buffered or descriptor-backed input, clears the EOF indicator, and is discarded on seek. Repeated pushback and `EOF` input are rejected. Strict libc tests, complete host regressions, kernel image checks and whitespace validation pass.
 ### Phase 22 file stream helper checkpoint — 2026-09-09

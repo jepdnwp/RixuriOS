@@ -29,6 +29,7 @@ void *memset(void *destination, int value, size_t length) {
     for (size_t i = 0; i < length; ++i) out[i] = (uint8_t)value;
     return destination;
 }
+void *memchr(const void *source, int value, size_t length) { if (!source) return 0; const unsigned char *bytes=source;for(size_t i=0;i<length;++i)if(bytes[i]==(unsigned char)value)return(void *)(bytes+i);return 0; }
 int memcmp(const void *left, const void *right, size_t length) {
     const uint8_t *a = (const uint8_t *)left, *b = (const uint8_t *)right;
     if (!a || !b) return a == b ? 0 : (a ? 1 : -1);
@@ -55,6 +56,12 @@ char *strchr(const char *text, int value) {
     if (!text) return 0;
     for (;;) { if ((unsigned char)*text == (unsigned char)value) return (char *)text; if (!*text) return 0; ++text; }
 }
+char *strcpy(char *destination, const char *source) { if (!destination || !source) return destination; size_t i=0;do{destination[i]=source[i];}while(source[i++]);return destination; }
+char *strncpy(char *destination, const char *source, size_t length) { if (!destination || !source) return destination;size_t i=0;for(;i<length&&source[i];++i)destination[i]=source[i];for(;i<length;++i)destination[i]=0;return destination; }
+char *strcat(char *destination, const char *source) { if (!destination || !source) return destination;size_t offset=strlen(destination),i=0;do{destination[offset+i]=source[i];}while(source[i++]);return destination; }
+char *strncat(char *destination, const char *source, size_t length) { if (!destination || !source) return destination;size_t offset=strlen(destination),i=0;for(;i<length&&source[i];++i)destination[offset+i]=source[i];destination[offset+i]=0;return destination; }
+char *strdup(const char *text) { if (!text) { errno=RIX_EINVAL;return 0; }size_t length=strlen(text);char *copy=malloc(length+1u);if(!copy){errno=RIX_ENOMEM;return 0;}memcpy(copy,text,length+1u);return copy; }
+char *strndup(const char *text, size_t length) { if (!text) { errno=RIX_EINVAL;return 0; }size_t actual=0;while(actual<length&&text[actual])++actual;char *copy=malloc(actual+1u);if(!copy){errno=RIX_ENOMEM;return 0;}memcpy(copy,text,actual);copy[actual]=0;return copy; }
 char *strerror(int error) {
     switch (error) {
     case RIX_EPERM: return "Operation not permitted"; case RIX_ENOENT: return "No such file or directory";

@@ -33,6 +33,14 @@ int main(void) {
     assert(strcmp(source, "rixurios") == 0);
     assert(strncmp(source, "rix", 3) == 0);
     assert(strchr(source, 'u') == source + 3);
+    assert(memchr(source, 'u', sizeof(source)) == source + 3);
+    char strings[32] = "rix";
+    assert(strcmp(strcpy(strings, "rixuri"), "rixuri") == 0);
+    assert(strncpy(strings, "os", 5) == strings && strings[2] == 0);
+    strcpy(strings, "rix"); assert(strcmp(strcat(strings, "uri"), "rixuri") == 0);
+    strcpy(strings, "rix"); assert(strcmp(strncat(strings, "urios", 2), "rixur") == 0);
+    char *duplicate = strdup("duplicate"); assert(duplicate && strcmp(duplicate, "duplicate") == 0); free(duplicate);
+    duplicate = strndup("truncate", 4); assert(duplicate && strcmp(duplicate, "trun") == 0); free(duplicate);
     assert(memcpy(buffer, source, sizeof(source)) == buffer);
     assert(memcmp(buffer, source, sizeof(source)) == 0);
     memmove(buffer + 2, buffer, 6);
