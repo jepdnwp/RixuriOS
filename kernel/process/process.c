@@ -463,28 +463,39 @@ loadval=read_cr3_hw();
   * tables; the push/pop proves RSP is writable; 'S' proves both. On a
   * physical target that freezes here, whichever letter is missing names
   * the broken mapping class in a single boot. Gated to the first two
-  * switches to keep serial logs clean; QEMU-safe: raw chars only. */
+  * switches to keep serial logs clean; QEMU-safe: raw chars only.
+  * CRITICAL: every port wait is BOUNDED (4096 tries, same discipline as
+  * serial_putc). An unnumbered `jz wait` hangs forever on a board whose
+  * UART decodes the port but never sets THRE (e.g. present-but-disabled
+  * Super-I/O with no COM1) — that looks exactly like a CR3-switch freeze
+  * while being a serial stall. Never wait unbounded on a UART again. */
  {static unsigned cr3post_n = 0;
  if (cr3post_n < 2) {
  cr3post_n++;
  __asm__ volatile(
   "movl $0x3FD,%%edx\n\t"
+  "movl $4096,%%ecx\n\t"
   "cr3post_wait1: inb %%dx,%%al\n\t"
   "testb $0x20,%%al\n\t"
-  "jz cr3post_wait1\n\t"
-  "movl $0x3F8,%%edx\n\t"
+  "jnz cr3post_done1\n\t"
+  "decl %%ecx\n\t"
+  "jnz cr3post_wait1\n\t"
+  "cr3post_done1: movl $0x3F8,%%edx\n\t"
   "movb $0x46,%%al\n\t"
   "outb %%al,%%dx\n\t"
   "pushq %%rax\n\t"
   "popq %%rax\n\t"
   "movl $0x3FD,%%edx\n\t"
+  "movl $4096,%%ecx\n\t"
   "cr3post_wait2: inb %%dx,%%al\n\t"
   "testb $0x20,%%al\n\t"
-  "jz cr3post_wait2\n\t"
-  "movl $0x3F8,%%edx\n\t"
+  "jnz cr3post_done2\n\t"
+  "decl %%ecx\n\t"
+  "jnz cr3post_wait2\n\t"
+  "cr3post_done2: movl $0x3F8,%%edx\n\t"
   "movb $0x53,%%al\n\t"
   "outb %%al,%%dx\n\t"
-  ::: "rax", "rdx", "memory");
+  ::: "rax", "rcx", "rdx", "memory");
  }}
  vmm_track_pml4(loadval);cr3trace_push(2,(uint64_t)pid,loadval,read_cr3_hw());{static unsigned n=0;if(n<2){uint64_t hw=read_cr3_hw();kernel_log("DEBUG: SW#");kernel_log_dec(cr3_switch_seq);kernel_log(" CR3 load returned cur=");kernel_log_hex(hw);kernel_log(hw==loadval?" SW=SYNC\r\n":" SW=MISMATCH\r\n");kernel_log("DEBUG: CR3 switched\r\n");serial_drain();n++;}}}
 #endif

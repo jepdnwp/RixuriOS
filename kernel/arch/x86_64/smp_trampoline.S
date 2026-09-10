@@ -19,10 +19,13 @@ smp_trampoline_start:
     movw %ax,%ds
     movb $0x52,%ah
     movw $0x3FD,%dx
+    movw $4096,%cx
 1:  inb %dx,%al
     testb $0x20,%al
-    jz 1b
-    movw $0x3F8,%dx
+    jnz 2f
+    decw %cx
+    jnz 1b
+2:  movw $0x3F8,%dx
     movb %ah,%al
     outb %al,%dx
     movb $SMP_TRAMP_CRUMB_REAL,SMP_TRAMP_CRUMB_OFF
@@ -43,10 +46,13 @@ smp_trampoline_prot32:
     movw %ax,%fs
     movb $0x50,%ah
     movl $0x3FD,%edx
+    movl $4096,%ecx
 1:  inb %dx,%al
     testb $0x20,%al
-    jz 1b
-    movl $0x3F8,%edx
+    jnz 2f
+    decl %ecx
+    jnz 1b
+2:  movl $0x3F8,%edx
     movb %ah,%al
     outb %al,%dx
     movb $SMP_TRAMP_CRUMB_PROT32,%fs:SMP_TRAMP_CRUMB_OFF
@@ -73,10 +79,13 @@ smp_trampoline_patch_longjump = . - 6
 smp_trampoline_longmode:
     movb $0x4C,%ah
     movl $0x3FD,%edx
+    movl $4096,%r12d
 1:  inb %dx,%al
     testb $0x20,%al
-    jz 1b
-    movl $0x3F8,%edx
+    jnz 2f
+    decl %r12d
+    jnz 1b
+2:  movl $0x3F8,%edx
     movb %ah,%al
     outb %al,%dx
     /* Derive the page base from RIP: no segment, GDT or MSR dependence.
@@ -93,10 +102,13 @@ smp_trampoline_longmode:
     /* G probe: dump the CR3 slot (BSP wrote the AP PML4). */
     movb $0x47,%ah
     movl $0x3FD,%edx
+    movl $4096,%r12d
 1:  inb %dx,%al
     testb $0x20,%al
-    jz 1b
-    movl $0x3F8,%edx
+    jnz 2f
+    decl %r12d
+    jnz 1b
+2:  movl $0x3F8,%edx
     movb %ah,%al
     outb %al,%dx
     movq SMP_TRAMP_DATA_CR3(%r10),%rcx
@@ -104,10 +116,13 @@ smp_trampoline_longmode:
     /* T probe: dump the entry slot, then jump to it. */
     movb $0x54,%ah
     movl $0x3FD,%edx
+    movl $4096,%r12d
 1:  inb %dx,%al
     testb $0x20,%al
-    jz 1b
-    movl $0x3F8,%edx
+    jnz 2f
+    decl %r12d
+    jnz 1b
+2:  movl $0x3F8,%edx
     movb %ah,%al
     outb %al,%dx
     movq SMP_TRAMP_DATA_ENTRY(%r10),%rcx
@@ -120,10 +135,13 @@ smp_trampoline_longmode:
      * wrong. Either way no silent reset goes undiagnosed. */
     movb $0x59,%ah
     movl $0x3FD,%edx
+    movl $4096,%r12d
 1:  inb %dx,%al
     testb $0x20,%al
-    jz 1b
-    movl $0x3F8,%edx
+    jnz 2f
+    decl %r12d
+    jnz 1b
+2:  movl $0x3F8,%edx
     movb %ah,%al
     outb %al,%dx
     movq (%rax),%rcx
@@ -132,7 +150,7 @@ smp_trampoline_longmode:
 halt_ap:
     hlt
     jmp halt_ap
-/* hex64: print RCX as 16 hex digits. Clobbers RAX/RCX/R11/BL/DX;
+/* hex64: print RCX as 16 hex digits. Clobbers RAX/RCX/R11/R12D/BL/DX;
  * preserves R10, RBX high bits and the stack. */
 hex64:
     movl $16,%r11d
@@ -146,10 +164,14 @@ hex64_loop:
     addb $0x07,%ah
 hex64_digit:
     movl $0x3FD,%edx
+    movl $4096,%r12d
 hex64_wait:
     inb %dx,%al
     testb $0x20,%al
-    jz hex64_wait
+    jnz hex64_done
+    decl %r12d
+    jnz hex64_wait
+hex64_done:
     movl $0x3F8,%edx
     movb %ah,%al
     outb %al,%dx
