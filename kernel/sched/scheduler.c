@@ -48,12 +48,12 @@ static void sti(void){__asm__ volatile("sti" ::: "memory");}
 
 static __attribute__((noreturn)) void task_returned(void){ tasks[current_index].state=TASK_DEAD; for(;;) scheduler_yield(); }
 static void boot_user_entry_marker(void){serial_write("BOOT: USER ENTRY READY\r\n");}
-static void trace_yield_begin(void){static unsigned n=0;if(n<2){kernel_log("DEBUG: scheduler_yield begin\r\n");n++;}}
-static void trace_flags(void){static unsigned n=0;if(n<2){kernel_log("DEBUG: flags read\r\nDEBUG: cli done\r\n");n++;}}
-static void trace_searching(void){static unsigned n=0;if(n<2){kernel_log("DEBUG: searching runnable task\r\n");n++;}}
-static void trace_old_next(uint32_t old,uint32_t next){static unsigned n=0;if(n<4){kernel_log("DEBUG: old=");kernel_log_dec(tasks[old].id);kernel_log(" next=");kernel_log_dec(tasks[next].id);kernel_log("\r\n");n++;}}
-static void trace_old_updated(uint32_t old){static unsigned n=0;if(n<4){kernel_log("DEBUG: old state updated\r\n");(void)old;n++;}}
-static void trace_activating(uint64_t pid){static unsigned n=0;if(n<4){kernel_log("DEBUG: activating next process\r\n");(void)pid;n++;}}
+static void trace_yield_begin(void){}
+static void trace_flags(void){}
+static void trace_searching(void){}
+static void trace_old_next(uint32_t old,uint32_t next){(void)old;(void)next;}
+static void trace_old_updated(uint32_t old){(void)old;}
+static void trace_activating(uint64_t pid){(void)pid;}
 /* First user task selected: full transition inputs in one bounded block. */
 static void trace_first_task(uint32_t idx){static unsigned n=0;if(n<1&&tasks[idx].process_pid){kernel_log("DEBUG: first task id=");kernel_log_dec(tasks[idx].id);kernel_log(" state=");kernel_log_dec(tasks[idx].state);kernel_log(" pid=");kernel_log_dec(tasks[idx].process_pid);kernel_log(" rsp=");kernel_log_hex(tasks[idx].rsp);kernel_log(" entry=");kernel_log_hex(tasks[idx].user_entry);kernel_log(" user_stack=");kernel_log_hex(tasks[idx].user_stack);kernel_log("\r\n");n++;}}
 static void trace_selected(uint64_t id,uint64_t pid){static unsigned n=0;if(n<4){kernel_log("DEBUG: scheduler selected task=");kernel_log_dec(id);kernel_log(" pid=");kernel_log_dec(pid);kernel_log("\r\n");n++;}}
