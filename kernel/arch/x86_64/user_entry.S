@@ -11,17 +11,9 @@ x86_enter_user:
        instruction can issue int 0x80.  current_pml4_phys is in the shared
        low identity mapping, so this store remains valid after the CR3 load. */
     movq %rdi,current_pml4_phys(%rip)
-    /* This marker is deliberately after the hardware CR3 write.  If it is
-       absent on a physical target, the new address space does not preserve
-       the executing kernel text/stack mapping despite the preflight walk. */
-    pushq %rdi
-    pushq %rsi
-    pushq %rdx
-    leaq .Lring3_trampoline_entered(%rip),%rdi
-    call kernel_log
-    popq %rdx
-    popq %rsi
-    popq %rdi
+    /* Do not call C code after loading the user CR3.  The first user entry
+       must remain stackless with respect to kernel globals and framebuffer
+       state on physical machines; only the iret frame is constructed here. */
     movw $0x23,%ax
     movw %ax,%ds
     movw %ax,%es
@@ -36,10 +28,6 @@ x86_enter_user:
     pushq $0x1b
     pushq %rsi
     iretq
-
-.section .rodata
-.Lring3_trampoline_entered:
-    .asciz "RING3: trampoline after CR3\r\n"
 
 .global x86_enter_user_return
 .type x86_enter_user_return,@function
