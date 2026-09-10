@@ -487,6 +487,11 @@ loadval=read_cr3_hw();
   kernel_log("DEBUG: SHIFT done\r\n");serial_drain();
   n++;}}
  load_cr3_raw(loadval);
+ /* Commit-window bisection (HW triage): the freeze sits between the
+  * SHIFT lines above and "CR3 load returned" below with no fault text.
+  * These three one-line markers use the identical, just-proven print
+  * path; the first missing marker names the killing instruction. */
+ {static unsigned n=0;if(n<2){kernel_log("DEBUG: C1 after-commit-mov\r\n");serial_drain();n++;}}
  /* Stackless post-switch probes (no calls, no memory, no stack except the
   * probe push itself): 'F' proves instruction fetch works on the new
   * tables; the push/pop proves RSP is writable; 'S' proves both. On a
@@ -524,9 +529,10 @@ loadval=read_cr3_hw();
   "cr3post_done2: movl $0x3F8,%%edx\n\t"
   "movb $0x53,%%al\n\t"
   "outb %%al,%%dx\n\t"
-  ::: "rax", "rcx", "rdx", "memory");
- }}
- vmm_track_pml4(loadval);cr3trace_push(2,(uint64_t)pid,loadval,read_cr3_hw());{static unsigned n=0;if(n<2){uint64_t hw=read_cr3_hw();kernel_log("DEBUG: SW#");kernel_log_dec(cr3_switch_seq);kernel_log(" CR3 load returned cur=");kernel_log_hex(hw);kernel_log(hw==loadval?" SW=SYNC\r\n":" SW=MISMATCH\r\n");kernel_log("DEBUG: CR3 switched\r\n");serial_drain();n++;}}}
+   ::: "rax", "rcx", "rdx", "memory");
+  }}
+ {static unsigned n=0;if(n<2){kernel_log("DEBUG: C2 after-fs-probes\r\n");serial_drain();n++;}}
+ vmm_track_pml4(loadval);cr3trace_push(2,(uint64_t)pid,loadval,read_cr3_hw());{static unsigned n=0;if(n<2){kernel_log("DEBUG: C3 after-track-trace\r\n");serial_drain();n++;}}{static unsigned n=0;if(n<2){uint64_t hw=read_cr3_hw();kernel_log("DEBUG: SW#");kernel_log_dec(cr3_switch_seq);kernel_log(" CR3 load returned cur=");kernel_log_hex(hw);kernel_log(hw==loadval?" SW=SYNC\r\n":" SW=MISMATCH\r\n");kernel_log("DEBUG: CR3 switched\r\n");serial_drain();n++;}}}
 #endif
 {static unsigned n=0;if(n<2){kernel_log("DEBUG: CR3 switched cur=");kernel_log_hex(read_cr3_hw());kernel_log("\r\n");serial_drain();n++;}}{static unsigned m=0;if(m<2){kernel_log("DEBUG: process_activate done\r\n");serial_drain();m++;}}return 0;}
 int process_set_state(pid_t pid,rix_process_state_t state){rix_process_t*p=process_lookup(pid);if(!p||state==RIX_PROC_UNUSED)return -1;rix_process_state_t old=p->state;p->state=state;if(state==RIX_PROC_RUNNING&&process_activate(pid)!=0){p->state=old;return -1;}return 0;}
