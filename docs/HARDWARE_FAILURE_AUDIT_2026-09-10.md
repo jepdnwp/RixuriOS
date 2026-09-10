@@ -410,3 +410,26 @@ RIXURI:SYSCALL_OK
 RIXURI: SHELL READY
 qemu ring3 milestone test: PASS
 ```
+
+
+## Fiziksel yüksek-topology bootloop düzeltmesi
+
+Alienware/Ryzen fiziksel sisteminde ACPI 16 CPU bildiriyor ancak Phase-B AP trampoline yalnızca 11 AP’yi ONLINE yapabiliyor ve kalan AP’ler C entry’ye ulaşmadan duruyordu. Bu, `SMP: cpus=16 online=11` sonrasında bootun ilerlememesine neden oluyordu.
+
+Fail-safe davranış eklendi:
+
+- 8’den fazla CPU bildirilen sistemlerde deneysel AP startup erteleniyor.
+- BSP-only boot devam ediyor.
+- Diğer CPU kayıtları `OFFLINE` işaretleniyor.
+- QEMU 16-vCPU profili artık kısmi AP sayısında takılmadan kernel ve userspace’e ulaşıyor.
+
+QEMU 16-vCPU doğrulaması:
+
+```text
+SMP: cpus=16 online=1 bsp_apic=0
+SMP: topology >8 CPUs; AP startup deferred, BSP-only boot
+SMP: online=1
+RIXURI:KERNEL_READY
+RIXURI:USER_ENTER
+RIXURI: SHELL READY
+```

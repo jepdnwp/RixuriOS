@@ -247,6 +247,17 @@ static uint64_t smp_find_trampoline_page(void) {
 int smp_start_aps(void) {
     if (!smp_map.count) return -1;
     if (smp_map.count < 2) return (int)smp_map.online;
+    /* The current Phase-B trampoline is validated for small topologies. On
+     * physical workstations with many firmware-reported CPUs, a failed AP
+     * can triple-fault before publishing ONLINE and make boot appear stuck
+     * after a partial count. Keep the BSP fail-safe until per-CPU startup is
+     * fully serialized; QEMU/small boards retain the SMP path. */
+    if (smp_map.count > 8) {
+        kernel_log("SMP: topology >8 CPUs; AP startup deferred, BSP-only boot\r\n");
+        for (size_t i = 0; i < smp_map.count; ++i)
+            if (!smp_map.cpu[i].is_bsp) smp_map.cpu[i].state = SMP_CPU_OFFLINE;
+        return (int)smp_map.online;
+    }
     /* The AP fetches code/stack/data through identity-mapped low memory
      * under the tables it will run on. Use the currently active PML4
      * (proven by the BSP itself) rather than assuming the kernel PML4

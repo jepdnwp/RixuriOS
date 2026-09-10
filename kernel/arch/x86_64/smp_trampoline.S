@@ -99,73 +99,20 @@ smp_trampoline_longmode:
     movw %ax,%ss
     /* RSP first: the hex printer below uses call/ret. */
     movq SMP_TRAMP_DATA_STACK(%r10),%rsp
-    /* Switch from the temporary trampoline GDT to the BSP's real GDT and
-       load the shared IDT before any C code can fault. */
-    lgdt SMP_TRAMP_DATA_GDTR(%r10)
-    pushq $SMP_TRAMP_SEL_CODE32
-    leaq 1f(%rip),%rax
-    pushq %rax
-    lretq
-1:
-    movw $SMP_TRAMP_SEL_DATA32,%ax
-    movw %ax,%ds
-    movw %ax,%es
-    movw %ax,%ss
-    lidt SMP_TRAMP_DATA_IDTR(%r10)
+    /* The trampoline GDT is already flat and valid in long mode. Do not load
+     * firmware/BSP descriptor snapshots here: a malformed or incompatible
+     * firmware GDT can fault before the AP publishes its state. APs keep IF
+     * clear and remain parked in ap_entry until per-CPU setup exists. */
     /* Publish ONLINE without entering C or relying on the AP's TSS. */
     movq SMP_TRAMP_DATA_ONLINE(%r10),%r14
     movl $3,(%r14)
     mfence
-    /* G probe: dump the CR3 slot (BSP wrote the AP PML4). */
-    movb $0x47,%ah
-    movl $0x3FD,%edx
-    movl $4096,%r12d
-1:  inb %dx,%al
-    testb $0x20,%al
-    jnz 2f
-    decl %r12d
-    jnz 1b
-2:  movl $0x3F8,%edx
-    movb %ah,%al
-    outb %al,%dx
-    movq SMP_TRAMP_DATA_CR3(%r10),%rcx
-    call hex64
-    /* T probe: dump the entry slot, then jump to it. */
-    movb $0x54,%ah
-    movl $0x3FD,%edx
-    movl $4096,%r12d
-1:  inb %dx,%al
-    testb $0x20,%al
-    jnz 2f
-    decl %r12d
-    jnz 1b
-2:  movl $0x3F8,%edx
-    movb %ah,%al
-    outb %al,%dx
-    movq SMP_TRAMP_DATA_ENTRY(%r10),%rcx
-    push %rcx
-    call hex64
-    pop %rax
-    /* Preserve the entry before AH is reused for the fetch marker. */
-    movq %rax,%r13
-    /* The entry pointer is preserved before the fetch marker. */
-    movb $0x59,%ah
-    movl $0x3FD,%edx
-    movl $4096,%r12d
-1:  inb %dx,%al
-    testb $0x20,%al
-    jnz 2f
-    decl %r12d
-    jnz 1b
-2:  movl $0x3F8,%edx
-    movb %ah,%al
-    outb %al,%dx
-    movq (%r13),%rcx
-    call hex64
-    cli
-halt_ap:
-    hlt
-    jmp halt_ap
+    /* The AP is now in the BSP's descriptor environment and has published
+     * ONLINE.  Jump directly to the C entry pointer.  Never dereference the
+     * function pointer as data: that old diagnostic probe caused a page fault
+     * on physical APs and left the BSP with a partial online count. */
+    movq SMP_TRAMP_DATA_ENTRY(%r10),%rax
+    jmp *%rax
 /* hex64: print RCX as 16 hex digits. Clobbers RAX/RCX/R11/R12D/BL/DX;
  * preserves R10, RBX high bits and the stack. */
 hex64:
