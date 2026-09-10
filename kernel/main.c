@@ -9,6 +9,7 @@
 #include "arch/x86_64/idt.h"
 #include "arch/x86_64/apic.h"
 #include "arch/x86_64/acpi.h"
+#include "arch/x86_64/smp.h"
 #include "arch/x86_64/ioapic.h"
 #include "arch/x86_64/pic.h"
 #include "arch/x86_64/pit.h"
@@ -243,6 +244,8 @@ void kernel_main(const rixuri_boot_info_t *boot){
   if(boot->rsdp){int acpi_rc=acpi_init(boot->rsdp);if(acpi_rc==0){klog_write("ACPI CPUs: ");klog_write_dec(acpi_cpu_count());klog_write(" IOAPICs: ");klog_write_dec(acpi_ioapic_count());klog_write("\r\n");}else{klog_write("ACPI: unavailable (");klog_write(acpi_error_string(acpi_rc));klog_write(")\r\n");}}
   klog_write("BOOT: ACPI done\r\n");
   if(lapic_init()!=0)panic("local APIC initialization failed");
+  if(smp_discover()!=0)klog_write("SMP: discovery unavailable, uniprocessor boot\r\n");
+  else{klog_write("SMP: cpus=");klog_write_dec(smp_cpu_count());klog_write(" online=");klog_write_dec(smp_online_count());klog_write(" bsp_apic=");klog_write_dec(smp_bsp_apic());klog_write("\r\n");}
   if(pci_init()!=0)panic("PCI initialization failed");
   klog_write("PCI: devices=");klog_write_dec(pci_device_count());klog_write("\r\n");
   pci_print_devices();
