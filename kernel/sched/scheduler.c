@@ -47,7 +47,7 @@ static void cli(void){__asm__ volatile("cli" ::: "memory");}
 static void sti(void){__asm__ volatile("sti" ::: "memory");}
 
 static __attribute__((noreturn)) void task_returned(void){ tasks[current_index].state=TASK_DEAD; for(;;) scheduler_yield(); }
-static void boot_user_entry_marker(uint64_t pid,uint64_t entry,uint64_t stack,uint64_t pml4){kernel_log("BOOT: user entry pid=");kernel_log_dec(pid);kernel_log(" entry=");kernel_log_hex(entry);kernel_log(" stack=");kernel_log_hex(stack);kernel_log(" pml4=");kernel_log_hex(pml4);kernel_log("\r\n");}
+static void boot_user_entry_marker(void){serial_write("BOOT: USER ENTRY READY\r\n");}
 static void trace_yield_begin(void){static unsigned n=0;if(n<2){kernel_log("DEBUG: scheduler_yield begin\r\n");n++;}}
 static void trace_flags(void){static unsigned n=0;if(n<2){kernel_log("DEBUG: flags read\r\nDEBUG: cli done\r\n");n++;}}
 static void trace_searching(void){static unsigned n=0;if(n<2){kernel_log("DEBUG: searching runnable task\r\n");n++;}}
@@ -73,7 +73,7 @@ static __attribute__((noreturn)) void task_bootstrap(void){
             task_returned();
         }
         serial_write("BOOT: userspace CR3 activation OK\r\n");
-        boot_user_entry_marker(t->process_pid,t->user_entry,t->user_stack,p->address_space.pml4_phys);
+        boot_user_entry_marker();
         {static unsigned n=0;if(n<2){kernel_log("DEBUG: entering ring3\r\n");kernel_log("RING3: iretq prepare rip=");kernel_log_hex(t->user_entry);kernel_log(" rsp=");kernel_log_hex(t->user_stack);kernel_log(" cr3=");kernel_log_hex(p->address_space.pml4_phys);kernel_log(" cs=0x1b ss=0x23\r\n");n++;}}
         /* Exactly one enter path runs: context restore for fork children,
          * fresh entry otherwise. Both end in iretq and never return. */
