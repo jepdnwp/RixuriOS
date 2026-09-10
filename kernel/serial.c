@@ -48,12 +48,12 @@ void serial_write_dec(uint64_t value){char buf[21];size_t i=sizeof(buf)-1;buf[i]
 int serial_read_byte(uint8_t *byte){if(!serial_has_com1||!byte||(inb(COM1+5)&0x01u)==0)return -1;*byte=inb(COM1);return 0;}
 void serial_drain(void){if(!serial_has_com1)return;for(int i=0;i<4096;i++)if(inb(COM1+5)&0x40u)return;}
 
-/* Boot/diagnostic logs must not repaint a slow physical GOP framebuffer one
- * character at a time. User-visible terminal output still uses serial_write;
- * kernel diagnostics stay on COM1 and cannot make a healthy machine look
- * frozen. */
-void kernel_log(const char *s){serial_debug_write(s);}
-void kernel_log_n(const char *s,size_t n){if(!s)return;for(size_t i=0;i<n;i++)if(serial_has_com1)serial_putc(s[i]);}
+/* Use the single console path for diagnostics too. Before GOP/TTY is ready
+ * this is COM1-only; after serial_console_enable() it is rendered on the
+ * framebuffer exactly once as well, which is required on machines without a
+ * physical COM1 connection. */
+void kernel_log(const char *s){serial_write(s);}
+void kernel_log_n(const char *s,size_t n){serial_write_n(s,n);}
 void kernel_log_hex(uint64_t v){char buf[20];static const char d[]="0123456789abcdef";buf[0]='0';buf[1]='x';for(int i=2;i<18;i++)buf[i]=d[(v>>(60-((i-2)*4)))&0xFULL];buf[18]=0;kernel_log(buf);}
 void kernel_log_dec(uint64_t v){char buf[21];size_t i=sizeof(buf)-1;buf[i]=0;if(v==0){kernel_log("0");return;}while(v){buf[--i]=(char)('0'+v%10ULL);v/=10ULL;}kernel_log(&buf[i]);}
 void panic(const char *reason){kernel_log("RixuriOS PANIC: ");kernel_log(reason?reason:"unknown");kernel_log("\r\n");for(;;)__asm__ volatile("cli; hlt");}
