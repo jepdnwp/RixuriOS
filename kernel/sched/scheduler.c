@@ -63,14 +63,16 @@ static void trace_resumed(void){static unsigned n=0;if(n<4){kernel_log("DEBUG: r
 static __attribute__((noreturn)) void task_bootstrap(void){
     rix_task_t *t=&tasks[current_index];
     if(t->process_pid){
+        serial_write("BOOT: userspace bootstrap selected\r\n");
         {static unsigned n=0;if(n<2){kernel_log("DEBUG: userspace bootstrap begin pid=");kernel_log_dec(t->process_pid);kernel_log("\r\n");n++;}}
         rix_process_t *p=process_lookup(t->process_pid);
         if(!p){kernel_log("DEBUG: bootstrap process lookup FAILED\r\n");task_returned();}
-        if(process_activate_user_entry(t->process_pid)!=0){kernel_log("DEBUG: bootstrap process_activate FAILED\r\n");task_returned();}
+        if(process_activate_user_entry(t->process_pid)!=0){serial_write("BOOT: userspace CR3 activation FAILED\r\n");kernel_log("DEBUG: bootstrap process_activate FAILED\r\n");task_returned();}
         if(process_validate_user_entry(t->process_pid,t->user_entry,t->user_stack)!=0){
             kernel_log("DEBUG: bootstrap user entry validation FAILED\r\n");
             task_returned();
         }
+        serial_write("BOOT: userspace CR3 activation OK\r\n");
         boot_user_entry_marker(t->process_pid,t->user_entry,t->user_stack,p->address_space.pml4_phys);
         {static unsigned n=0;if(n<2){kernel_log("DEBUG: entering ring3\r\n");kernel_log("RING3: iretq prepare rip=");kernel_log_hex(t->user_entry);kernel_log(" rsp=");kernel_log_hex(t->user_stack);kernel_log(" cr3=");kernel_log_hex(p->address_space.pml4_phys);kernel_log(" cs=0x1b ss=0x23\r\n");n++;}}
         /* Exactly one enter path runs: context restore for fork children,
@@ -176,6 +178,8 @@ __attribute__((noreturn)) void scheduler_exit_current(void){
  * with this set, the switch/task-stack path is implicated. */
 #define RIX_DEBUG_NO_CTX_SWITCH 0
 void scheduler_yield(void){
+    static unsigned boot_marker;
+    if (boot_marker++ < 2) serial_write("BOOT: scheduler yield\r\n");
     uint64_t flags=read_rflags();
     trace_flags();
     cli();
