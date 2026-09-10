@@ -7,7 +7,7 @@
 /* UEFI may place the memory map or GOP framebuffer above 128 GiB on
  * machines with large/high-address physical memory.  Keep the early
  * identity map wide enough to access those buffers while switching CR3. */
-#define IDENTITY_PML4_COUNT 4ULL
+#define IDENTITY_PML4_COUNT 2ULL
 #define IDENTITY_PDPT_COUNT (IDENTITY_PML4_COUNT * TABLE_ENTRIES)
 #define PAGE_MASK 0x000FFFFFFFFFF000ULL
 #define PTE_PS (1ULL<<7)
