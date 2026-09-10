@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
+static_assert(sizeof(uint32_t) == 4, "uint32_t width");
 
 static unsigned char test_heap[128u * 1024u];
 static size_t test_break;
