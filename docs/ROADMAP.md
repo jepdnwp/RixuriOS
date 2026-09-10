@@ -1,1450 +1,899 @@
-# RixuriOS Master Development Roadmap — v7
+# RixuriOS Master Development Roadmap — v8
 
 **Architecture:** x86_64 / AMD64 only  
 **Kernel:** freestanding C11/C17 + minimal x86_64 assembly  
 **Userspace:** Unix-like, musl/POSIX-oriented, dynamically linked  
-**Product:** **single-user desktop PC operating system**  
-**Operating target:** real AMD/Intel x86_64 desktop PCs first; QEMU is a development and regression platform, never a substitute for physical hardware  
-**Product principle:** terminal-first, hardware-real, recovery-first  
+**Product:** single-user desktop PC operating system  
+**Primary software goal:** a single owner can take an open-source project from GitHub, resolve its dependency graph recursively, adapt/port each component to the RixuriOS API/ABI, build and install the complete result.  
 **GUI:** **PHASE 100 ONLY — absolutely last**
 
-> This is the single authoritative RixuriOS roadmap. All roadmap work belongs in this file. A phase is an engineering gate, not a wishlist checkbox. The roadmap is intentionally optimized for one real human using one desktop PC, rather than for enterprise multi-user, server, cloud, cluster or laptop features.
+> This is the single authoritative roadmap. RixuriOS is optimized for one owner using one x86_64 desktop PC. The software ecosystem is not based on manually porting every application into a permanent hand-maintained package list. Its long-term goal is a recursive source-to-native pipeline: **GitHub repository → project analysis → dependency graph → recursive dependency porting → RixuriOS API adaptation → build → test → package → install**.
 
 ---
 
-## 1. Product definition
+# 1. PRODUCT DEFINITION
 
-RixuriOS is a technically coherent, reliable, recoverable **single-user x86_64 desktop PC OS**. The primary success criterion is that one owner can boot it on supported physical hardware, log into the machine, use a terminal, manage files and processes, use storage and networking, run real dynamically linked software, recover from failures, update the system and eventually use a graphical desktop.
+RixuriOS is a single-user, terminal-first, hardware-real, recovery-first x86_64 desktop OS. The owner should eventually be able to provide a GitHub repository and have RixuriOS determine what is needed to build it, obtain its source dependencies, adapt incompatible APIs, build dependencies before dependents, package the result and install it.
 
-The system still has kernel-level credentials, ownership and permission machinery because those boundaries are useful for correctness and security. However, RixuriOS does **not** optimize for multiple independent human accounts, enterprise directory services, multi-seat desktops, server tenancy, containers, cluster orchestration or cloud infrastructure.
+The kernel remains a real freestanding kernel. The automatic software-porting system lives in userspace/build infrastructure and must never weaken kernel/user security boundaries.
 
-### Explicitly out of primary scope
+### Explicitly not primary scope
 
-- Multiple simultaneous human desktop sessions.
-- Enterprise identity systems such as LDAP/Active Directory.
-- Multi-seat graphical login infrastructure.
-- Server clustering and distributed consensus.
-- Containers/VM orchestration.
-- Laptop-only battery/lid UX and laptop power-profile management.
-- Mobile-phone hardware support.
+- Multi-user enterprise administration.
+- LDAP/Active Directory.
+- Multi-seat desktops.
+- Server/cluster/cloud orchestration.
+- Laptop battery/lid/power-profile UX.
 - Non-x86_64 architectures.
-- A Linux compatibility layer as a product requirement.
+- A Linux binary-compatibility layer as a product requirement.
+- A GUI before Phase 100.
 
-These may be researched later, but they must never delay the core single-user desktop OS.
-
-### Desktop-PC platform policy
-
-ACPI is used for firmware discovery, MADT/interrupt routing, MCFG/PCIe discovery, timers, reboot/poweroff, thermal safety and normal desktop device initialization. Suspend/resume is optional and only justified by a concrete supported desktop target.
-
-### GUI policy
-
-Phases before 100 may implement framebuffer, display, GPU, DRM-like abstractions, acceleration preparation and graphics diagnostics. They may **not** be used to build the actual desktop product. No graphical shell, desktop environment, graphical settings application, display manager or GUI-first workflow is considered complete before Phase 100.
+Unix UID/GID and permission primitives may still exist because software and filesystem correctness benefit from them; the product remains centered on one human owner.
 
 ---
 
-# 2. Non-negotiable engineering rules
+# 2. NON-NEGOTIABLE RULES
 
 1. x86_64 only.
-2. Kernel remains freestanding; it never links against glibc, musl or POSIX.
-3. Userspace consumes a documented RixuriOS syscall ABI.
-4. Every subsystem documents ownership, lifetime, locking, execution context and error semantics.
-5. Detection is not driver completion.
-6. QEMU evidence and physical-hardware evidence are separate.
-7. No fake hardware, fake packets, fake disk data or synthetic PASS records.
-8. `PASS` requires reproducible evidence.
-9. Unknown/corrupt media is rejected safely and is never silently formatted.
-10. Destructive tests use disposable targets and explicit confirmation.
-11. Positive, negative, boundary, timeout and recovery tests are required according to risk.
-12. Security is reviewed at privilege, parser, DMA, filesystem, IPC and device boundaries.
-13. Every historical failure becomes a regression test.
-14. Performance cannot hide correctness defects.
-15. Diagnostics, documentation and reproducibility are implementation work.
-16. `SKIP`, `ENOSYS`, `NOT TESTED`, `DEGRADED`, `BLOCKED`, `FAIL` and `UNSUPPORTED` are explicit states; none means COMPLETE.
-17. A demo implementation can never be promoted to PASS without replacing it with the real path.
-18. ABI changes require an impact review and compatibility record.
-19. Hardware support is per-device/per-platform and evidence-backed.
-20. GUI cannot consume capacity while pre-GUI release gates are open.
-21. One-person product decisions must favor simplicity, recoverability and debuggability over unnecessary generality.
-22. A feature is complete only when its failure behavior is at least as deliberate as its success path.
-23. Reboots, power loss, device removal and malformed input are first-class test cases.
-24. No hidden Linux-specific behavior may be required by a core RixuriOS userspace program.
-25. The owner must always have a documented recovery path from a broken userspace or failed update.
+2. Kernel is freestanding and never links against glibc/musl/POSIX.
+3. Userspace uses a documented RixuriOS syscall ABI.
+4. Detection is never counted as implementation.
+5. QEMU and physical hardware evidence are separate.
+6. No fake hardware, packets, disk results or synthetic PASS records.
+7. PASS requires reproducible evidence.
+8. Unknown/corrupt media is never silently formatted.
+9. Destructive operations require explicit confirmation.
+10. Historical failures become permanent regression tests.
+11. Ownership, lifetime, locking, execution context and error semantics are documented.
+12. Security is reviewed at kernel, parser, filesystem, IPC, DMA and build boundaries.
+13. A failed dependency must not be hidden by pretending it is compatible.
+14. A source project is not considered ported until its actual build/test path works on RixuriOS.
+15. Dependency resolution is recursive and cycle-aware.
+16. Dependency versions must be recorded; builds must be reproducible where practical.
+17. Source licenses and redistribution obligations must be preserved.
+18. Untrusted source/build scripts are never executed with unrestricted system privileges.
+19. GUI work cannot consume capacity before the pre-GUI gate.
+20. One-owner simplicity is preferred over unnecessary enterprise complexity.
 
 ---
 
-# 3. Universal phase workflow
+# 3. UNIVERSAL ENGINEERING PIPELINE
 
 `SPEC → ABI/DATA MODEL → DESIGN → IMPLEMENT → BUILD → UNIT → NEGATIVE → QEMU → INTEGRATION → HARDWARE → REGRESSION → SECURITY → PERFORMANCE → DOCUMENT → CHECKPOINT`
 
-Every phase records: changed files, ABI changes, data formats, ownership rules, locking/context rules, error codes, timeout rules, recovery behavior, hardware assumptions, test commands, observations, evidence locations and unresolved limitations.
+For software ports, use the additional pipeline:
 
-## Checkpoint vocabulary
+`GITHUB SOURCE → SOURCE AUDIT → BUILD-SYSTEM DETECTION → DEPENDENCY EXTRACTION → GRAPH SOLVE → PORT PLAN → API TRANSLATION → DEPENDENCY BUILD → PROJECT BUILD → TEST → PACKAGE → INSTALL → ROLLBACK`
 
-`CP0 SPEC` · `CP1 BUILD` · `CP2 UNIT` · `CP3 BOOT` · `CP4 INTEGRATION` · `CP5 HARDWARE` · `CP6 REGRESSION` · `CP7 SECURITY` · `CP8 PERFORMANCE` · `CP9 DOCS` · `CP10 RELEASE`
+Every port records source commit/tag, license, architecture, detected build system, direct dependencies, transitive dependencies, patches, API translations, environment variables, build commands, tests, produced artifacts and unresolved incompatibilities.
 
 ---
 
 # FOUNDATION — PHASES 00–09
 
-## PHASE 00 — Governance, Source of Truth and Reproducible Build
-
-- Canonical source tree and generated-file policy.
-- Host/cross-toolchain separation and version pinning.
-- Deterministic compiler/linker flags and image generation.
-- Debug/release profiles, symbols, maps and provenance.
-- Clean-host and offline build procedures.
-- CI build, unit-test and artifact retention policy.
-- ABI/versioning policy, architecture decision records and changelog.
-- Checkpoint ledger, hardware inventory and known-failure register.
-- Release-blocker classification and reproducible evidence format.
-
-**Gate:** a clean environment can reproduce a traceable RixuriOS image.
+## PHASE 00 — Governance and Reproducible Build
+- Canonical tree and generated-file policy.
+- Pinned host/cross toolchains.
+- Deterministic compiler/linker/image generation.
+- Debug/release profiles and provenance.
+- CI, artifact retention and checkpoint ledger.
+- ABI/versioning and release-blocker policy.
 
 ## PHASE 01 — UEFI Boot and Firmware Handoff
+- EFI structures and calling conventions.
+- ELF64 kernel loading.
+- PT_LOAD allocation/copy/zero-fill.
+- ACPI RSDP and GOP discovery.
+- Memory map and ExitBootServices retry.
+- Boot diagnostics and firmware quirks.
 
-- EFI table/function-pointer layouts and calling conventions.
-- ELF64 validation with overflow, alignment and canonical-address checks.
-- PT_LOAD allocation/copy/zero-fill and kernel entry contract.
-- ACPI RSDP, GOP and firmware memory-map discovery.
-- `ExitBootServices()` retry handling.
-- Boot handoff versioning and firmware quirk reporting.
-- Early crash diagnostics that preserve the last useful boot state.
+## PHASE 02 — CPU, PMM, VMM and Kernel Memory
+- CPUID/MSR and feature policy.
+- PMM frame ownership.
+- Paging and permission transitions.
+- DMA-capable allocation.
+- Page-fault handling.
+- Real heap allocation/free and reclamation.
+- Leak/corruption diagnostics.
 
-**Gate:** real UEFI boot reaches the kernel with validated firmware state.
+**Gate:** kernel memory is genuinely reclaimable.
 
-## PHASE 02 — CPU Bring-up, PMM, VMM and Kernel Memory
+## PHASE 03 — GDT/TSS/IDT/Exceptions/Interrupts
+- GDT/TSS/IST.
+- Stable trap-frame ABI.
+- Exceptions 0–31.
+- IRQ entry/EOI/nesting.
+- PIC compatibility and spurious IRQs.
+- Nested-fault and malformed-return tests.
 
-- CPUID/MSR wrappers and CPU feature policy.
-- NX/WP/SMEP/SMAP capability detection and staged enforcement.
-- Physical memory descriptors, reserved ranges and frame ownership.
-- DMA-capable allocation, alignment and reference accounting.
-- 4/5-level paging policy and permission transitions.
-- Page-fault diagnostics and safe user-fault termination.
-- Real kernel heap allocation/free, coalescing/slabs and leak diagnostics.
-- Guard/debug allocation modes and corruption detection.
+## PHASE 04 — ACPI/LAPIC/IOAPIC/Timers/SMP
+- ACPI table validation.
+- MADT and interrupt overrides.
+- LAPIC/x2APIC.
+- AP startup and per-CPU state.
+- IPI routing.
+- APIC timer/HPET/PIT.
+- TLB shootdown.
 
-**Gate:** kernel memory can be allocated and genuinely reclaimed.
+**Gate:** multiple CPUs execute safely.
 
-## PHASE 03 — GDT, TSS, IDT, Exceptions and Interrupt Entry
+## PHASE 05 — Synchronization and Kernel Workers
+- Spinlocks, IRQ-save locks, mutexes, RW locks, semaphores.
+- Wait queues.
+- Reference counting.
+- Lock ordering/deadlock diagnostics.
+- Kernel workers and cancellation.
 
-- GDT kernel/user segments and TSS.
-- IST stacks for critical exceptions.
-- Stable trap-frame ABI and register preservation.
-- Exceptions 0–31 with actionable diagnostics.
-- IRQ entry/return and nesting rules.
-- EOI ownership and spurious IRQ handling.
-- Interrupt-safe logging and fault-to-process policy.
-- Malformed return-state and nested-fault tests.
+## PHASE 06 — Processes, Threads and Preemptive Scheduler
+- PID/TID lifecycle.
+- Process/thread objects.
+- Kernel threads.
+- User-thread contexts and stacks.
+- Timer preemption.
+- Per-CPU queues.
+- SMP balancing/affinity.
+- Scheduler accounting.
 
-## PHASE 04 — ACPI, LAPIC, IOAPIC, Timers and Initial SMP
-
-- RSDP/XSDT/RSDT checksum and table validation.
-- MADT CPU/LAPIC/IOAPIC entries and interrupt overrides.
-- IOAPIC polarity/trigger configuration.
-- MSI/MSI-X groundwork.
-- LAPIC/x2APIC policy and IPI routing.
-- AP trampoline and per-CPU state.
-- APIC timer, HPET/PIT compatibility and monotonic time.
-- TLB shootdown protocol and cross-CPU rendezvous.
-
-**Gate:** at least two real CPU execution contexts operate safely without single-CPU assumptions.
-
-## PHASE 05 — Synchronization, Wait Queues and Workqueues
-
-- Spinlocks and IRQ-save locks.
-- Mutexes, RW locks and semaphores.
-- Wait queues and sleep/wakeup ownership.
-- Atomic references and object lifetime rules.
-- Lock ordering and deadlock diagnostics.
-- Sleepable/non-sleepable context annotations.
-- Kernel workers and deferred interrupt work.
-- Cancellation, shutdown and worker-drain semantics.
-- Contention tracing and stress tests.
-
-## PHASE 06 — Process, Thread and Preemptive Scheduler Core
-
-- PID/TID allocation and reuse protection.
-- Process objects, parent/child state and zombies.
-- Kernel threads and user-thread CPU contexts.
-- Kernel stacks and thread-local architecture.
-- Timer-driven preemption and per-CPU run queues.
-- Priority/fairness, sleep/wakeup and idle threads.
-- SMP load balancing and affinity.
-- Starvation detection and scheduler accounting.
-- Context-switch and latency instrumentation.
-
-**Gate:** a real userspace workload can be preempted, sleep, wake and safely run on multiple CPUs.
-
-## PHASE 07 — Syscall ABI and User/Kernel Boundary
-
+## PHASE 07 — Syscall ABI and Uaccess
 - Stable syscall numbering/versioning.
-- Syscall entry/return and kernel-stack transition.
-- Canonical-address and range validation.
-- Fault-safe copy-in/copy-out.
-- FD/object validation and reference acquisition.
-- Errno mapping and restart policy.
-- Syscall tracing and ABI conformance tests.
-- Malformed pointer, oversized argument and race-oriented tests.
+- Entry/return ABI.
+- Canonical/range checks.
+- Fault-safe copyin/copyout.
+- FD/object validation.
+- errno/restart policy.
+- ABI fuzzing.
 
-## PHASE 08 — User Address Spaces and ELF64 Execution
-
-- Independent user page tables.
-- Kernel/user split and permission enforcement.
-- ELF header/program-header validation.
-- PT_LOAD mapping and BSS zeroing.
-- User stack, guard page and ABI alignment.
-- `argc/argv/envp/auxv` construction.
-- PIE/non-PIE policy and ASLR architecture.
-- `exec` replacement and complete address-space teardown.
+## PHASE 08 — User VM and ELF64 Execution
+- Independent address spaces.
+- Kernel/user permissions.
+- ELF validation and PT_LOAD.
+- BSS and aligned user stack.
+- argc/argv/envp/auxv.
+- PIE/non-PIE.
+- exec replacement and teardown.
 - User page-fault isolation.
 
-**Gate:** a genuine ring-3 process runs independently of the kernel address space.
+**Gate:** genuine ring-3 programs run independently.
 
-## PHASE 09 — IPC, Pipes, Signals, Events and Shared Memory
-
-- Anonymous pipes and FIFOs.
-- Event/wait objects and pollable IPC.
-- Shared memory with explicit permissions/lifetime.
-- Process groups and signal state.
-- Signal delivery and return-frame design.
-- Unix-domain socket architecture and FD passing.
-- IPC reference counting and process-death cleanup.
-- Cancellation and partial read/write semantics.
+## PHASE 09 — IPC and Process Communication
+- Pipes/FIFOs.
+- Events/wait objects.
+- Shared memory.
+- Process groups.
+- Signals architecture.
+- Unix-domain sockets and FD passing.
+- Process-death cleanup.
 
 ---
 
 # HARDWARE CORE — PHASES 10–21
 
-## PHASE 10 — PCIe, MCFG, MMIO, DMA and Device Model
-
-- PCI/PCIe configuration and ECAM/MCFG discovery.
-- Capability parsing with loop/length validation.
-- BAR sizing, MMIO mapping and resource ownership.
-- Bus-master/DMA mapping API and cache coherency.
-- MSI/MSI-X allocation and ownership.
-- Bus/device/driver object model.
-- Probe/remove/reset lifecycle.
-- Bridge traversal and multifunction devices.
-- Hotplug groundwork.
+## PHASE 10 — PCIe, MCFG, MMIO and DMA
+- PCI/ECAM discovery.
+- Capability parsing.
+- BAR/MMIO ownership.
+- DMA mapping/cache rules.
+- MSI/MSI-X.
+- Device/driver lifecycle.
+- Bridge/multifunction handling.
 - IOMMU abstraction.
 
-## PHASE 11 — Storage Core and Block Layer
+## PHASE 11 — Storage Core
+- Block-device registry.
+- BIO/request/SG.
+- Queue ordering.
+- Flush/FUA/barriers.
+- Timeout/retry/reset.
+- Cache/writeback.
+- Storage error states.
 
-- Stable block-device identity.
-- BIO/request objects and scatter-gather.
-- Queue depth and ordering.
-- Read/write/flush/FUA/barrier semantics.
-- Completion/cancellation ownership.
-- Timeout, retry and reset policy.
-- Page/buffer cache and dirty/writeback lifecycle.
-- Direct-I/O coherence.
-- Storage error classes and recovery states.
-
-## PHASE 12 — Real NVMe Driver
-
-- Controller reset/enable and capability validation.
-- Admin queues and Identify Controller/Namespace.
-- I/O queues and phase tags.
-- PRP/SGL DMA construction.
-- Polling and interrupt completion.
-- Real read/write/flush.
-- Namespace lifecycle.
-- Timeout, abort and controller-reset recovery.
-- Block-layer error translation.
-- QEMU plus physical NVMe evidence.
-
-**Detection, BAR mapping or Identify alone never closes this phase.**
+## PHASE 12 — NVMe
+- Controller reset/enable.
+- Admin and I/O queues.
+- Identify.
+- PRP/SGL.
+- Polling and interrupts.
+- Read/write/flush.
+- Timeout/reset recovery.
+- Physical-device evidence.
 
 ## PHASE 13 — VFS and RixFS
+- Vnode/inode/dentry/superblock/file model.
+- Mount/path resolution.
+- Directory/file operations.
+- Permissions.
+- Links and safe traversal.
+- RixFS on-disk format.
+- Journal/checksum/orphan recovery.
+- fsck/emergency mount.
 
-- Vnode/inode/dentry/superblock/file abstractions.
-- Mount tree and path resolution.
-- Directory lookup/create/unlink/mkdir/rmdir.
-- Open-file-description and FD semantics.
-- Permissions and credential checks.
-- Symlink/hard-link design and safe traversal.
-- RixFS superblock, inode, extent, directory and free-space formats.
-- Versioned on-disk specification.
-- Journal/checksum/orphan recovery where required.
-- fsck and read-only emergency mount.
+## PHASE 14 — Time/RTC/Desktop ACPI
+- Monotonic/realtime clocks.
+- RTC/CMOS.
+- Timers/sleep.
+- Desktop ACPI.
+- Reboot/poweroff/reset.
+- Idle/thermal safety.
 
-## PHASE 14 — Time, RTC and Desktop-PC Platform Management
+## PHASE 15 — USB/xHCI
+- xHCI register model.
+- Rings/TRBs/cycles.
+- Device contexts.
+- Port reset/address/configure.
+- Control/bulk/interrupt transfers.
+- MSI/MSI-X/DMA.
+- Timeout/reset/hotplug recovery.
 
-- Monotonic and realtime clocks.
-- RTC/CMOS abstraction.
-- Timer/sleep APIs and timeout monotonicity.
-- Desktop-relevant ACPI operations.
-- Reboot/poweroff/reset fallback paths.
-- CPU idle states.
-- Thermal-safety hooks.
-- Suspend/resume only if a supported desktop target actually needs it.
+## PHASE 16 — USB HID/Input
+- HID descriptors/reports.
+- Keyboard/mouse.
+- Interrupt-IN.
+- Repeat/rollover.
+- Input event ABI.
+- Hotplug cleanup.
+- Physical HID evidence.
 
-**Excluded:** battery UX, lid UX and laptop-specific power profiles.
+## PHASE 17 — TTY/PTY/Console
+- TTY/PTY.
+- Canonical/raw modes.
+- UTF-8/ANSI/VT.
+- Queues/flow control.
+- Controlling terminal.
+- Parser fuzzing.
 
-## PHASE 15 — USB/xHCI Core
+## PHASE 18 — Shell and Job Control
+- Parser/quoting/escaping.
+- Expansion/globbing.
+- Pipelines/redirections.
+- Environment.
+- Jobs/process groups.
+- Signals.
+- Builtins/substitution.
 
-- Capability/operational/runtime register model.
-- DCBAA and scratchpads.
-- Command/transfer/event rings.
-- TRB cycle ownership.
-- Slot/device/input-context lifecycle.
-- Port reset, Address Device and Configure Endpoint.
-- Control/bulk/interrupt transfer engines.
-- Interrupters/MSI/MSI-X and DMA ordering.
-- Timeout/controller reset/recovery.
-- Hotplug/disconnect races.
-- Historical xHCI regressions remain permanent tests.
+## PHASE 19 — Base Unix Userland
+- Filesystem utilities.
+- Text utilities.
+- Process tools.
+- Storage tools.
+- Hardware/network diagnostics.
+- Correct exit/error behavior.
 
-## PHASE 16 — USB HID, Keyboard, Mouse and Input
-
-- HID descriptor/report parsing with bounds checks.
-- Boot/report protocol support.
-- Interrupt-IN lifecycle.
-- Keyboard modifiers, press/release/repeat and rollover.
-- Mouse buttons, motion and wheel.
-- Timestamped input event ABI.
-- Disconnect cleanup and hotplug.
-- xHCI → USB → HID → input → TTY integration.
-
-**Synthetic input cannot close the physical HID gate.**
-
-## PHASE 17 — TTY, PTY, Console and Terminal Engine
-
-- TTY/PTY master/slave objects.
-- Canonical/raw modes and termios-like controls.
-- Input/output queues and flow control.
-- UTF-8 and ANSI/VT parser.
-- Terminal dimensions and resize events.
-- Controlling terminal/session/process-group integration.
-- Parser fuzzing and malformed escape handling.
-- Console recovery when userspace terminal components fail.
-
-## PHASE 18 — Shell, Job Control and Command Execution
-
-- Parser, quoting and escaping.
-- Parameter/environment expansion.
-- Globbing.
-- Pipelines and redirections.
-- Safe environment inheritance.
-- Command lookup.
-- Foreground/background jobs.
-- Process groups and signal-aware job control.
-- Command substitution and builtins.
-- Exit-status propagation.
-
-**Gate:** the owner can genuinely operate the OS from its public terminal interface.
-
-## PHASE 19 — Unix Utilities and Base Userland
-
-- Filesystem utilities: `cat`, `cp`, `mv`, `rm`, `mkdir`, `rmdir`, `ls`, `find`.
-- Text tools: `grep`, `sort`, `head`, `tail`, `printf`, `echo`.
-- Process tools: `ps`, `kill`, `env`, `pwd`.
-- Storage tools: `mount`, `umount`, `df`, `du`.
-- Hardware and kernel diagnostics.
-- Network inspection/configuration tools.
-- Correct stderr, exit status and signal behavior.
-- No Linux-private dependency hidden inside core utilities.
-
-## PHASE 20 — Single-User Identity, Credentials and Local Security
-
-- One primary human user model.
-- UID/GID primitives retained for Unix compatibility and file ownership.
-- `root`/kernel-privileged execution boundary.
-- Credential inheritance and replacement.
-- File permission checks.
-- Optional ACL architecture only where justified.
-- Login/session ownership and controlling terminal.
-- Credential lifetime/revocation.
+## PHASE 20 — Single-User Credentials and Security
+- Primary local user.
+- UID/GID primitives.
+- Privileged kernel boundary.
+- File permissions.
+- Session ownership.
 - Audit/security events.
-- W^X, ASLR and stack hardening integration.
+- W^X/ASLR/stack-hardening integration.
 
-**Product simplification:** do not build enterprise account-management machinery merely because Unix has it.
-
-## PHASE 21 — Networking Stack and Real Device Integration
-
-- Ethernet interface abstraction.
-- ARP, IPv4, ICMP and UDP.
-- TCP ordering, ACKs, retransmission, windows and teardown.
-- Socket API with blocking/nonblocking semantics.
-- Routing-table architecture.
-- DNS resolver.
-- E1000/QEMU reference driver.
-- RTL8125 RX/TX, DMA rings, interrupt path and reset/recovery.
-- Physical networking evidence separated from loopback/guest evidence.
+## PHASE 21 — Network Stack and Real NICs
+- Ethernet/ARP/IPv4/ICMP/UDP.
+- TCP ordering/ACK/retransmission/window.
+- Socket blocking/nonblocking.
+- Routing.
+- DNS.
+- E1000/QEMU.
+- RTL8125 physical path and recovery.
 
 ---
 
-# USERSPACE CORE — PHASES 22–35
+# USERSPACE ABI — PHASES 22–35
 
-## PHASE 22 — libc, POSIX Surface and Native C Runtime
+## PHASE 22 — Native libc Surface
+- Headers/types.
+- errno.
+- strings/memory/stdio.
+- allocation.
+- filesystem/process/time wrappers.
+- sockets/signals.
+- compatibility matrix.
 
-- C headers and ABI types.
-- errno and error propagation.
-- strings/memory/stdio/formatting.
-- malloc/calloc/realloc/free wrappers.
-- Environment handling.
-- Directory/time/process/filesystem wrappers.
-- Socket and signal wrappers.
-- pthread API preparation.
-- `getopt`, `sysconf`, `getpagesize` and selected useful APIs.
-- Honest compatibility matrix.
-
-**Gate:** static C/POSIX userspace surface is real and documented.
-
-## PHASE 23 — Dynamic ELF Loader, Shared Libraries and TLS
-
-- PT_INTERP/PT_DYNAMIC validation.
-- DT_NEEDED/SONAME dependency graph.
-- REL/RELA relocations.
-- Symbol tables and hash tables.
+## PHASE 23 — Dynamic ELF/Shared Libraries/TLS
+- PT_INTERP/PT_DYNAMIC.
+- DT_NEEDED/SONAME.
+- REL/RELA.
 - GOT/PLT.
-- PIE and secure library search paths.
-- Constructors/destructors.
-- `dlopen`, `dlsym`, `dlclose`, `dlerror`.
-- PT_TLS and `%fs` thread pointer.
-- Static/dynamic TLS models.
-- Auxiliary-vector completeness.
-- Malformed ELF/shared-object fuzz corpus.
+- symbol lookup.
+- dlopen/dlsym/dlclose.
+- PT_TLS and `%fs`.
+- TLS models.
 
-**Gate:** a real dynamically linked program runs without a test-only loader.
+**Gate:** real dynamically linked programs work.
 
-## PHASE 24 — Virtual Memory Mapping and mmap Family
-
-- `mmap`/`munmap`/`mprotect`/`msync` policy.
-- User virtual-address allocator.
-- Anonymous mappings.
-- File-backed mappings.
+## PHASE 24 — mmap and User VA Manager
+- mmap/munmap/mprotect/msync.
+- Anonymous/file mappings.
+- Mapping allocator.
 - Guard regions.
-- Mapping overlap and unmap splitting.
-- Page-fault-driven population.
-- Copy-on-write design and reference accounting.
-- OOM behavior and deterministic failure.
-- Mapping exhaustion tests.
+- COW/reference accounting.
+- OOM behavior.
 
-## PHASE 25 — Threads, Futexes and Thread Lifecycle
+## PHASE 25 — Threads/Futex/pthreads
+- Thread creation.
+- User stacks.
+- TLS lifecycle.
+- Futex wait/wake/timeout.
+- Mutex/condition variables.
+- Join/detach.
+- Abnormal cleanup.
 
-- `clone`/thread creation model as required by the native ABI.
-- Kernel thread objects.
-- User stack creation and cleanup.
-- TLS initialization and `%fs` ownership.
-- Futex wait/wake and timeout semantics.
-- Mutex/condition-variable primitives.
-- Thread exit/join/detach.
-- Robust cleanup after abnormal termination.
-- Race and contention tests.
-
-**Gate:** a real multithreaded userspace program runs correctly on SMP.
-
-## PHASE 26 — Signals and Asynchronous Process Control
-
-- Signal numbers and dispositions.
-- Pending/blocked masks.
-- Delivery at safe user-return boundaries.
-- Signal frames and `sigreturn`-like restoration.
-- Default/ignore/handler actions.
-- Process/thread targeting.
-- Interrupted syscalls and restart policy.
+## PHASE 26 — Signals
+- Dispositions/masks.
+- Pending signals.
+- User delivery.
+- Signal frame restoration.
+- Thread targeting.
+- Interrupted syscalls.
 - Job-control signals.
-- Malformed signal-frame rejection.
 
-## PHASE 27 — Process Lifecycle and Serviceable Init
-
-- Reliable `fork`/spawn/exec/wait/exit semantics.
-- Descriptor inheritance and close-on-exec.
+## PHASE 27 — Init and Process Lifecycle
+- Reliable spawn/exec/wait/exit.
+- FD inheritance/close-on-exec.
 - Orphan/zombie handling.
-- Environment and argument inheritance.
-- Minimal PID 1/init responsibilities.
-- Service startup/shutdown ordering.
+- PID 1.
+- Single-user boot target.
 - Crash containment.
-- Single-user boot target without an unnecessary enterprise init system.
 
-## PHASE 28 — Low-Level Graphics and Display Hardware Preparation
+## PHASE 28 — Low-Level Display Preparation
+- Framebuffer ownership.
+- Pixel formats/stride.
+- Display enumeration.
+- EDID where practical.
+- Display diagnostics.
 
-- Framebuffer discovery and ownership.
-- Pixel formats and stride handling.
-- Scanout/display abstraction.
-- EDID/monitor identification where practical.
-- Basic mode information.
-- GPU/PCI resource discovery.
-- DMA/IOMMU boundaries for future graphics.
-- Display reset/recovery diagnostics.
-- Text-console coexistence.
+**No GUI.**
 
-**Important:** this is hardware preparation only. It is not GUI work.
+## PHASE 29 — Generic GPU Foundation
+- GPU device model.
+- Memory objects.
+- Command submission.
+- Fences.
+- Reset/hang recovery.
+- GPU security boundaries.
 
-## PHASE 29 — GPU Driver Foundation
-
-- Generic GPU device model.
-- Command submission abstraction.
-- GPU memory objects.
-- Fence/synchronization model.
-- Interrupt/error reporting.
-- Reset and hang recovery architecture.
-- VRAM/system-memory ownership.
-- Security boundaries for GPU command buffers.
-
-**No desktop environment is permitted here.**
-
-## PHASE 30 — AMD GPU / RX 6000-Class Hardware Preparation
-
-- AMD PCI identification and BAR handling.
-- Required MMIO discovery.
-- Firmware-loading architecture if needed.
+## PHASE 30 — AMD GPU Target Preparation
+- AMD PCI/BAR handling.
+- Required MMIO.
+- Firmware-loading architecture.
 - Display-engine groundwork.
-- GPU queue abstraction.
-- Reset/recovery diagnostics.
-- Physical evidence for the chosen target GPU.
+- Physical target evidence.
 
-**Gate:** supported AMD GPU hardware is understood enough for later display/GUI work without faking acceleration.
+## PHASE 31 — USB Storage
+- Mass-storage transport.
+- Removable block devices.
+- Media insertion/removal.
+- Recovery after removal.
 
-## PHASE 31 — USB Storage and Removable Media
+## PHASE 32 — GPT/Partitioning
+- GPT CRC validation.
+- Protective MBR.
+- Sector-size handling.
+- Stable partition identity.
+- Safe destructive operations.
 
-- USB mass-storage class architecture.
-- Bulk-only transport where applicable.
-- Removable block-device lifecycle.
-- Media insertion/removal races.
-- Partition/media identification.
-- Safe read-only handling of unknown media.
-- Write-protect and flush semantics.
-- Recovery after cable/device removal.
+## PHASE 33 — Filesystem Power-Loss Recovery
+- Journal replay.
+- Metadata checksums.
+- Orphans.
+- Interrupted writes.
+- fsck safety.
+- Real disposable-media power-loss tests.
 
-## PHASE 32 — Partitioning and Disk Discovery
+## PHASE 34 — Root Filesystem/System Layout
+- `/bin`, `/lib`, `/etc`, `/dev`, `/home`, `/usr`, `/var`, `/tmp` policy.
+- Device nodes.
+- Logs/crash dumps.
+- Recovery shell.
 
-- GPT parser with CRC validation.
-- Protective MBR handling.
-- Partition type/attribute interpretation.
-- Sector-size validation.
-- Device naming and stable identity.
-- Corrupt/ambiguous table behavior.
-- Read-only inspection mode.
-- Destructive partition operations require explicit confirmation.
+## PHASE 35 — FIRST USABLE OS
+A supported physical desktop must:
+- boot the real root filesystem;
+- reach a real shell;
+- execute dynamic programs;
+- create/read/write/remove files;
+- run multiple processes;
+- use physical keyboard/input;
+- configure a physical NIC;
+- reboot/poweroff;
+- enter recovery mode.
 
-## PHASE 33 — Filesystem Recovery and Power-Loss Semantics
-
-- RixFS journal/replay correctness.
-- Metadata checksum validation.
-- Orphan recovery.
-- Interrupted write handling.
-- Dirty mount detection.
-- fsck repair safety.
-- Read-only emergency recovery.
-- Simulated and real power-loss testing on disposable media.
-
-**Gate:** a failed write or unclean shutdown does not silently corrupt the filesystem.
-
-## PHASE 34 — Bootable Root Filesystem and System Layout
-
-- Stable `/`, `/bin`, `/sbin`, `/lib`, `/etc`, `/dev`, `/tmp`, `/home`, `/var`, `/usr` policy.
-- Single-user home directory lifecycle.
-- Read-only vs writable system areas where useful.
-- Runtime-state directory policy.
-- Device-node strategy.
-- Logs and crash dumps.
-- System configuration format.
-- Recovery shell layout.
-
-## PHASE 35 — First Usable RixuriOS Milestone
-
-- Physical desktop boots into the real root filesystem.
-- Primary user reaches a real shell.
-- Real dynamically linked utilities execute.
-- Files can be created, read, written, renamed and deleted.
-- Processes can be started, stopped and waited for.
-- Keyboard/input path works without test injection.
-- Network can be configured on at least one supported physical NIC.
-- Reboot/poweroff works.
-- Recovery shell exists.
-- Known limitations are visible to the user.
-
-**Milestone:** **usable terminal OS**, not yet release quality and not yet GUI.
+**Milestone:** usable terminal-first single-user OS. Not release quality. Not GUI.
 
 ---
 
 # SYSTEM MATURITY — PHASES 36–59
 
-## PHASE 36 — Device Discovery and `/dev` Strategy
+## PHASE 36 — `/dev` and Device Lifecycle
+Stable device nodes, hotplug and teardown.
 
-- Stable device naming.
-- Character/block device registration.
-- Dynamic device-node creation.
-- Device permissions for the single owner.
-- Hotplug event path.
-- Device removal cleanup.
-- Hardware inventory tool.
+## PHASE 37 — Diagnostic System Interfaces
+Process, CPU, memory, device, filesystem and network state views; intentionally not a Linux ABI clone.
 
-## PHASE 37 — Proc-like and Sysfs-like Diagnostics
+## PHASE 38 — ABI Completeness/Frozen Core ABI
+Inventory syscalls, remove required ENOSYS gaps, validate structures and freeze the core ABI candidate.
 
-- `/proc`-style process/CPU/memory views.
-- Hardware/device inventory interface.
-- PCI/device diagnostics.
-- Memory statistics.
-- Scheduler statistics.
-- Mount and filesystem state.
-- Network interface statistics.
-- Explicitly diagnostic, not a Linux ABI clone.
+## PHASE 39 — Fault Containment
+Uniform errors, process crash reporting, timeout states and recovery reporting.
 
-## PHASE 38 — System Call Completeness and ABI Freeze Candidate
-
-- Inventory every syscall.
-- Remove accidental ENOSYS gaps that are required by userspace.
-- Verify argument widths and structure packing.
-- Verify 32/64-bit assumptions within x86_64 ABI.
-- Version compatibility metadata.
-- Negative ABI tests.
-- User/kernel structure fuzzing.
-
-**Gate:** core ABI is stable enough for libc and system tools.
-
-## PHASE 39 — Error Handling and Fault Containment
-
-- Uniform kernel error taxonomy.
-- Device error propagation.
-- Process-fault containment.
-- Panic policy for unrecoverable kernel faults.
-- Userspace crash reporting.
-- Last-error diagnostics without unsafe global state.
-- Timeout visibility.
-- Recovery-state reporting.
-
-## PHASE 40 — Logging, Tracing and Crash Diagnostics
-
-- Structured kernel log records.
-- Log levels and filtering.
-- Per-subsystem tags.
-- Ring-buffer persistence where practical.
-- Crash dump metadata.
-- Boot-to-crash timeline.
-- Syscall tracing.
-- Scheduler/device/storage/network trace points.
-- User-accessible diagnostic collection.
+## PHASE 40 — Structured Logging/Tracing
+Kernel logs, boot timeline, syscall/scheduler/device/storage/network traces and crash metadata.
 
 ## PHASE 41 — Configuration System
-
-- Stable text/config format.
-- Boot configuration.
-- Network configuration.
-- Mount configuration.
-- User preferences that are useful before GUI.
-- Validation and atomic replacement.
-- Safe defaults.
-- Recovery from malformed configuration.
+Atomic configuration, validation, safe defaults and recovery from malformed configuration.
 
 ## PHASE 42 — Minimal Service Manager
+Single-user service definitions, dependencies, restart, timeout, logging and shutdown ordering.
 
-- Service definition format.
-- Dependency ordering.
-- Start/stop/restart.
-- Crash restart policy.
-- Logging capture.
-- Timeouts.
-- Shutdown ordering.
-- Single-user simplicity: no cluster/service-discovery requirements.
+## PHASE 43 — Boot Targets
+Normal, diagnostic, recovery and clean-shutdown targets.
 
-## PHASE 43 — System Initialization and Boot Targets
+## PHASE 44 — Local Login/Session
+One primary owner session, authentication boundary, environment and TTY ownership.
 
-- Firmware → bootloader → kernel → init → services → login/shell.
-- Boot phases and timing.
-- Failure isolation.
-- Safe mode/recovery target.
-- Single-user normal target.
-- Diagnostic boot target.
-- Clean shutdown target.
-
-## PHASE 44 — Login and Local Session Management
-
-- One primary local user.
-- Authentication boundary.
-- Password/hash storage policy if passwords are used.
-- Session creation.
-- Environment setup.
-- Home-directory preparation.
-- TTY ownership.
-- Automatic-login option only if explicitly chosen by the owner and clearly documented.
-
-## PHASE 45 — Permissions, File Security and Privilege Hardening
-
-- Correct mode-bit enforcement.
-- Root-only operations.
-- Setuid/setgid decision and security review.
-- Capability-like primitives only if actually needed.
-- Symlink race resistance.
-- TOCTOU review.
-- Secure temporary-file creation.
-- Device-node privilege policy.
+## PHASE 45 — Privilege/File Security
+Permission correctness, privileged operations, temporary files and TOCTOU/symlink review.
 
 ## PHASE 46 — Memory Hardening
+SMEP/SMAP, NX/W^X, stack protection, heap hardening and page-table audits.
 
-- SMEP enforcement where supported.
-- SMAP enforcement where supported.
-- NX/W^X verification.
-- Kernel stack protection.
-- User stack guard pages.
-- Heap poisoning/debug modes.
-- Use-after-free diagnostics.
-- Double-free detection.
-- Page-table permission audits.
+## PHASE 47 — DMA/IOMMU Hardening
+Device isolation, DMA lifetime, invalid-DMA diagnostics and reset cleanup.
 
-## PHASE 47 — DMA and IOMMU Security
+## PHASE 48 — Network Reliability
+TCP retransmission/window/MTU, DNS retry/cache, DHCP renewal, link recovery and NIC reset.
 
-- DMA mapping lifetime.
-- Device isolation policy.
-- IOMMU domains where available.
-- Interrupt remapping where applicable.
-- Invalid DMA fault diagnostics.
-- Device reset cleanup.
-- Driver-owned buffer lifetime audit.
-
-## PHASE 48 — Network Robustness and External Connectivity
-
-- TCP retransmission stress.
-- Window/flow-control correctness.
-- Fragmentation/MTU behavior.
-- DNS timeout/retry/cache behavior.
-- DHCP renewal.
-- Link down/up recovery.
-- NIC reset.
-- Long-running connection tests.
-- External-network evidence distinct from loopback/QEMU.
-
-## PHASE 49 — Network Utilities and User Networking
-
-- Interface listing/configuration.
-- Route inspection.
-- DNS configuration.
-- Ping/ICMP utility.
-- UDP/TCP diagnostic clients.
-- Download/upload primitive.
-- Local hostname configuration.
-- Network failure explanations understandable to the owner.
+## PHASE 49 — Network Utilities
+Interface/route/DNS tools, ping, diagnostic clients and understandable failure reporting.
 
 ## PHASE 50 — Time Synchronization
+RTC initialization, network time, clock adjustment and consistent timestamps.
 
-- RTC-to-system-clock initialization.
-- Monotonic/realtime separation.
-- Network time synchronization architecture.
-- Clock adjustment policy.
-- Slew/step safety.
-- Offline behavior.
-- Timestamp consistency in logs/files.
+## PHASE 51 — Storage Reliability/Performance
+Queue tuning, cache metrics, writeback, flush measurement and large-file stress.
 
-## PHASE 51 — Storage Performance and Reliability
+## PHASE 52 — Scheduler Performance
+Context-switch/wakeup latency, SMP scaling, priority inversion and starvation testing.
 
-- I/O queue tuning.
-- Cache hit/miss metrics.
-- Writeback throttling.
-- Flush/FUA measurement.
-- NVMe latency tracking.
-- Recovery-time measurement.
-- Large-file stress.
-- Fragmentation tests.
+## PHASE 53 — Memory Pressure/OOM
+Global/process accounting, reclaim, OOM policy and mapping exhaustion.
 
-## PHASE 52 — Process and Scheduler Performance
+## PHASE 54 — Single-User Resource Limits
+FD/process/thread/memory/address-space/IPC limits and disk-space warnings.
 
-- Context-switch cost.
-- Scheduler latency.
-- Wakeup latency.
-- CPU utilization accounting.
-- SMP scaling measurements.
-- Priority inversion detection.
-- Starvation tests.
-- Idle-power behavior where relevant to desktop PCs.
+## PHASE 55 — FD/Object Lifetime Audit
+close-on-exec, duplication, reference counts, concurrent close/read/write and process death cleanup.
 
-## PHASE 53 — Memory Pressure and OOM Behavior
+## PHASE 56 — Concurrency/Race Audit
+SMP, interrupt, device-removal, filesystem, signal/thread and FD race corpus.
 
-- Global memory accounting.
-- Per-process memory accounting.
-- Allocation failure policy.
-- OOM diagnostics.
-- Safe process termination policy.
-- Reclaim before failure.
-- Mapping exhaustion tests.
-- No silent memory corruption under pressure.
+## PHASE 57 — Recovery Toolkit
+Offline-capable repair shell, logs, disk/network diagnostics, configuration rollback and safe reboot.
 
-## PHASE 54 — Resource Limits for a Single-User Desktop
+## PHASE 58 — Atomic Update/Rollback
+Versioned system updates, previous bootable version, failed-update detection and rollback.
 
-- Open-FD limits.
-- Process/thread limits.
-- Address-space limits.
-- Memory limits.
-- Pipe/IPC limits.
-- Disk-space warning thresholds.
-- Safe defaults rather than enterprise quota complexity.
-
-## PHASE 55 — File Descriptor and Object Lifetime Audit
-
-- FD namespace consistency.
-- Close-on-exec.
-- Duplication semantics.
-- Reference-count correctness.
-- Device/file/process object teardown.
-- Concurrent close/read/write tests.
-- Process death cleanup.
-
-## PHASE 56 — Concurrency and Race Audit
-
-- SMP race corpus.
-- Lock-order validation.
-- Interrupt/process interaction.
-- Device removal during I/O.
-- Filesystem concurrent operations.
-- Signal/thread races.
-- FD races.
-- Stress runs with randomized scheduling where practical.
-
-## PHASE 57 — Recovery Shell and Owner Recovery Toolkit
-
-- Boot-to-recovery shell.
-- Filesystem check/repair entry.
-- Network diagnostics.
-- Disk diagnostics.
-- Kernel-log collection.
-- Service disable/enable.
-- Configuration rollback.
-- Safe reboot/poweroff.
-- Recovery documentation available offline.
-
-**Single-user principle:** the owner must be able to repair the machine without another computer whenever reasonably possible.
-
-## PHASE 58 — Update and Rollback Architecture
-
-- Versioned system updates.
-- Atomic update staging.
-- Bootable previous version.
-- Failed-update detection.
-- Configuration preservation.
-- User-data preservation.
-- Rollback from recovery.
-- Never overwrite the only known-good system blindly.
-
-## PHASE 59 — System Integrity and Release Candidate Base
-
-- Whole-system consistency checks.
-- Boot/root/userspace compatibility verification.
-- ABI freeze candidate.
-- Hardware support matrix.
-- Known-failure list reduced to explicit non-blockers.
-- Recovery path verified.
-- Release candidate build reproducibility.
-
-**Milestone:** **serious daily terminal OS candidate**.
+## PHASE 59 — DAILY TERMINAL OS BASELINE
+Stable enough that the owner can use RixuriOS as the primary terminal operating environment on supported hardware.
 
 ---
 
-# RELEASE ENGINEERING — PHASES 60–79
+# RECURSIVE SOURCE-TO-NATIVE SOFTWARE SYSTEM — PHASES 60–79
 
-## PHASE 60 — Supported Hardware Matrix
+This section is the major software-ecosystem objective of RixuriOS.
 
-- Define exact supported motherboard/firmware classes.
-- CPU feature requirements.
-- NVMe devices tested.
-- NICs tested.
-- USB controllers tested.
-- HID devices tested.
-- GPU/display targets tested.
-- Unsupported hardware is reported honestly.
+## PHASE 60 — Source Fetcher
+- GitHub repository URL handling.
+- Git clone/fetch.
+- Commit/tag/branch pinning.
+- Source integrity metadata.
+- Offline source cache.
+- License metadata.
 
-## PHASE 61 — Physical Hardware Qualification
+## PHASE 61 — Project Detector
+Automatically identify common project/build forms:
+- Make/autoconf/automake.
+- CMake.
+- Meson/Ninja.
+- Cargo.
+- Python packaging.
+- shell/configure projects.
+- custom build scripts.
 
-- Cold boot.
-- Warm reboot.
-- Poweroff.
-- Repeated boot cycles.
-- Long idle.
-- CPU stress.
-- Memory stress.
-- Disk stress.
-- Network stress.
-- USB hotplug.
-- Device reset/recovery.
+Unknown projects fall into an explicit manual-port state rather than a fake success state.
 
-## PHASE 62 — QEMU Regression Matrix
+## PHASE 62 — Dependency Extractor
+- Parse declared dependencies.
+- Detect compiler/linker requirements.
+- Detect library/header requirements.
+- Detect generated-code tools.
+- Detect runtime dependencies.
+- Record version constraints.
+- Distinguish build-time and runtime dependencies.
 
-- BIOS/UEFI where supported by project policy.
-- Single/multi-CPU.
-- Low/high memory.
-- NVMe variants.
-- E1000 networking.
-- USB/xHCI variants.
-- Fault injection.
-- Malformed disk/media cases.
-- Boot failure cases.
+## PHASE 63 — Recursive Dependency Graph Engine
+- Build a complete directed dependency graph.
+- Resolve transitive dependencies recursively.
+- Detect cycles.
+- Detect conflicting versions.
+- Topologically order builds.
+- Cache previously solved graphs.
+- Produce a human-readable plan before changes are made.
 
-## PHASE 63 — Boot Regression Suite
+Example:
 
-- Every known boot failure.
-- UEFI memory-map variations.
-- EBS retry.
-- Page-table failures.
-- Invalid ELF kernel.
-- CPU feature absence.
-- AP startup failure.
-- Driver initialization failure.
-- Recovery boot.
+`app → libA → libC → libF`
 
-## PHASE 64 — Kernel Test Harness
+must resolve `libF` before `libC`, then `libA`, then `app`.
 
-- Allocator tests.
-- Page-table tests.
-- IPC tests.
-- Scheduler tests.
-- Syscall tests.
-- Signal tests.
-- Filesystem tests.
-- Device-model tests.
-- Networking tests.
+## PHASE 64 — Source/API Compatibility Scanner
+- Scan source for unsupported POSIX/Linux assumptions.
+- Detect syscalls and libc APIs.
+- Detect headers and compiler features.
+- Detect filesystem paths and environment assumptions.
+- Detect Linux-specific APIs.
+- Classify each incompatibility as native, compatible, patchable or unsupported.
 
-## PHASE 65 — Userspace Test Harness
+## PHASE 65 — RixuriOS API Mapping Engine
+- Map standard APIs to RixuriOS libc/syscalls.
+- Maintain versioned API translation rules.
+- Generate compile-time compatibility definitions where safe.
+- Provide documented port shims where necessary.
+- Never silently change semantics.
 
-- libc conformance subset.
-- ELF loader tests.
-- TLS tests.
-- pthread/futex tests.
-- Shell parser tests.
-- Utility exit-status tests.
-- Path/permission tests.
-- Network API tests.
+## PHASE 66 — Automatic Port Patch System
+- Generate minimal source patches for known incompatibilities.
+- Store patches separately from upstream source.
+- Make patches deterministic and reviewable.
+- Rebase/reapply patches against newer upstream commits.
+- Reject ambiguous patches instead of guessing.
 
-## PHASE 66 — Fuzzing and Parser Security
+## PHASE 67 — Dependency Port Worker
+For every dependency node:
+1. fetch source;
+2. inspect license/build system;
+3. resolve its dependencies;
+4. recursively port those dependencies;
+5. apply RixuriOS API adaptations;
+6. build;
+7. test;
+8. package;
+9. expose the result to its parent.
 
-- ELF fuzzing.
-- Filesystem metadata fuzzing.
-- HID report fuzzing.
-- USB descriptor fuzzing.
-- PCI capability fuzzing.
-- Network packet fuzzing.
-- Shell/parser fuzzing.
-- Syscall argument fuzzing.
-- Configuration fuzzing.
+## PHASE 68 — Sandboxed Port Builds
+- Build userspace software without unrestricted privileges.
+- Controlled filesystem/network access.
+- Resource limits.
+- Deterministic environment.
+- Build logs.
+- Failure capture.
+- Reproducibility metadata.
 
-## PHASE 67 — Fault Injection and Recovery Testing
+## PHASE 69 — Build-System Translation Layer
+- Native wrappers for C/C++ build systems.
+- Cargo target/toolchain integration.
+- Python build backend support where useful.
+- Configure environment translation.
+- Compiler/linker flag translation.
+- Install-prefix translation.
 
-- I/O timeout injection.
-- NVMe reset injection.
-- USB disconnect during transfer.
-- NIC link loss.
-- Allocation failure.
-- Page fault at every user boundary.
-- Service crash.
-- Corrupt configuration.
-- Interrupted update.
+## PHASE 70 — RixuriOS Port Database
+Store reusable knowledge for:
+- repository/source identity;
+- known dependencies;
+- known incompatibilities;
+- API mappings;
+- patches;
+- successful toolchains;
+- test commands;
+- known failures.
 
-## PHASE 68 — Power-Loss and Crash Consistency Lab
+The database accelerates future ports without pretending upstream software is permanently forked.
 
-- Forced reset during filesystem writes.
-- Forced reset during metadata updates.
-- Interrupted update.
-- Journal replay.
-- Recovery boot.
-- Repeated crash cycles.
-- Data-integrity verification.
+## PHASE 71 — Port Cache and Artifact Cache
+- Cache source revisions.
+- Cache solved dependency graphs.
+- Cache successful builds.
+- Cache failed port attempts with reasons.
+- Invalidate caches on ABI/toolchain changes.
 
-## PHASE 69 — Security Audit
+## PHASE 72 — Native Package Builder
+- Convert successful builds into RixuriOS packages.
+- Metadata.
+- Version/source identity.
+- Dependency metadata.
+- File manifest.
+- ABI requirements.
+- License information.
+- Integrity hashes.
 
-- Kernel/user boundary.
-- Uaccess TOCTOU.
-- Privilege checks.
-- FD namespace.
-- DMA/IOMMU.
-- Filesystem path traversal.
-- Symlink races.
-- ELF loader.
-- TLS/thread state.
-- Network parser.
-- USB/HID parser.
+## PHASE 73 — Transactional Package Installer
+- Install dependency closure.
+- Atomic file changes where possible.
+- Ownership tracking.
+- Conflict detection.
+- Uninstall.
+- Upgrade/downgrade.
+- Rollback.
 
-## PHASE 70 — Performance Baseline
+## PHASE 74 — `rix install <GitHub repository>`
+Provide the owner-facing workflow:
 
-- Boot time.
-- Shell startup.
-- Process creation.
-- Context switch.
-- Syscall latency.
-- Page-fault cost.
-- File throughput.
-- NVMe latency/throughput.
-- Network throughput/latency.
-- Memory overhead.
+`rix install <github-url>`
 
-## PHASE 71 — Performance Regression Tracking
+The command must:
+- fetch the repository;
+- inspect it;
+- display the dependency graph;
+- resolve dependencies recursively;
+- port/build dependencies;
+- port/build the requested project;
+- run tests;
+- create/install packages;
+- report exactly what changed.
 
-- Stable benchmark workloads.
-- Compare builds by commit.
-- Detect latency regressions.
-- Detect memory regressions.
-- Detect I/O regressions.
-- Detect boot regressions.
-- Keep correctness gates independent of performance scores.
+No pre-created package entry is required for a project if the source-to-native pipeline can successfully port it.
 
-## PHASE 72 — Resource Leak and Long-Run Testing
+## PHASE 75 — Dependency Failure and Human-Assisted Porting
+- Clear failure reasons.
+- Show the exact incompatible API/build step.
+- Suggest an explicit port action.
+- Allow owner-approved patches.
+- Resume from the failed dependency.
+- Never restart the whole graph unnecessarily.
 
-- 1-hour runs.
-- 12-hour runs.
-- 24-hour runs where practical.
-- FD leak detection.
-- Memory leak detection.
-- Thread/process leak detection.
-- Device object leak detection.
-- Mount/unmount loops.
-- Network reconnect loops.
+## PHASE 76 — Multi-Language Porting
+Expand the same model beyond C/C++ to supported ecosystems such as Rust and selected scripting/runtime projects, provided the required runtime can itself be built natively.
 
-## PHASE 73 — Hardware Hotplug and Recovery Matrix
+## PHASE 77 — Runtime Dependency Resolution
+Distinguish:
+- build dependency;
+- link dependency;
+- runtime shared library;
+- optional dependency;
+- test-only dependency.
 
-- USB insertion/removal.
-- HID insertion/removal.
-- NIC link changes.
-- Storage removal where supported.
-- PCI hotplug only where target hardware supports it.
-- Interrupt teardown.
-- DMA teardown.
-- User-visible recovery state.
+Install only what the final application actually requires, while retaining reproducible dependency metadata.
 
-## PHASE 74 — Bootloader and Recovery UX (Terminal Only)
+## PHASE 78 — Port Security and Supply-Chain Verification
+- Source commit verification.
+- Signature/hash support where available.
+- License checks.
+- Patch provenance.
+- Build sandboxing.
+- Dependency confusion protection.
+- No privileged build scripts by default.
 
-- Clear boot menu.
-- Normal boot.
-- Recovery boot.
-- Previous-system boot.
-- Diagnostic boot.
-- Kernel argument management.
-- Safe defaults.
-- No graphical boot dependency.
+## PHASE 79 — RECURSIVE GITHUB-TO-RIXURIOS MILESTONE
 
-## PHASE 75 — Installer and Initial Disk Setup
+**Milestone:** the owner can give RixuriOS a suitable GitHub project and the system can automatically resolve, recursively port, build, test, package and install its dependency closure when all required APIs/build environments are supported.
 
-- UEFI installation path.
-- Disk selection with destructive-operation confirmation.
-- GPT creation.
-- RixFS creation.
-- System installation.
-- Boot entry creation.
-- Initial user setup.
-- Recovery partition/area where appropriate.
-- Installation logs.
-
-## PHASE 76 — Installer Safety and Abort Recovery
-
-- Preview destructive changes.
-- Require explicit confirmation.
-- Detect wrong disk selection.
-- Power-loss recovery during install.
-- Interrupted install rollback.
-- Corrupt target handling.
-- Never silently format unknown media.
-
-## PHASE 77 — Package/Software Distribution Foundation
-
-- Native package format if justified.
-- Package metadata.
-- Dependency model.
-- File ownership tracking.
-- Install/remove/upgrade.
-- Signature/integrity architecture.
-- Transaction/rollback semantics.
-- Offline installation from local media.
-
-## PHASE 78 — Package Repository and Update Client
-
-- Repository metadata.
-- Download verification.
-- Package signatures.
-- Version selection.
-- Dependency resolution.
-- Atomic staging.
-- Failed-download recovery.
-- Update rollback integration.
-
-## PHASE 79 — Reproducible Release Candidate
-
-- Clean build from pinned toolchain.
-- Rebuild verification.
-- Installer image generation.
-- Package repository snapshot.
-- Hardware evidence bundle.
-- Test report.
-- Known-failure report.
-- Recovery verification.
+This is **not** a static package repository milestone. It is a source-to-native software platform milestone.
 
 ---
 
-# PRE-GUI PRODUCT MATURITY — PHASES 80–99
+# PRE-GUI PRODUCTIZATION — PHASES 80–99
 
-## PHASE 80 — Native Developer Toolchain
-
-- Native assembler/compiler support as practical.
-- Debug symbols and stack traces.
-- Static analysis tools.
-- Object inspection tools.
-- ELF inspection utility.
-- System-call tracing utility.
-- Kernel log analysis tools.
+## PHASE 80 — Native Development Toolchain
+Compiler/assembler/debugger/object/ELF tools sufficient for developing directly on RixuriOS.
 
 ## PHASE 81 — Native Build Environment
-
-- Make/build tool support.
-- Shell scripting sufficient for system builds.
-- Header/library installation.
-- `/usr/include` policy.
-- `/usr/lib` policy.
-- Dynamic linker integration.
-- Development package format.
+Make/build tools, headers, libraries, pkg-config-like metadata and development packages.
 
 ## PHASE 82 — POSIX Compatibility Expansion
+Implement only compatibility that materially increases the number of useful real-world source projects that can be ported.
 
-- Expand only APIs useful to real RixuriOS software.
-- Directory/process/time APIs.
-- Terminal APIs.
-- Socket APIs.
-- Signals.
-- pthreads.
-- mmap.
-- Poll/select-style interfaces.
-- Document unsupported behavior rather than pretending Linux compatibility.
+## PHASE 83 — Real musl Integration
+Build and validate musl against the RixuriOS syscall ABI, including TLS, pthreads and dynamic linking.
 
-## PHASE 83 — musl Integration
+## PHASE 84 — Native Shell/Scripting Maturity
+Reliable scripts, functions, quoting, signals, job control and administration.
 
-- Port/build musl against the RixuriOS syscall ABI.
-- Thread/TLS support.
-- Dynamic linker integration.
-- Startup objects.
-- libc ABI validation.
-- `errno`, signals, pthreads and filesystem integration.
-- Real dynamically linked standard C programs.
+## PHASE 85 — Native `rix` Administration Tool
+Status, diagnostics, hardware, storage, network, service, package, update and recovery commands.
 
-**Gate:** this is a genuine musl-based userspace, not merely a musl-shaped sysroot.
+## PHASE 86 — Offline Documentation
+System, syscall, filesystem, driver, recovery, porting and package documentation available locally.
 
-## PHASE 84 — Native Shell and Scripting Maturity
+## PHASE 87 — One-Command Diagnostics
+Produce a complete owner-readable diagnostic bundle covering boot, CPU, memory, storage, USB, network, services, packages and recent crashes.
 
-- Reliable shell parser.
-- Functions and scripts.
-- Robust quoting.
-- Exit-status propagation.
-- Signals/job control.
-- Environment manipulation.
-- Useful scripting primitives.
-- Error messages suitable for actual administration.
+## PHASE 88 — Backup/Restore
+Home/configuration backup, verification, restore and recovery from removable media.
 
-## PHASE 85 — System Administration Toolkit
+## PHASE 89 — User/Data Safety
+Atomic writes, disk-full handling, read-only behavior, safe temporary files and destructive-operation warnings.
 
-- `rix` native administration command.
-- `rix status`.
-- `rix diagnostics`.
-- `rix hardware`.
-- `rix network`.
-- `rix storage`.
-- `rix service`.
-- `rix update`.
-- `rix recovery`.
-- All commands use documented public APIs.
+## PHASE 90 — Desktop Hardware Expansion
+Qualify additional AMD/Intel desktop CPUs, NVMe, NIC, USB and GPU targets based on actual value to the single owner.
 
-## PHASE 86 — Documentation and Offline Manual
+## PHASE 91 — Security Hardening
+Final SMEP/SMAP/W^X/ASLR/stack/heap/uaccess/DMA/ELF/network/USB audits.
 
-- System architecture manual.
-- Syscall ABI reference.
-- Driver model reference.
-- Filesystem format reference.
-- Recovery manual.
-- Installation manual.
-- Hardware support matrix.
-- Troubleshooting manual.
-- Offline `man`-like documentation.
+## PHASE 92 — Long-Run Soak
+Multi-day workloads, process churn, filesystem operations, network sessions, NVMe workloads, USB hotplug and memory pressure.
 
-## PHASE 87 — Observability for the Single Owner
+## PHASE 93 — Full Regression Freeze
+Historical failures, ABI, filesystem, driver, package-porting and update regressions run on every release candidate.
 
-- One-command diagnostic bundle.
-- Boot timeline.
-- Hardware inventory.
-- Driver status.
-- Filesystem status.
-- Network status.
-- Memory/CPU status.
-- Recent crash information.
-- Privacy-aware log collection.
-
-## PHASE 88 — Backup and Restore
-
-- User-home backup.
-- Configuration backup.
-- System-state metadata.
-- Restore to fresh RixuriOS installation.
-- Backup verification.
-- Interrupted backup recovery.
-- Local removable-disk backup.
-- Optional network backup only if useful.
-
-## PHASE 89 — Data Integrity and User Safety
-
-- Checksums for critical stored metadata.
-- Safe temporary files.
-- Atomic configuration writes.
-- Disk-full behavior.
-- Permission failures.
-- Read-only filesystem behavior.
-- Unexpected device removal.
-- Clear warnings before destructive actions.
-
-## PHASE 90 — Desktop Hardware Compatibility Expansion
-
-- More AMD/Intel desktop CPUs.
-- More NVMe controllers.
-- More Realtek/Intel NICs where worthwhile.
-- More USB controllers.
-- Common USB keyboards/mice.
-- Selected AMD GPU targets.
-- Motherboard firmware variation testing.
-- Unsupported hardware diagnostics.
-
-## PHASE 91 — Release Security Hardening
-
-- Full SMEP/SMAP policy.
-- W^X audit.
-- ASLR validation.
-- Stack guard validation.
-- Heap hardening.
-- Kernel pointer exposure review.
-- Usercopy validation review.
-- DMA/IOMMU audit.
-- ELF loader security review.
-
-## PHASE 92 — Release Reliability Soak
-
-- Multi-day boot/use cycles.
-- Repeated process creation.
-- Repeated filesystem operations.
-- Long network sessions.
-- Long NVMe workloads.
-- USB hotplug loops.
-- Memory pressure.
-- Recovery exercises.
-
-## PHASE 93 — Release Regression Freeze
-
-- No new feature without release-owner justification.
-- Historical failures must remain covered.
-- ABI freeze.
-- Filesystem format freeze for release generation.
-- Driver behavior freeze for supported hardware.
-- Regression suite mandatory on every release candidate.
-
-## PHASE 94 — Final Physical Hardware Acceptance
-
-- Cold boot PASS.
-- Warm reboot PASS.
-- Poweroff PASS.
-- Storage PASS.
-- Filesystem PASS.
-- USB/HID PASS.
-- Network PASS.
-- SMP/preemption PASS.
-- Memory pressure PASS.
-- Recovery PASS.
-- Evidence archived per target machine.
+## PHASE 94 — Physical Hardware Acceptance
+Cold boot, warm reboot, poweroff, storage, filesystem, USB/HID, networking, SMP, memory pressure and recovery PASS evidence per supported machine.
 
 ## PHASE 95 — Release Candidate 1
+Reproducible image, installer, native software pipeline, terminal, storage, network, recovery and security PASS.
 
-- Build reproducibility PASS.
-- Installer PASS.
-- Boot PASS.
-- Terminal PASS.
-- Userspace PASS.
-- Network PASS.
-- Storage PASS.
-- Recovery PASS.
-- Security PASS.
-- Documentation PASS.
+## PHASE 96 — Release Candidate 2
+Bug-fix only. Repeat physical hardware, power-loss, update/rollback and recursive software-porting regression tests.
 
-## PHASE 96 — Release Candidate 2 / Bug-Fix Only
+## PHASE 97 — Release Candidate 3
+Final stability pass; no known critical kernel crash, filesystem corruption path or unrecoverable update path.
 
-- Fix only release blockers and high-impact regressions.
-- Re-run physical hardware matrix.
-- Re-run power-loss tests.
-- Re-run upgrade/rollback.
-- Re-run full boot and userspace suites.
+## PHASE 98 — RixuriOS 1.0 Preparation
+Versioning, release notes, hardware matrix, installation media, recovery path, signatures/checksums and known limitations.
 
-## PHASE 97 — Release Candidate 3 / Final Stability
-
-- No known critical kernel crash.
-- No known filesystem corruption path under supported workloads.
-- No known unrecoverable update path.
-- No unresolved supported-hardware blocker.
-- Final installer image.
-
-## PHASE 98 — RixuriOS 1.0 Release Preparation
-
-- Versioning.
-- Release notes.
-- Hardware compatibility documentation.
-- Installation media.
-- Recovery media/path.
-- Checksums/signatures.
-- Reproducible build record.
-- Known limitations.
-
-## PHASE 99 — 1.0 Gate / Pre-GUI Baseline
-
-This is the final gate before the graphical product.
+## PHASE 99 — FINAL PRE-GUI BASELINE
 
 Required:
+- stable boot;
+- stable memory management;
+- SMP/preemption;
+- user VM;
+- dynamic ELF/TLS;
+- threads/futex/signals;
+- storage/filesystem recovery;
+- USB/HID;
+- network/DNS/TCP recovery;
+- libc/musl;
+- shell/utilities;
+- recursive GitHub source-to-native software installation;
+- installer/update/rollback;
+- recovery shell;
+- security hardening;
+- physical hardware evidence;
+- regression and soak testing.
 
-- Stable boot.
-- Stable kernel memory management.
-- SMP and preemption.
-- Real user address spaces.
-- Dynamic ELF and TLS.
-- Threads/futex/signals.
-- Storage/filesystem recovery.
-- USB/HID.
-- Network/DNS/TCP recovery.
-- libc/musl userspace.
-- Shell/utilities.
-- Installer/update/rollback.
-- Recovery shell.
-- Security hardening.
-- Physical hardware evidence.
-- Regression and soak tests.
-
-**Gate:** RixuriOS is already a complete, usable **terminal-first single-user OS before GUI development begins.**
+**Gate:** RixuriOS is already a complete, usable terminal-first single-user OS before GUI development starts.
 
 ---
 
-# FINAL PRODUCT — PHASE 100 ONLY
+# PHASE 100 — GRAPHICAL DESKTOP / GUI
 
-## PHASE 100 — Graphical Desktop / GUI
+This is the **only** phase where the actual graphical product is built.
 
-**This is the first and only phase whose completion means the RixuriOS graphical desktop product is complete.**
-
-### 100.1 Display server / compositor foundation
-
+### 100.1 Display server/compositor
 - Display ownership.
-- Output enumeration.
+- Outputs/monitors.
 - Framebuffer/scanout.
 - Rendering synchronization.
-- Cursor handling.
-- Multi-monitor architecture if the supported hardware warrants it.
-- Recovery when a display/GPU component crashes.
+- Cursor.
+- GPU acceleration where genuinely supported.
+- Display/GPU crash recovery.
 
 ### 100.2 Window system
-
 - Windows/surfaces.
-- Input routing.
-- Focus.
-- Keyboard/mouse integration.
+- Focus/input routing.
 - Clipboard.
-- Basic drag/drop where useful.
 - Window lifecycle.
+- Drag/drop where useful.
 
 ### 100.3 Desktop shell
-
-- Desktop/session startup.
+- Desktop session.
 - Application launcher.
 - Task/window management.
-- System status.
 - Notifications.
 - Terminal application.
 - File manager.
-- Basic settings.
+- Settings.
 
-### 100.4 Single-user UX
-
-- Fast local login or configured automatic login.
+### 100.4 Single-owner desktop UX
+- Local login/automatic-login option.
 - Owner session recovery.
-- Clear crash/restart behavior.
-- No unnecessary multi-user display-manager complexity.
-- Terminal remains available if GUI fails.
-- Recovery mode remains usable without GUI.
+- GUI crash recovery to terminal.
+- No unnecessary multi-seat infrastructure.
+- Recovery remains usable without GUI.
 
-### 100.5 GUI security
+### 100.5 GUI security/performance
+- Application isolation.
+- Clipboard/input boundaries.
+- Privileged-operation confirmation.
+- GPU command security.
+- Frame pacing/input latency.
+- Memory/CPU/GPU measurement.
 
-- Application/window isolation policy.
-- Clipboard boundaries.
-- Input routing restrictions.
-- Privileged-operation confirmation through safe system interfaces.
-- GPU command-buffer security.
-- Display-server crash containment.
-
-### 100.6 GUI performance
-
-- Frame pacing.
-- Input latency.
-- CPU/GPU utilization.
-- Memory use.
-- Compositor recovery.
-- Benchmarking against the supported hardware matrix.
-
-### 100.7 Final desktop acceptance
-
-- Physical boot into graphical session.
-- Keyboard and mouse.
+### 100.6 Final desktop acceptance
+- Physical boot into GUI.
+- Keyboard/mouse.
 - Terminal application.
 - File management.
-- Network configuration/use.
-- System settings.
+- Networking.
+- Settings.
 - Reboot/poweroff.
-- GUI crash recovery to terminal/restart.
+- GUI crash recovery.
 - Update/reboot/recovery cycle.
-- No GUI-only path may make the system unrecoverable.
 
-**FINAL PRODUCT GATE:**
-
-> **RixuriOS 1.x is complete when Phase 100 passes and every pre-GUI phase required by the supported hardware/product profile has PASS evidence.**
+**FINAL PRODUCT GATE:** Phase 100 passes only after all required pre-GUI gates have PASS evidence.
 
 ---
 
-# 4. Definition of Done
+# DEFINITION OF DONE
 
-A phase is `COMPLETE` only when all applicable items below are satisfied:
+A phase is COMPLETE only when applicable:
+- specification exists;
+- real implementation exists;
+- clean build passes;
+- unit/negative/boundary tests pass;
+- QEMU evidence exists where relevant;
+- physical evidence exists where relevant;
+- historical regressions are covered;
+- security review is complete;
+- performance is measured where relevant;
+- failure/recovery is documented;
+- limitations are explicit;
+- checkpoint evidence is archived.
 
-- Specification exists.
-- ABI/data model is documented.
-- Real implementation exists.
-- Build passes from a clean tree.
-- Unit tests pass where applicable.
-- Negative/boundary tests pass where applicable.
-- QEMU evidence exists where applicable.
-- Physical-hardware evidence exists where applicable.
-- Historical regressions are covered.
-- Security review is complete for the phase risk.
-- Performance is measured where relevant.
-- Failure and recovery behavior is documented.
-- Known limitations are explicit.
-- Documentation is updated.
-- Checkpoint evidence is archived.
+For a software port, COMPLETE additionally requires:
+- pinned source revision;
+- license recorded;
+- dependency closure resolved;
+- all required dependencies built natively;
+- RixuriOS API compatibility verified;
+- patches recorded;
+- package manifest generated;
+- install/uninstall tested;
+- runtime dependencies verified;
+- no hidden host-library dependency;
+- reproducible build information recorded.
 
-A phase may be `PARTIAL`, `DEGRADED`, `BLOCKED`, `NOT TESTED` or `UNSUPPORTED`, but those states must never be reported as complete.
+`SKIP`, `ENOSYS`, `NOT TESTED`, `DEGRADED`, `BLOCKED`, `FAIL` and `UNSUPPORTED` never mean COMPLETE.
 
 ---
 
-# 5. RixuriOS maturity milestones
+# RIXURIOS MILESTONES
 
-| Milestone | Target | Meaning |
+| Milestone | Phase | Meaning |
 |---|---:|---|
 | Kernel foundation | 00–09 | Real kernel/process/VM/ABI foundation |
-| Hardware foundation | 10–21 | Storage, USB, terminal and networking foundations |
-| Userspace foundation | 22–27 | libc, dynamic ELF, mmap, threads, signals |
+| Hardware foundation | 10–21 | Storage/USB/TTY/network foundations |
+| Userspace foundation | 22–27 | Dynamic userspace, VM, threads and signals |
 | First usable OS | **35** | Real physical terminal OS |
-| Serious daily OS | **59** | Reliable terminal-first desktop OS |
-| Release engineering | **79** | Installer, updates, recovery and release evidence |
-| Pre-GUI 1.0 | **99** | Complete non-graphical OS ready for desktop layer |
+| Daily terminal OS | **59** | Primary terminal environment for the owner |
+| Recursive software platform | **79** | GitHub → dependency graph → recursive port/build/install |
+| Pre-GUI 1.0 | **99** | Complete non-graphical OS |
 | Graphical RixuriOS | **100** | Full desktop product |
 
-**Important:** phase numbers are engineering milestones, not percentages of total OS completion. A project can have many early phases complete while still being far from a safe daily-use release.
+## Core long-term loop
 
----
+```text
+GitHub repository
+      ↓
+source revision + license
+      ↓
+project/build-system detection
+      ↓
+direct dependency extraction
+      ↓
+recursive dependency graph
+      ↓
+for each dependency:
+    fetch source
+    analyze compatibility
+    resolve its dependencies
+    port to RixuriOS APIs
+    build
+    test
+    package
+      ↓
+build requested project
+      ↓
+run tests
+      ↓
+package dependency closure + application
+      ↓
+transactional install
+      ↓
+record port knowledge for future builds
+```
 
-# 6. Single-user optimization principle
+The goal is not to make RixuriOS a giant manually curated package list. The goal is to make **RixuriOS itself capable of turning suitable open-source source trees into native RixuriOS software recursively and safely**.
 
-Whenever a design choice is ambiguous, prefer the smallest architecture that is:
-
-1. correct,
-2. secure,
-3. recoverable,
-4. observable,
-5. maintainable by one developer/owner,
-6. extensible without forcing premature complexity.
-
-Do not add enterprise abstractions simply because another operating system has them. Keep kernel primitives general enough for correctness, but keep product UX and service architecture intentionally focused on **one owner, one desktop, one local machine**.
-
-The roadmap therefore prioritizes:
-
-**memory correctness → SMP/preemption → user VM → ELF/dynamic linking/TLS → threads/signals → storage/filesystem recovery → USB/HID → network reliability → libc/musl → installer/update/rollback → physical hardware qualification → security/reliability → GUI.**
-
-The GUI remains last because a graphical desktop is only valuable once the operating system underneath it is already a dependable operating system.
+GUI remains Phase 100 because the operating system should already be useful, recoverable and capable of acquiring real software before a graphical desktop is added.
