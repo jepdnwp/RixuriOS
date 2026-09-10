@@ -428,8 +428,37 @@ loadval=read_cr3_hw();
 {static unsigned n=0;if(n<2){kernel_log("DEBUG: CR3 SELFTEST reloading current CR3\r\n");serial_drain();n++;}}
 #endif
 {static unsigned n=0;if(n<2){uint64_t rf=read_rflags_hw();kernel_log("DEBUG: before mov cr3 target=");kernel_log_hex(loadval);kernel_log(" current=");kernel_log_hex(read_cr3_hw());kernel_log(" IF=");kernel_log_dec((uint64_t)((rf>>9)&1ULL));kernel_log("\r\n");serial_drain();n++;}}
-{int pr=cr3_probe_root(loadval);if(pr!=0){kernel_log("DEBUG: ROOT probe FAILED reason=");if(pr<0){kernel_log("-");}kernel_log_dec((uint64_t)(pr<0?-pr:pr));kernel_log("\r\n");serial_drain();return -1;}}
-load_cr3_raw(loadval);vmm_track_pml4(loadval);cr3trace_push(2,(uint64_t)pid,loadval,read_cr3_hw());{static unsigned n=0;if(n<2){uint64_t hw=read_cr3_hw();kernel_log("DEBUG: CR3 load returned cur=");kernel_log_hex(hw);kernel_log(hw==loadval?" SW=SYNC\r\n":" SW=MISMATCH\r\n");kernel_log("DEBUG: CR3 switched\r\n");serial_drain();n++;}}}
+ {int pr=cr3_probe_root(loadval);if(pr!=0){kernel_log("DEBUG: ROOT probe FAILED reason=");if(pr<0){kernel_log("-");}kernel_log_dec((uint64_t)(pr<0?-pr:pr));kernel_log("\r\n");serial_drain();return -1;}}
+ load_cr3_raw(loadval);
+ /* Stackless post-switch probes (no calls, no memory, no stack except the
+  * probe push itself): 'F' proves instruction fetch works on the new
+  * tables; the push/pop proves RSP is writable; 'S' proves both. On a
+  * physical target that freezes here, whichever letter is missing names
+  * the broken mapping class in a single boot. Gated to the first two
+  * switches to keep serial logs clean; QEMU-safe: raw chars only. */
+ {static unsigned cr3post_n = 0;
+ if (cr3post_n < 2) {
+ cr3post_n++;
+ __asm__ volatile(
+  "movl $0x3FD,%%edx\n\t"
+  "cr3post_wait1: inb %%dx,%%al\n\t"
+  "testb $0x20,%%al\n\t"
+  "jz cr3post_wait1\n\t"
+  "movl $0x3F8,%%edx\n\t"
+  "movb $0x46,%%al\n\t"
+  "outb %%al,%%dx\n\t"
+  "pushq %%rax\n\t"
+  "popq %%rax\n\t"
+  "movl $0x3FD,%%edx\n\t"
+  "cr3post_wait2: inb %%dx,%%al\n\t"
+  "testb $0x20,%%al\n\t"
+  "jz cr3post_wait2\n\t"
+  "movl $0x3F8,%%edx\n\t"
+  "movb $0x53,%%al\n\t"
+  "outb %%al,%%dx\n\t"
+  ::: "rax", "rdx", "memory");
+ }}
+ vmm_track_pml4(loadval);cr3trace_push(2,(uint64_t)pid,loadval,read_cr3_hw());{static unsigned n=0;if(n<2){uint64_t hw=read_cr3_hw();kernel_log("DEBUG: CR3 load returned cur=");kernel_log_hex(hw);kernel_log(hw==loadval?" SW=SYNC\r\n":" SW=MISMATCH\r\n");kernel_log("DEBUG: CR3 switched\r\n");serial_drain();n++;}}}
 #endif
 {static unsigned n=0;if(n<2){kernel_log("DEBUG: CR3 switched cur=");kernel_log_hex(read_cr3_hw());kernel_log("\r\n");serial_drain();n++;}}{static unsigned m=0;if(m<2){kernel_log("DEBUG: process_activate done\r\n");serial_drain();m++;}}return 0;}
 int process_set_state(pid_t pid,rix_process_state_t state){rix_process_t*p=process_lookup(pid);if(!p||state==RIX_PROC_UNUSED)return -1;rix_process_state_t old=p->state;p->state=state;if(state==RIX_PROC_RUNNING&&process_activate(pid)!=0){p->state=old;return -1;}return 0;}
