@@ -21,12 +21,14 @@ x86_enter_user:
     movw %ax,%ds
     movw %ax,%es
 
-    /* Build a long-mode far-return frame: RIP, CS, RSP, SS.  Unlike IRETQ,
-       LRETQ does not consume a possibly problematic RFLAGS image. */
-    pushq $0x23
-    pushq %rdx
-    pushq $0x1b
-    pushq %rsi
+    /* Build the far-return frame in shared kernel .bss rather than on the
+       current task stack.  After CR3 changes, the CPU must read this frame
+       using the new address space; a task stack mapping is not a safe place
+       for that read on physical hardware. */
+    movq %rsi,x86_user_entry_frame+0(%rip)
+    movq $0x1b,x86_user_entry_frame+8(%rip)
+    movq %rdx,x86_user_entry_frame+16(%rip)
+    movq $0x23,x86_user_entry_frame+24(%rip)
 
     pushq %rdi
     pushq %rsi
@@ -38,6 +40,7 @@ x86_enter_user:
     popq %rdi
 
     movq %rdi,%cr3
+    leaq x86_user_entry_frame(%rip),%rsp
     lretq
 
 .section .rodata
@@ -45,6 +48,13 @@ x86_enter_user:
     .asciz "BOOT: USER ENTRY A pre-cr3\r\n"
 .Luser_frame_ready:
     .asciz "BOOT: USER ENTRY B lret-frame-ready\r\n"
+
+.section .bss
+.align 16
+.type x86_user_entry_frame,@object
+.size x86_user_entry_frame,32
+x86_user_entry_frame:
+    .zero 32
 
 .global x86_enter_user_return
 .type x86_enter_user_return,@function
