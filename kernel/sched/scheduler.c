@@ -99,6 +99,16 @@ void scheduler_tick(void){ticks++;}
 uint64_t scheduler_ticks(void){return ticks;}
 rix_task_id_t scheduler_current_id(void){return tasks[current_index].id;}
 uint32_t scheduler_runnable_count(void){uint32_t n=0;for(uint32_t i=0;i<RIX_MAX_TASKS;i++)if(tasks[i].state==TASK_RUNNABLE||tasks[i].state==TASK_RUNNING)n++;return n;}
+void scheduler_dump_states(void){
+ kernel_log("DEBUG: TASKS run=");kernel_log_dec(scheduler_runnable_count());kernel_log(" curidx=");
+ kernel_log_dec(current_index);kernel_log("\r\n");
+ for(uint32_t i=0;i<RIX_MAX_TASKS;i++){
+  if(tasks[i].state==TASK_UNUSED)continue;
+  kernel_log("DEBUG: TASK i=");kernel_log_dec(i);kernel_log(" id=");kernel_log_dec(tasks[i].id);
+  kernel_log(" st=");kernel_log_dec((uint64_t)tasks[i].state);kernel_log(" pid=");kernel_log_dec(tasks[i].process_pid);
+  kernel_log(i==current_index?" CUR":"");kernel_log("\r\n");
+ }
+}
 
 static int task_alloc(rix_task_t **out){
     for(uint32_t i=1;i<RIX_MAX_TASKS;i++){if(tasks[i].state==TASK_UNUSED||tasks[i].state==TASK_DEAD){*out=&tasks[i];return 0;}}

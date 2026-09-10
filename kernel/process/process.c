@@ -241,6 +241,7 @@ static int walk_one(uint64_t np,uint64_t va,const char*label){vmm_log_walk(np,va
 static uint64_t read_gdtr_base_hw(void){struct __attribute__((packed)){uint16_t limit;uint64_t base;}gdtr={0,0};__asm__ volatile("sgdt %0":"=m"(gdtr)::"memory");return gdtr.base;}
 static uint64_t read_idtr_base_hw(void){struct __attribute__((packed)){uint16_t limit;uint64_t base;}idtr={0,0};__asm__ volatile("sidt %0":"=m"(idtr)::"memory");return idtr.base;}
 void scheduler_yield(void);
+void scheduler_dump_states(void);
 extern void isr14(void);
 static uint64_t cr3trace_tags[CR3TRACE_N];
 static uint64_t cr3trace_a[CR3TRACE_N];
@@ -368,9 +369,10 @@ static int cr3_diagnose_target(rix_process_t*p,uint64_t old_cr3){
   kernel_log(" la57=");kernel_log_dec((uint64_t)((cx4>>12)&1ULL));
   kernel_log("\r\n");
   if(!allk||!allu){kernel_log("DEBUG: process_activate REFUSED unmapped target VA\r\n");serial_drain();return -1;}
- }
- serial_drain();
- return 0;
+  }
+  {static unsigned n=0;if(n<2){scheduler_dump_states();serial_drain();n++;}}
+  serial_drain();
+  return 0;
 }
 int process_validate_user_entry(pid_t pid,uint64_t user_rip,uint64_t user_rsp){
  rix_process_t*p=process_lookup(pid);uint64_t phys=0,flags=0;

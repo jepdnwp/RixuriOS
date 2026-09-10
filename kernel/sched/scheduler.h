@@ -23,3 +23,6 @@ __attribute__((noreturn)) void scheduler_exit_current(void);
 void scheduler_yield(void);
 rix_task_id_t scheduler_current_id(void);
 uint32_t scheduler_runnable_count(void);
+/* Read-only dump of all task slots (id/state/pid) for triage + Phase-34
+ * evidence. No locks, no state change; safe pre/post CR3 switch. */
+void scheduler_dump_states(void);
