@@ -457,6 +457,23 @@ loadval=read_cr3_hw();
  {static unsigned n=0;if(n<2){uint64_t rf=read_rflags_hw();cr3_switch_seq++;kernel_log("DEBUG: SW#");kernel_log_dec(cr3_switch_seq);kernel_log(" pid=");kernel_log_dec((uint64_t)pid);kernel_log(" before mov cr3 target=");kernel_log_hex(loadval);kernel_log(" current=");kernel_log_hex(read_cr3_hw());kernel_log(" IF=");kernel_log_dec((uint64_t)((rf>>9)&1ULL));kernel_log("\r\n");serial_drain();n++;}}
  {int pr=cr3_probe_root(loadval);if(pr!=0){kernel_log("DEBUG: ROOT probe FAILED reason=");if(pr<0){kernel_log("-");}kernel_log_dec((uint64_t)(pr<0?-pr:pr));kernel_log("\r\n");serial_drain();return -1;}}
  {static unsigned n=0;if(n<2){uint64_t self=read_cr3_hw();load_cr3_raw(self);kernel_log("DEBUG: CR3 selftest ok cur=");kernel_log_hex(read_cr3_hw());kernel_log("\r\n");serial_drain();n++;}}
+ /* Probe-then-commit rewrite (P0 HW triage): execute fetch + one push/pop
+  * on the TARGET, then return to current tables BEFORE printing anything.
+  * Target execution is proven by the return, not by inspection: if this
+  * block never comes back, the target tables cannot execute/fetch/stack
+  * despite passing every walk. Register-only, call-free; IF stays 0
+  * throughout (no interrupt window). Gated like its neighbors. */
+ {static unsigned n=0;if(n<2){
+  uint64_t back=read_cr3_hw();
+  kernel_log("DEBUG: PROBE try tgt=");kernel_log_hex(loadval);kernel_log("\r\n");serial_drain();
+  __asm__ volatile(
+   "movq %0,%%cr3\n\t"
+   "pushq %%rax\n\t"
+   "popq %%rax\n\t"
+   "movq %1,%%cr3\n\t"
+   :: "r"(loadval), "r"(back) : "rax", "memory");
+  kernel_log("DEBUG: PROBE ok back=");kernel_log_hex(read_cr3_hw());kernel_log("\r\n");serial_drain();
+  n++;}}
  load_cr3_raw(loadval);
  /* Stackless post-switch probes (no calls, no memory, no stack except the
   * probe push itself): 'F' proves instruction fetch works on the new
