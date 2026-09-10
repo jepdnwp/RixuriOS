@@ -141,6 +141,23 @@ int vfs_dup(uint64_t pid, int old_fd, int *new_fd) {
     return 0;
 }
 
+int vfs_dup_min(uint64_t pid,int old_fd,int minimum_fd,int *new_fd){
+    size_t ps;if(pid_slot(pid,&ps)||old_fd<0||old_fd>=RIX_VFS_FD_MAX||minimum_fd<0||minimum_fd>=RIX_VFS_FD_MAX||!new_fd||!fds[ps][old_fd].used)return -1;
+    int fd=-1;for(int i=minimum_fd;i<(int)RIX_VFS_FD_MAX;i++)if(!fds[ps][i].used){fd=i;break;}
+    if(fd<0||retain_fd(&fds[ps][old_fd],&fds[ps][fd])!=0)return -2;
+    *new_fd=fd;return 0;
+}
+
+int vfs_get_fd_flags(uint64_t pid,int fd,uint32_t *flags){
+    size_t ps;if(pid_slot(pid,&ps)||fd<0||fd>=RIX_VFS_FD_MAX||!flags||!fds[ps][fd].used)return -1;
+    *flags=(fds[ps][fd].writable?RIX_VFS_O_WRONLY:0u)|(fds[ps][fd].append?RIX_VFS_O_APPEND:0u);return 0;
+}
+
+int vfs_set_fd_flags(uint64_t pid,int fd,uint32_t flags){
+    size_t ps;if(pid_slot(pid,&ps)||fd<0||fd>=RIX_VFS_FD_MAX||!fds[ps][fd].used||((flags&~RIX_VFS_O_APPEND)!=0))return -1;
+    fds[ps][fd].append=(uint8_t)((flags&RIX_VFS_O_APPEND)!=0);return 0;
+}
+
 int vfs_dup_to(uint64_t pid, int old_fd, int new_fd) {
     size_t ps;
     if (pid_slot(pid, &ps) || old_fd < 0 || old_fd >= RIX_VFS_FD_MAX ||
