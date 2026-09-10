@@ -13,11 +13,11 @@ OBJ := kernel/boot.o kernel/main.o kernel/serial.o kernel/user_init_blob.o \
  kernel/mm/pmm.o kernel/mm/vmm.o kernel/mm/ptmap.o kernel/mm/uaccess.o kernel/mm/heap.o kernel/sync/lock.o kernel/sync/waitqueue.o kernel/ipc/channel.o kernel/ipc/pipe.o kernel/ipc/shared_memory.o kernel/tty/tty.o \
          kernel/storage/block.o kernel/storage/block_cache.o kernel/storage/nvme.o kernel/net/net.o kernel/net/ethernet.o kernel/net/arp.o kernel/net/ipv4.o kernel/net/ipv6.o kernel/net/udp.o kernel/net/tcp.o kernel/net/loopback.o kernel/net/socket.o kernel/net/device.o kernel/net/stack.o kernel/net/dhcp.o kernel/net/rtl8125.o kernel/net/e1000.o kernel/usb/xhci.o kernel/usb/usb.o kernel/usb/hid.o kernel/time/rtc.o kernel/time/time.o kernel/power/power.o kernel/tty/font_psf.o
 
-PROGRAM_NAMES := echo cat args grep true false sleep ls mkdir rm rmdir touch stat ln head tail wc cut tr sort uniq env printf pwd which kill ps uname du cp mv find xargs sed test tee basename dirname seq id whoami date ping curl host help hostname credtest auditcheck capdelegatecheck capdelegatetest accountctl sessiontest sessionlisttest killtest metatest renametest authcheck abi-negative proc-test pipe-stress rixtest
+PROGRAM_NAMES := echo cat args grep true false sleep ls mkdir rm rmdir touch stat ln head tail wc cut tr sort uniq env printf pwd which kill ps uname du cp mv find xargs sed test tee basename dirname seq id whoami date ping curl host help hostname credtest auditcheck capdelegatecheck capdelegatetest accountctl sessiontest sessionlisttest killtest metatest renametest authcheck abi-negative proc-test pipe-stress rixtest posix-test
 PROGRAM_ELFS := $(addprefix build/programs/,$(addsuffix .elf,$(PROGRAM_NAMES)))
 PROGRAM_START_OBJ := build/programs/start.o
 
-.PHONY: all clean check image iso-test powerloss-test test-all run qemu build-run test user-init programs rixfs-image usb-test hid-test tty-test shell-test pipe-test net-test hosts-test rtl-test e1000-test acpi-test rixfs-mount-test auth-test phase20-test ring3-test
+.PHONY: all clean check image iso-test powerloss-test test-all run qemu build-run test user-init programs rixfs-image usb-test hid-test tty-test shell-test pipe-test net-test hosts-test rtl-test e1000-test acpi-test rixfs-mount-test auth-test phase20-test ring3-test sysroot
 all: build/kernel.elf
 
 build:
@@ -35,9 +35,9 @@ build/user_init.o: user/init.c user/shell/shell.h user/libc/include/unistd.h | b
 	$(CC) $(USER_INIT_CFLAGS) -c $< -o $@
 build/user_shell.o: user/shell/shell.c user/shell/shell.h | build
 	$(CC) $(USER_INIT_CFLAGS) -c $< -o $@
-build/user_unistd.o: user/libc/src/unistd.c user/libc/include/unistd.h user/libc/include/signal.h user/libc/include/fcntl.h | build
+build/user_unistd.o: user/libc/src/unistd.c user/libc/include/unistd.h user/libc/include/signal.h user/libc/include/fcntl.h user/libc/include/time.h user/libc/include/errno.h user/libc/include/string.h user/libc/include/sys/mman.h user/libc/include/sys/socket.h user/libc/include/netinet/in.h user/libc/include/poll.h user/libc/include/sys/ioctl.h user/libc/include/sys/stat.h user/libc/include/sys/types.h | build
 	$(CC) $(USER_INIT_CFLAGS) -c $< -o $@
-build/user_libc.o: user/libc/src/libc.c user/libc/include/string.h user/libc/include/stdlib.h user/libc/include/errno.h user/libc/include/ctype.h user/libc/include/stdio.h user/libc/include/fcntl.h user/libc/include/dirent.h user/libc/include/sys/stat.h user/libc/include/time.h user/libc/include/stddef.h user/libc/include/stdint.h | build
+build/user_libc.o: user/libc/src/libc.c user/libc/include/string.h user/libc/include/stdlib.h user/libc/include/errno.h user/libc/include/ctype.h user/libc/include/stdio.h user/libc/include/fcntl.h user/libc/include/dirent.h user/libc/include/sys/stat.h user/libc/include/time.h user/libc/include/stddef.h user/libc/include/stdint.h user/libc/include/signal.h user/libc/include/sys/time.h user/libc/include/sys/types.h user/libc/include/sys/socket.h user/libc/include/netinet/in.h user/libc/include/arpa/inet.h user/libc/include/pthread.h user/libc/include/locale.h user/libc/include/wchar.h user/libc/include/unistd.h | build
 	$(CC) $(USER_INIT_CFLAGS) -c $< -o $@
 build/user_init.elf: build/user_init.o build/user_shell.o build/user_unistd.o build/user_libc.o user/init.ld | build
 	$(LD) -nostdlib -z max-page-size=0x1000 -T user/init.ld -o $@ build/user_init.o build/user_shell.o build/user_unistd.o build/user_libc.o
@@ -151,6 +151,7 @@ build/rixfs.img: programs scripts/build-rixfs-image.py etc/hosts etc/hostname et
 				--dir /sys \
 				--dir /home \
 				--file /usr/bin/abi-negative=build/programs/abi-negative.elf \
+		--file /usr/bin/posix-test=build/programs/posix-test.elf \
 		--file /usr/bin/proc-test=build/programs/proc-test.elf \
 		--file /usr/bin/pipe-stress=build/programs/pipe-stress.elf \
 		--file /usr/bin/rixtest=build/programs/rixtest.elf \
@@ -256,6 +257,9 @@ e1000-test: | build
 
 test: check usb-test hid-test tty-test shell-test pipe-test net-test libc-test hosts-test rtl-test e1000-test acpi-test rixfs-mount-test symlink-test
 	@echo 'Static kernel build checks completed.'
+
+sysroot:
+	bash ./scripts/musl-sysroot.sh
 
 clean:
 	rm -rf build kernel/*.o kernel/mm/*.o kernel/arch/x86_64/*.o kernel/pci/*.o kernel/sched/*.o kernel/process/*.o kernel/syscall/*.o kernel/vfs/*.o kernel/fs/*.o kernel/elf/*.o kernel/sync/*.o kernel/storage/*.o kernel/usb/*.o kernel/ipc/*.o kernel/tty/*.o kernel/time/*.o kernel/power/*.o
