@@ -14,6 +14,13 @@ x86_enter_user:
     popq %rsi
     popq %rdi
 
+    /* LRETQ changes CS/SS but does not reload DS/ES.  Leaving the kernel
+       data selector cached here makes the first CPL3 data access fault on
+       real CPUs.  Load the user data selector while still at CPL0. */
+    movw $0x23,%ax
+    movw %ax,%ds
+    movw %ax,%es
+
     /* Build a long-mode far-return frame: RIP, CS, RSP, SS.  Unlike IRETQ,
        LRETQ does not consume a possibly problematic RFLAGS image. */
     pushq $0x23
