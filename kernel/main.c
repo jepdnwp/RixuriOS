@@ -28,6 +28,7 @@
 #include "time/time.h"
 #include "net/e1000.h"
 #include "net/rtl8125.h"
+#include "build_id.h"
 #include "net/device.h"
 #include "net/stack.h"
 #include "net/dhcp.h"
@@ -299,5 +300,5 @@ void kernel_main(const rixuri_boot_info_t *boot){
  else if(pic_init()==0){lapic_enable_pic_extint();idt_enable();klog_write("IRQ: IOAPIC unavailable; LAPIC ExtINT/PIC fallback enabled\r\n");}
  else klog_write("IRQ: no usable interrupt controller; interrupts remain disabled\r\n");
          klog_write("xHCI: hotplug worker task=");klog_write_dec(xhci_worker_task);klog_write(" serial TTY worker task=");klog_write_dec(serial_worker_task);klog_write(" kbd poll task=");klog_write_dec(kbd_poll_task);klog_write(" net poll task=");klog_write_dec(network_poll_task);klog_write("\r\n");
- klog_write("Core services: timer/scheduler/process/syscall/PCI/NVMe/xHCI/HID/block/VFS/time initialized\r\n");klog_write("LAPIC: initialized, id=");klog_write_dec(lapic_id());klog_write("\r\n");klog_write("RIXURI:KERNEL_READY\r\n");for(;;)scheduler_yield();
+  klog_write("Core services: timer/scheduler/process/syscall/PCI/NVMe/xHCI/HID/block/VFS/time initialized\r\n");klog_write("BUILD: ");klog_write(RIXURI_BUILD_ID);klog_write("\r\n");klog_write("LAPIC: initialized, id=");klog_write_dec(lapic_id());klog_write("\r\n");klog_write("RIXURI:KERNEL_READY\r\n");for(;;)scheduler_yield();
 }
