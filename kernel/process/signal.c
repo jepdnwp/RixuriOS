@@ -21,6 +21,13 @@ int process_signal_mask(pid_t pid,uint64_t mask){
     return 0;
 }
 
+int process_signal_get_mask(pid_t pid,uint64_t *mask){
+    rix_process_t *p=process_lookup(pid);
+    if(!p||!mask||p->state==RIX_PROC_UNUSED||p->state==RIX_PROC_ZOMBIE)return -1;
+    *mask=p->signal_mask;
+    return 0;
+}
+
 int process_signal_pending(pid_t pid,uint64_t *pending){
     rix_process_t *p=process_lookup(pid);
     if(!p||!pending)return -1;

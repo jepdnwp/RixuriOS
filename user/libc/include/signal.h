@@ -37,4 +37,5 @@ int sigaddset(sigset_t *set, int signal);
 int sigdelset(sigset_t *set, int signal);
 int sigismember(const sigset_t *set, int signal);
 int sigpending(sigset_t *set);
+int sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
 int raise(int signal);

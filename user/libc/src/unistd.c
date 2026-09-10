@@ -74,6 +74,7 @@ int sigaddset(sigset_t *set,int signal){if(!set||!signal_bit_valid(signal)){errn
 int sigdelset(sigset_t *set,int signal){if(!set||!signal_bit_valid(signal)){errno=RIX_EINVAL;return -1;}*set&=~(1ULL<<(signal-1));return 0;}
 int sigismember(const sigset_t *set,int signal){if(!set||!signal_bit_valid(signal)){errno=RIX_EINVAL;return -1;}return(*set&(1ULL<<(signal-1)))!=0;}
 int sigpending(sigset_t *set){if(!set){errno=RIX_EFAULT;return -1;}return(int)rix_int_result(rix_sys(127,(long)set,0,0));}
+int sigprocmask(int how,const sigset_t *set,sigset_t *oldset){return(int)rix_int_result(rix_sys4(142,how,(long)set,0,(long)oldset));}
 int raise(int signal){return kill(getpid(),(uint32_t)signal);}
 int socket_open(int type){return(int)rix_int_result(rix_sys(41,type,0,0));}
 int socket_bind(int fd,rix_net_endpoint_t endpoint){return(int)rix_int_result(rix_sys(42,fd,(long)&endpoint,0));}

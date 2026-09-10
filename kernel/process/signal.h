@@ -9,5 +9,6 @@
 
 int process_signal_send(pid_t pid, unsigned signal);
 int process_signal_mask(pid_t pid, uint64_t mask);
+int process_signal_get_mask(pid_t pid, uint64_t *mask);
 int process_signal_pending(pid_t pid, uint64_t *pending);
 int process_signal_take(pid_t pid, unsigned *signal);
