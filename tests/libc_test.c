@@ -10,6 +10,8 @@
 #include <time.h>
 #include <limits.h>
 #include <stdbool.h>
+#include <stdint.h>
+#include <stddef.h>
 
 static unsigned char test_heap[128u * 1024u];
 static size_t test_break;
@@ -33,6 +35,8 @@ int clock_gettime(rix_timespec_t *out) { if (!out) return -1; out->sec = 1700000
 int main(void) {
     bool headers_ok = true;
     assert(headers_ok && INT_MAX > 0 && UINT_MAX > INT_MAX && SIZE_MAX > 0 && PATH_MAX >= 256);
+    struct header_probe { char tag; uint32_t value; };
+    assert(sizeof(uint64_t) == 8 && UINTPTR_MAX >= UINT32_MAX && offsetof(struct header_probe, value) >= 1);
     char source[] = "rixurios";
     char buffer[32];
     assert(strlen(source) == 8);
