@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include "kernel/arch/x86_64/smp.h"
 #include "kernel/arch/x86_64/acpi.h"
+#include "kernel/mm/vmm.h"
 
 /* HW stubs: this TU exercises the pure smp_build_map core plus the
  * buffer-backed trampoline setup. IPI/PMM/VMM/log calls are stubbed. */
@@ -30,6 +31,28 @@ int lapic_send_sipi(uint32_t apic_id, uint8_t vector) {
 }
 static uint64_t stub_pml4 = 0x200000ULL;
 uint64_t vmm_kernel_pml4(void) { return stub_pml4; }
+uint64_t vmm_current_pml4(void) { return stub_pml4; }
+uint64_t smp_read_cr3_hw(void) { return stub_pml4; }
+static int walk_result = 1;
+static int map_calls;
+static uint64_t map_va, map_pa, map_flags;
+int vmm_walk_in_pml4(uint64_t pml4, uint64_t va, uint64_t *e0, uint64_t *e1,
+                     uint64_t *e2, uint64_t *e3, uint64_t *phys, uint64_t *flags) {
+    (void)pml4; (void)va;
+    if (e0) *e0 = 0;
+    if (e1) *e1 = 0;
+    if (e2) *e2 = 0;
+    if (e3) *e3 = 0;
+    if (phys) *phys = 0;
+    if (flags) *flags = 0;
+    return walk_result;
+}
+int vmm_map_page_in_pml4(uint64_t pml4, uint64_t va, uint64_t pa, uint64_t flags) {
+    (void)pml4;
+    ++map_calls;
+    map_va = va; map_pa = pa; map_flags = flags;
+    return 0;
+}
 static uint8_t fake_pages[4][4096];
 static uint64_t fake_phys[4];
 static size_t fake_count;
@@ -125,6 +148,8 @@ int main(void) {
     assert(templ0[patch_off + 4] == SMP_TRAMP_SEL_CODE64 &&
            templ0[patch_off + 5] == 0x00);
     assert(long_off > patch_off + 4);
+    assert(SMP_TRAMP_CRUMB_OFF > SMP_TRAMP_DATA_ENTRY + 8);
+    assert(SMP_TRAMP_CRUMB_OFF < SMP_TRAMP_STACK_TOP_OFF);
 
     static uint8_t page[4096];
     for (size_t i = 0; i < sizeof(page); ++i) page[i] = 0;
@@ -154,6 +179,7 @@ int main(void) {
     stored = 0;
     for (size_t i = 0; i < 8; ++i) stored |= (uint64_t)page[SMP_TRAMP_DATA_ENTRY + i] << (8 * i);
     assert(stored == 0x400000ULL);
+    assert(page[SMP_TRAMP_CRUMB_OFF] == 0);
     assert(smp_setup_trampoline(0, 0x8000ULL, 0x100000ULL, stack_top, 0x400000ULL) != 0);
     assert(smp_setup_trampoline(page, 0x100000ULL, 0x100000ULL, stack_top, 0x400000ULL) != 0);
     assert(smp_setup_trampoline(page, 0x8000ULL, 0x100000000ULL, stack_top, 0x400000ULL) == -2);
@@ -168,8 +194,15 @@ int main(void) {
     stub_lapic = 0;
     ipi_count = 0;
     reserved_count = 0;
+    walk_result = 1;
+    map_calls = 0;
     assert(smp_discover() == 0 && smp_cpu_count() == 4);
     assert(smp_start_aps() == 1);
+    assert(map_calls == 3 && map_va == 0xA000ULL && map_pa == 0xA000ULL);
+    assert((map_flags & RIXURI_PTE_PRESENT) != 0);
+    assert((map_flags & RIXURI_PTE_WRITE) != 0);
+    assert((map_flags & RIXURI_PTE_NX) != 0);
+    assert((map_flags & RIXURI_PTE_USER) == 0);
     assert(smp_online_count() == 1);
     assert(smp_cpu(1)->state == SMP_CPU_PRESENT && smp_cpu(2)->state == SMP_CPU_PRESENT);
     assert(smp_cpu(1)->trampoline_phys == 0x8000ULL);

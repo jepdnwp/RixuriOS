@@ -55,9 +55,14 @@ smp_map_t: cpu[64], count, online, bsp_apic, bsp_index
 ## QEMU acceptance gates
 
 - A: `-smp 4` boots to `SHELL READY`; log shows `SMP: cpus=4 online=1
-  bsp_apic=0`; `-smp 1` and default runs unchanged.
-- B: `SMP: ... online=4` with per-AP `AP <id> online` lines; no UP
-  regression on single-CPU.
+  bsp_apic=0`; `-smp 1` and default runs unchanged. DONE (commit 0d6e282).
+- B: `SMP: online=4` with per-AP `AP <id> online` lines; no UP
+  regression on single-CPU. IN PROGRESS (2026-09-10): INIT-SIPI-SIPI
+  sequence, trampoline (real -> prot32 -> long mode) and BSP-side table
+  setup implemented with reset-proof serial breadcrumbs (R/P/L/D/G/T)
+  and host unit tests. Observed: AP prints R/P/L/D, reads CR3 slot and
+  entry slot; entry transfer still under diagnosis (no `online=4` yet,
+  no UP regression). No PASS claimed until `online=4` is observed.
 - D: IPI ping/pong + shootdown counter test, cross-CPU atomic counter.
 - E: 10+ processes across CPUs, no starvation, `preemption_test`.
 

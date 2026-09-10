@@ -7,6 +7,10 @@
 #define SMP_TRAMP_DATA_CR3 0x280
 #define SMP_TRAMP_DATA_STACK 0x288
 #define SMP_TRAMP_DATA_ENTRY 0x290
+#define SMP_TRAMP_CRUMB_OFF 0x300
+#define SMP_TRAMP_CRUMB_REAL 0xAAu
+#define SMP_TRAMP_CRUMB_PROT32 0xBBu
+#define SMP_TRAMP_CRUMB_LONG 0xCCu
 #define SMP_TRAMP_TEMPLATE_MAX 0x200
 #define SMP_TRAMP_STACK_TOP_OFF 0x1000
 #define SMP_TRAMP_SEL_CODE32 0x08
@@ -81,6 +85,8 @@ smp_cpu_state_t smp_cpu_state(size_t index);
 int smp_build_gdt(uint8_t *page, uint64_t page_phys);
 /* Assembled template size in bytes. */
 size_t smp_trampoline_size(void);
+/* CPL0-only CR3 read for diagnostics (host-stubbed in unit tests). */
+uint64_t smp_read_cr3_hw(void);
 /* Copy template to page, build GDT, write data + long-jump patch.
  * Returns 0, -1 on bad input, -2 when CR3 is not reachable in 32-bit
  * mode (kernel PML4 above 4G). Host-testable (buffer-backed). */

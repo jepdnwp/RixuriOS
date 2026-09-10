@@ -29,6 +29,14 @@ static void spin_pause(uint64_t iters) {
     for (volatile uint64_t i = 0; i < iters; ++i) __asm__ volatile("pause" ::: "memory");
 }
 
+/* CPL0-only; the host unit test overrides it with a stub (userspace
+ * cannot read CR3). Weak so the test double links without conflict. */
+__attribute__((weak)) uint64_t smp_read_cr3_hw(void) {
+    uint64_t value = 0;
+    __asm__ volatile("mov %%cr3,%0" : "=r"(value) :: "memory");
+    return value;
+}
+
 int smp_build_map(const acpi_cpu_info_t *entries, size_t n,
                   uint32_t bsp_apic_id, int bsp_fallback, smp_map_t *out) {
     if (!out) return -1;
@@ -146,6 +154,7 @@ int smp_setup_trampoline(uint8_t *page, uint64_t page_phys, uint64_t cr3,
     if (stack_top <= page_phys || stack_top > page_phys + SMP_TRAMP_STACK_TOP_OFF) return -1;
     const uint8_t *src = (const uint8_t *)smp_trampoline_start;
     for (size_t i = 0; i < size; ++i) page[i] = src[i];
+    page[SMP_TRAMP_CRUMB_OFF] = 0;
     if (smp_build_gdt(page, page_phys) != 0) return -1;
     uint64_t patch_off = (uint64_t)(smp_trampoline_patch_longjump - smp_trampoline_start);
     uint64_t long_off = (uint64_t)(smp_trampoline_longmode - smp_trampoline_start);
@@ -166,6 +175,9 @@ int smp_setup_trampoline(uint8_t *page, uint64_t page_phys, uint64_t cr3,
 
 void ap_entry(void) {
     uint32_t id = lapic_id();
+    kernel_log("AP");
+    kernel_log_dec(id);
+    kernel_log(" E\r\n");
     for (size_t i = 0; i < smp_map.count; ++i) {
         if (smp_map.cpu[i].apic_id == id && !smp_map.cpu[i].is_bsp) {
             smp_map.cpu[i].state = SMP_CPU_ONLINE;
@@ -211,9 +223,27 @@ static uint64_t smp_find_trampoline_page(void) {
 int smp_start_aps(void) {
     if (!smp_map.count) return -1;
     if (smp_map.count < 2) return (int)smp_map.online;
-    uint64_t kernel_pml4 = vmm_kernel_pml4();
-    if (!kernel_pml4 || kernel_pml4 >= 0x100000000ULL) {
-        kernel_log("SMP: kernel PML4 above 4G, AP startup deferred\r\n");
+    /* The AP fetches code/stack/data through identity-mapped low memory
+     * under the tables it will run on. Use the currently active PML4
+     * (proven by the BSP itself) rather than assuming the kernel PML4
+     * carries a low identity map, and enforce that map explicitly. */
+    uint64_t ap_pml4 = vmm_current_pml4();
+    if (!ap_pml4) ap_pml4 = vmm_kernel_pml4();
+    {
+        uint64_t hw_cr3 = smp_read_cr3_hw();
+        kernel_log("SMP: cr3hw=");
+        kernel_log_hex(hw_cr3);
+        kernel_log(" cur=");
+        kernel_log_hex(vmm_current_pml4());
+        kernel_log(" kern=");
+        kernel_log_hex(vmm_kernel_pml4());
+        kernel_log("\r\n");
+    }
+    kernel_log("SMP: AP entry=");
+    kernel_log_hex((uint64_t)(uintptr_t)ap_entry);
+    kernel_log("\r\n");
+    if (!ap_pml4 || ap_pml4 >= 0x100000000ULL) {
+        kernel_log("SMP: AP tables above 4G, AP startup deferred\r\n");
         return (int)smp_map.online;
     }
     for (size_t i = 0; i < smp_map.count; ++i) {
@@ -238,16 +268,35 @@ int smp_start_aps(void) {
         /* Reservation record: pmm_reserve_page() is a no-op below 1M, so
          * the map entry itself is the ownership record (see scan). */
         cpu->trampoline_phys = page;
+        uint64_t we0 = 0, we1 = 0, we2 = 0, we3 = 0, wphys = 0, wflags = 0;
+        int wrc = vmm_walk_in_pml4(ap_pml4, page, &we0, &we1, &we2, &we3,
+                                   &wphys, &wflags);
+        if (wrc != 0 || !(wflags & RIXURI_PTE_PRESENT) || wphys != page) {
+            if (vmm_map_page_in_pml4(ap_pml4, page, page,
+                    RIXURI_PTE_PRESENT | RIXURI_PTE_WRITE | RIXURI_PTE_NX) != 0) {
+                kernel_log("SMP: AP identity map failed\r\n");
+                continue;
+            }
+            kernel_log("SMP: AP identity mapped\r\n");
+        }
         uint8_t *buffer = vmm_phys_ptr(page);
         if (!buffer) {
             kernel_log("SMP: trampoline page not addressable\r\n");
             continue;
         }
         uint64_t stack_top = page + SMP_TRAMP_STACK_TOP_OFF - 8u;
-        if (smp_setup_trampoline(buffer, page, kernel_pml4, stack_top,
+        if (smp_setup_trampoline(buffer, page, ap_pml4, stack_top,
                                  (uint64_t)(uintptr_t)ap_entry) != 0) {
             kernel_log("SMP: trampoline setup failed\r\n");
             continue;
+        }
+        {
+            uint64_t rb = 0;
+            for (size_t i = 0; i < 8; ++i)
+                rb |= (uint64_t)buffer[SMP_TRAMP_DATA_ENTRY + i] << (8 * i);
+            kernel_log("SMP: AP rb=");
+            kernel_log_hex(rb);
+            kernel_log("\r\n");
         }
         cpu->state = SMP_CPU_STARTING;
         __asm__ volatile("mfence" ::: "memory");
@@ -293,7 +342,13 @@ int smp_start_aps(void) {
         if (online) {
             smp_map.online++;
         } else {
-            kernel_log("SMP: AP start timeout\r\n");
+            /* Crumb via the mapped buffer, never the raw phys address:
+             * identity holds on the kernel, but the abstraction (and the
+             * host test double) requires the mapped pointer. */
+            uint8_t crumb = buffer[SMP_TRAMP_CRUMB_OFF];
+            kernel_log("SMP: AP start timeout crumb=");
+            kernel_log_hex(crumb);
+            kernel_log("\r\n");
             cpu->state = SMP_CPU_PRESENT;
         }
     }
