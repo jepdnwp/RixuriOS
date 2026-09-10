@@ -391,11 +391,29 @@ int process_validate_user_entry(pid_t pid,uint64_t user_rip,uint64_t user_rsp){
  * corruption between the earlier dump and the switch would show here.
  * Deliberately READ-ONLY: writability of this page is already proven (the
  * creation-time writes read back correctly), and no new write belongs in the
- * switch path. 0=readable, -1=unreadable (caller must refuse the switch). */
+ * switch path. 0=readable, -1=unreadable (caller must refuse the switch).
+ * Extension (HW CR3-switch freeze triage): also dumps the PML4[0] subtree
+ * leaves covering low memory for BOTH the target root and the currently
+ * active root. A frozen physical target with divergent leaves names the
+ * corrupt level in a single boot; all reads go through the current
+ * (proven) tables, never the target mapping. */
+static uint64_t cr3_probe_entry(uint64_t table_phys, size_t index){
+ uint64_t *table=(uint64_t*)vmm_phys_ptr(table_phys&~0xFFFULL);
+ if(!table||index>=512)return 0;
+ return table[index];
+}
 static int cr3_probe_root(uint64_t np){
  volatile uint64_t*t=(volatile uint64_t*)vmm_phys_ptr(np);
  if(!t)return -1;
  {static unsigned n=0;if(n<2){kernel_log("DEBUG: ROOT fresh pml40=");kernel_log_hex(t[0]);kernel_log(" pml41=");kernel_log_hex(t[1]);kernel_log(" pml42=");kernel_log_hex(t[2]);kernel_log(" pml43=");kernel_log_hex(t[3]);kernel_log("\r\n");if(n<2){n++;}}}
+ {static unsigned n=0;if(n<2){
+  uint64_t cur=read_cr3_hw();
+  uint64_t te0=cr3_probe_entry(np,0),te1=cr3_probe_entry(te0,0),te2=cr3_probe_entry(te1,0);
+  uint64_t ce0=cr3_probe_entry(cur,0),ce1=cr3_probe_entry(ce0,0),ce2=cr3_probe_entry(ce1,0);
+  kernel_log("DEBUG: TSUB tgt=");kernel_log_hex(te0);kernel_log(" ");kernel_log_hex(te1);kernel_log(" ");kernel_log_hex(te2);kernel_log("\r\n");
+  kernel_log("DEBUG: TSUB cur=");kernel_log_hex(ce0);kernel_log(" ");kernel_log_hex(ce1);kernel_log(" ");kernel_log_hex(ce2);kernel_log("\r\n");
+  n++;
+ }}
  return 0;
 }
 static volatile int process_user_entry_deferred;
@@ -429,6 +447,7 @@ loadval=read_cr3_hw();
 #endif
 {static unsigned n=0;if(n<2){uint64_t rf=read_rflags_hw();kernel_log("DEBUG: before mov cr3 target=");kernel_log_hex(loadval);kernel_log(" current=");kernel_log_hex(read_cr3_hw());kernel_log(" IF=");kernel_log_dec((uint64_t)((rf>>9)&1ULL));kernel_log("\r\n");serial_drain();n++;}}
  {int pr=cr3_probe_root(loadval);if(pr!=0){kernel_log("DEBUG: ROOT probe FAILED reason=");if(pr<0){kernel_log("-");}kernel_log_dec((uint64_t)(pr<0?-pr:pr));kernel_log("\r\n");serial_drain();return -1;}}
+ {static unsigned n=0;if(n<2){uint64_t self=read_cr3_hw();load_cr3_raw(self);kernel_log("DEBUG: CR3 selftest ok cur=");kernel_log_hex(read_cr3_hw());kernel_log("\r\n");serial_drain();n++;}}
  load_cr3_raw(loadval);
  /* Stackless post-switch probes (no calls, no memory, no stack except the
   * probe push itself): 'F' proves instruction fetch works on the new
