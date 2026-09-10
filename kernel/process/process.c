@@ -415,6 +415,12 @@ static int cr3_probe_root(uint64_t np){
   uint64_t ce0=cr3_probe_entry(cur,0),ce1=cr3_probe_entry(ce0,0),ce2=cr3_probe_entry(ce1,0);
   kernel_log("DEBUG: TSUB tgt=");kernel_log_hex(te0);kernel_log(" ");kernel_log_hex(te1);kernel_log(" ");kernel_log_hex(te2);kernel_log("\r\n");
   kernel_log("DEBUG: TSUB cur=");kernel_log_hex(ce0);kernel_log(" ");kernel_log_hex(ce1);kernel_log(" ");kernel_log_hex(ce2);kernel_log("\r\n");
+  uint64_t kroot=vmm_kernel_pml4();
+  uint64_t *kt=(uint64_t*)vmm_phys_ptr(kroot);
+  uint64_t kslot0=kt?kt[0]:~0ULL;
+  kernel_log("DEBUG: PML40 tgt=");kernel_log_hex(t[0]);kernel_log(" kern=");kernel_log_hex(kslot0);
+  kernel_log(" tgtroot=");kernel_log_hex(np);kernel_log(" kroot=");kernel_log_hex(kroot);
+  kernel_log(" cur=");kernel_log_hex(cur);kernel_log("\r\n");
   n++;
  }}
  return 0;
