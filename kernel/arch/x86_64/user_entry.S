@@ -5,15 +5,16 @@
 .type x86_enter_user,@function
 x86_enter_user:
     cli
-    movq %rdi,%cr3
-    /* process_activate defers the user CR3 load to this trampoline.  Keep
-       the software walker/uaccess view in lockstep before the first user
-       instruction can issue int 0x80.  current_pml4_phys is in the shared
-       low identity mapping, so this store remains valid after the CR3 load. */
-    movq %rdi,current_pml4_phys(%rip)
-    /* Do not call C code after loading the user CR3.  The first user entry
-       must remain stackless with respect to kernel globals and framebuffer
-       state on physical machines; only the iret frame is constructed here. */
+    /* Marker A: still on the known-good kernel CR3 and stack. */
+    pushq %rdi
+    pushq %rsi
+    pushq %rdx
+    leaq .Luser_pre_cr3(%rip),%rdi
+    call kernel_log
+    popq %rdx
+    popq %rsi
+    popq %rdi
+
     movw $0x23,%ax
     movw %ax,%ds
     movw %ax,%es
@@ -21,13 +22,33 @@ x86_enter_user:
     pushq %rdx
     pushfq
     popq %rax
-    /* Do not expose a pending physical IRQ during the CPL3 transition. */
+    /* Keep IF clear during the CPL3 transition. */
     orq $0x002,%rax
     andq $~0x3000,%rax
     pushq %rax
     pushq $0x1b
     pushq %rsi
+
+    /* Marker B: the complete IRET frame exists on the kernel stack. */
+    pushq %rdi
+    pushq %rsi
+    pushq %rdx
+    leaq .Luser_frame_ready(%rip),%rdi
+    call kernel_log
+    popq %rdx
+    popq %rsi
+    popq %rdi
+
+    /* Marker B is the last C call. CR3 and software tracking follow it. */
+    movq %rdi,%cr3
+    movq %rdi,current_pml4_phys(%rip)
     iretq
+
+.section .rodata
+.Luser_pre_cr3:
+    .asciz "BOOT: USER ENTRY A pre-cr3\r\n"
+.Luser_frame_ready:
+    .asciz "BOOT: USER ENTRY B iret-frame-ready\r\n"
 
 .global x86_enter_user_return
 .type x86_enter_user_return,@function
