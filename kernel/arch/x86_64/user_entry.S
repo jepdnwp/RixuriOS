@@ -5,7 +5,6 @@
 .type x86_enter_user,@function
 x86_enter_user:
     cli
-    /* Marker A: still on the known-good kernel CR3 and stack. */
     pushq %rdi
     pushq %rsi
     pushq %rdx
@@ -15,21 +14,13 @@ x86_enter_user:
     popq %rsi
     popq %rdi
 
-    movw $0x23,%ax
-    movw %ax,%ds
-    movw %ax,%es
+    /* Build a long-mode far-return frame: RIP, CS, RSP, SS.  Unlike IRETQ,
+       LRETQ does not consume a possibly problematic RFLAGS image. */
     pushq $0x23
     pushq %rdx
-    pushfq
-    popq %rax
-    /* Keep IF clear during the CPL3 transition. */
-    orq $0x002,%rax
-    andq $~0x3000,%rax
-    pushq %rax
     pushq $0x1b
     pushq %rsi
 
-    /* Marker B: the complete IRET frame exists on the kernel stack. */
     pushq %rdi
     pushq %rsi
     pushq %rdx
@@ -39,16 +30,14 @@ x86_enter_user:
     popq %rsi
     popq %rdi
 
-    /* Marker B is the last C call. Do not touch kernel globals after CR3:
-       the first syscall synchronizes the software tracker from hardware CR3. */
     movq %rdi,%cr3
-    iretq
+    lretq
 
 .section .rodata
 .Luser_pre_cr3:
     .asciz "BOOT: USER ENTRY A pre-cr3\r\n"
 .Luser_frame_ready:
-    .asciz "BOOT: USER ENTRY B iret-frame-ready\r\n"
+    .asciz "BOOT: USER ENTRY B lret-frame-ready\r\n"
 
 .global x86_enter_user_return
 .type x86_enter_user_return,@function
