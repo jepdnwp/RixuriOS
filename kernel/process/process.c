@@ -29,7 +29,7 @@ int process_init(void){for(size_t i=0;i<RIX_PROCESS_MAX;i++){clear_process(&tabl
 table[0].pid=0;table[0].process_group=0;table[0].session=0;table[0].state=RIX_PROC_RUNNING;table[0].capabilities=RIX_CAP_ALL;copy_name(table[0].name,"kernel");return 0;}
 pid_t process_current(void){return current_pid;}rix_process_t*process_lookup(pid_t pid){for(size_t i=0;i<RIX_PROCESS_MAX;i++)if(table[i].state!=RIX_PROC_UNUSED&&table[i].pid==pid)return &table[i];return NULL;}size_t process_count(void){return live_count;}
 int process_getcwd(pid_t pid,char*out,size_t capacity){rix_process_t*p=process_lookup(pid);if(!p||!out||capacity==0)return -1;size_t n=0;while(p->cwd[n]){if(n+1>=capacity)return -1;out[n]=p->cwd[n];++n;}out[n]=0;return 0;}
-int process_setcwd(pid_t pid,const char*path){rix_process_t*p=process_lookup(pid);if(!p||!path||!path[0])return -1;return copy_cwd(p->cwd,path);}
+int process_setcwd(pid_t pid,const char*path){rix_process_t*p=process_lookup(pid);uint64_t va=(uint64_t)(uintptr_t)path;if(!p||!path||!vmm_translate(va)||!path[0])return -1;return copy_cwd(p->cwd,path);}
 uint32_t process_uid(pid_t pid){rix_process_t*p=process_lookup(pid);return p?p->uid:UINT32_MAX;}
 uint32_t process_gid(pid_t pid){rix_process_t*p=process_lookup(pid);return p?p->gid:UINT32_MAX;}
 int process_setuid(pid_t pid,uint32_t uid){rix_process_t*p=process_lookup(pid);size_t index=(size_t)pid;if(!p||index>=RIX_PROCESS_MAX)return -1;if(p->uid==0&&((p->capabilities&RIX_CAP_SETUID)==0))return -1;if(p->uid==0){real_uids[index]=uid;saved_uids[index]=uid;p->uid=uid;if(uid!=0)p->capabilities=0;return 0;}
