@@ -117,6 +117,20 @@ A phase is **COMPLETE** only when all applicable checkpoints are satisfied. `BUI
 - CP4: compatibility test suite for selected Unix/Linux software.
 - CP7: kernel remains independent of libc/POSIX/Linux kernel APIs.
 
+### Phase 22 exit evidence — 2026-09-10
+
+Static scope is PASS with hardware/dynamic linking deferred. `make test`
+(host suites incl. extended libc_test), `make image`, `make iso` and
+`make iso-test` pass with `-Wall -Wextra -Werror`; `git diff --check` is
+clean. `scripts/qemu_posix_test.py` proves 27 POSIX groups plus
+`posix=PASS` on the disposable NVMe/RixFS image with no CPU
+exception/page-fault/panic marker; phase19-extended, session lifecycle,
+foreground-signal and ISO-boot neighbors re-pass. Full record:
+`docs/PHASE22_COMPAT.md` (syscall/errno/header matrix, porting notes,
+musl-sysroot shape, TLS/loader handoff). CP3 dynamic-linking remains
+DEFERRED to Phase 23 (no PT_INTERP/PT_TLS loader yet); CP5 hardware
+remains assigned to the qualification track.
+
 ### Phase 16 — init/services/pseudo-fs
 - CP2: service state-machine and proc/sys/dev consistency tests.
 - CP3: first userspace init starts services.
