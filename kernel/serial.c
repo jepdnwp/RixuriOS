@@ -39,10 +39,6 @@ void serial_write_n(const char *s,size_t length){
   if(serial_console_ready){size_t w=0;tty_output(0,s+i,1,&w);}
  }
 }
-static void serial_debug_write(const char *s){
- if(!s)return;
- while(*s){if(serial_has_com1)serial_putc(*s);s++;}
-}
 void serial_write_hex(uint64_t value){static const char digits[]="0123456789abcdef";char buf[19];buf[0]='0';buf[1]='x';for(int i=0;i<16;i++)buf[2+i]=digits[(value>>(60-4*i))&0xFULL];buf[18]=0;serial_write(buf);}
 void serial_write_dec(uint64_t value){char buf[21];size_t i=sizeof(buf)-1;buf[i]=0;if(value==0){serial_write("0");return;}while(value){buf[--i]=(char)('0'+value%10ULL);value/=10ULL;}serial_write(&buf[i]);}
 int serial_read_byte(uint8_t *byte){if(!serial_has_com1||!byte||(inb(COM1+5)&0x01u)==0)return -1;*byte=inb(COM1);return 0;}
