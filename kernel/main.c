@@ -159,7 +159,10 @@ static void serial_tty_worker(void *arg){
   uint8_t byte;
   while(serial_read_byte(&byte)==0){
    if(byte=='\r')byte='\n';
-   if(tty_input(0,byte)==0)serial_write_n((const char*)&byte,1);
+   /* tty_input already echoes to the framebuffer console; echo back to
+    * the serial line via the COM1-only path so the screen is not doubled
+    * by the mirrored serial_write_n. */
+   if(tty_input(0,byte)==0)serial_write_com1_n((const char*)&byte,1);
   }
   scheduler_yield();
  }
