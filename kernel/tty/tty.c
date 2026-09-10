@@ -357,6 +357,10 @@ void tty_init(void) {
         t->output_count = 0;
         t->line_chars = 0;
         t->canonical_ready = 0;
+        t->edit_length = 0;
+        t->edit_cursor = 0;
+        t->history_count = 0;
+        t->history_cursor = 0;
         t->rows = 25;
         t->columns = 80;
         t->cursor_row = 0;
@@ -459,6 +463,26 @@ static int echo_bytes(rix_tty_t *t, const uint8_t *data, size_t n) {
     return tty_output((unsigned)(t - ttys), data, n, &written) == 0 ? 0 : -3;
 }
 
+static void tty_edit_redraw(rix_tty_t *t) {
+    uint8_t s[2u + RIX_TTY_LINE_MAX + 3u * RIX_TTY_LINE_MAX]; size_t n=0;
+    s[n++]='\r'; s[n++]=0x1b; s[n++]='['; s[n++]='2'; s[n++]='K';
+    for(uint16_t i=0;i<t->edit_length;++i) s[n++]=(uint8_t)t->edit_line[i];
+    for(uint16_t i=t->edit_cursor;i<t->edit_length;++i){s[n++]=0x1b;s[n++]='[';s[n++]='D';}
+    size_t written=0; (void)tty_output((unsigned)(t-ttys),s,n,&written);
+}
+static void tty_edit_history_save(rix_tty_t *t) {
+    if(!t->edit_length)return;
+    if(t->history_count==RIX_TTY_HISTORY_COUNT){for(uint8_t i=1;i<RIX_TTY_HISTORY_COUNT;++i)for(uint16_t j=0;j<RIX_TTY_LINE_MAX;++j)t->history[i-1u][j]=t->history[i][j];--t->history_count;}
+    for(uint16_t i=0;i<t->edit_length;++i)t->history[t->history_count][i]=t->edit_line[i];
+    t->history[t->history_count][t->edit_length]=0;++t->history_count;t->history_cursor=t->history_count;
+}
+static void tty_edit_load(rix_tty_t *t,uint8_t direction) {
+    if(!t->history_count)return;
+    if(direction==RIX_TTY_KEY_UP){if(t->history_cursor)--t->history_cursor;}else if(t->history_cursor<t->history_count)++t->history_cursor;
+    if(t->history_cursor==t->history_count)t->edit_length=0;else{uint16_t i=0;while(i+1u<RIX_TTY_LINE_MAX&&t->history[t->history_cursor][i]){t->edit_line[i]=t->history[t->history_cursor][i];++i;}t->edit_length=i;}
+    t->edit_cursor=t->edit_length;tty_edit_redraw(t);
+}
+
 int tty_input(unsigned id, uint8_t ch) {
     rix_tty_t *t = tty_valid(id);
     if (!t) return -1;
@@ -466,7 +490,7 @@ int tty_input(unsigned id, uint8_t ch) {
         return tty_control_signal(t, ch);
     }
     if (ch >= RIX_TTY_KEY_UP && ch <= RIX_TTY_KEY_RIGHT) {
-        if (t->canonical) return 0;
+        if (t->canonical) { if(ch==RIX_TTY_KEY_UP||ch==RIX_TTY_KEY_DOWN)tty_edit_load(t,ch);else if(ch==RIX_TTY_KEY_LEFT&&t->edit_cursor){--t->edit_cursor;tty_edit_redraw(t);}else if(ch==RIX_TTY_KEY_RIGHT&&t->edit_cursor<t->edit_length){++t->edit_cursor;tty_edit_redraw(t);} return 0; }
         if (t->count == RIX_TTY_INPUT) return -2;
         t->input[t->tail] = ch;
         t->tail = (t->tail + 1u) % RIX_TTY_INPUT;
@@ -474,17 +498,16 @@ int tty_input(unsigned id, uint8_t ch) {
         return 0;
     }
     if (t->canonical && (ch == 8u || ch == 127u)) {
-        if (t->line_chars != 0u && t->count != 0u) {
-            t->tail = (t->tail + RIX_TTY_INPUT - 1u) % RIX_TTY_INPUT;
-            t->count--;
-            t->line_chars--;
-            if (t->echo) {
-                static const uint8_t erase[] = {8u, ' ', 8u};
-                return echo_bytes(t, erase, sizeof(erase));
-            }
-        }
+        if(t->edit_cursor){for(uint16_t i=t->edit_cursor;i<t->edit_length;++i)t->edit_line[i-1u]=t->edit_line[i];--t->edit_cursor;--t->edit_length;t->line_chars=t->edit_length;if(t->echo)tty_edit_redraw(t);}
         return 0;
     }
+    if(t->canonical&&(ch=='\n'||ch=='\r')){
+        if((size_t)t->count+t->edit_length+1u>RIX_TTY_INPUT)return -2;
+        for(uint16_t i=0;i<t->edit_length;++i){t->input[t->tail]= (uint8_t)t->edit_line[i];t->tail=(t->tail+1u)%RIX_TTY_INPUT;++t->count;}
+        t->input[t->tail]='\n';t->tail=(t->tail+1u)%RIX_TTY_INPUT;++t->count;++t->canonical_ready;tty_edit_history_save(t);t->edit_length=t->edit_cursor=t->line_chars=0;
+        if(t->echo){static const uint8_t crlf[]={'\r','\n'};return echo_bytes(t,crlf,2u);}return 0;
+    }
+    if(t->canonical){if(ch<0x20u||ch==0x7fu||t->edit_length+1u>=RIX_TTY_LINE_MAX)return 0;for(uint16_t i=t->edit_length;i>t->edit_cursor;--i)t->edit_line[i]=t->edit_line[i-1u];t->edit_line[t->edit_cursor++]=(char)ch;++t->edit_length;t->line_chars=t->edit_length;if(t->echo)tty_edit_redraw(t);return 0;}
     if (t->count == RIX_TTY_INPUT) return -2;
     t->input[t->tail] = ch;
     t->tail = (t->tail + 1u) % RIX_TTY_INPUT;
@@ -709,6 +732,10 @@ int tty_pty_open(unsigned *pty_id) {
         ptys[i].slave.count = 0;
         ptys[i].slave.line_chars = 0;
         ptys[i].slave.canonical_ready = 0;
+        ptys[i].slave.edit_length = 0;
+        ptys[i].slave.edit_cursor = 0;
+        ptys[i].slave.history_count = 0;
+        ptys[i].slave.history_cursor = 0;
         ptys[i].slave.rows = 25;
         ptys[i].slave.columns = 80;
         ptys[i].slave.cursor_row = 0;

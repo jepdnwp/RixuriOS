@@ -12,6 +12,8 @@
 #define RIX_TTY_KEY_DOWN 0x81u
 #define RIX_TTY_KEY_LEFT 0x82u
 #define RIX_TTY_KEY_RIGHT 0x83u
+#define RIX_TTY_LINE_MAX 256u
+#define RIX_TTY_HISTORY_COUNT 32u
 
 typedef struct {
     uint8_t input[RIX_TTY_INPUT];
@@ -49,6 +51,12 @@ typedef struct {
     uint8_t utf8_seen;
     uint8_t vt_param_count;
     uint8_t vt_params[8];
+    char edit_line[RIX_TTY_LINE_MAX];
+    uint16_t edit_length;
+    uint16_t edit_cursor;
+    char history[RIX_TTY_HISTORY_COUNT][RIX_TTY_LINE_MAX];
+    uint8_t history_count;
+    uint8_t history_cursor;
 } rix_tty_t;
 
 void tty_init(void);
