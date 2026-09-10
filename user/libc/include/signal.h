@@ -39,3 +39,18 @@ int sigismember(const sigset_t *set, int signal);
 int sigpending(sigset_t *set);
 int sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
 int raise(int signal);
+/* Handler installation is declared for porting but NOT implemented:
+ * the kernel has no userspace signal-delivery frame ABI yet, so
+ * signal()/sigaction() always fail closed with ENOSYS. sigprocmask/
+ * sigpending/raise above are the working subset. pause() blocks in
+ * 1 ms nanosleep steps until an unmasked signal arrives. */
+struct sigaction {
+    sighandler_t sa_handler;
+    sigset_t sa_mask;
+    int sa_flags;
+};
+#define SA_NOCLDSTOP 1
+#define SA_RESTART 2
+sighandler_t signal(int number, sighandler_t handler);
+int sigaction(int number, const struct sigaction *action, struct sigaction *old);
+int pause(void);

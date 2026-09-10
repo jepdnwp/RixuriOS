@@ -29,7 +29,7 @@ static int echo_rounds(int fd, rix_net_endpoint_t destination,
                        const uint8_t *request, size_t length,
                        uint16_t identifier, uint8_t sequence) {
     static uint8_t reply[64];
-    rix_timespec_t pause = {0, 10000000u};
+    struct timespec pause = {0, 10000000};
     for (unsigned round = 0; round < 4; ++round) {
         if (socket_send(fd, request, length, destination) != (int)length)
             return -1;

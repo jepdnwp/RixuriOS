@@ -21,5 +21,8 @@ char *strcat(char *destination, const char *source);
 char *strncat(char *destination, const char *source, size_t length);
 char *strdup(const char *text);
 char *strndup(const char *text, size_t length);
+size_t strnlen(const char *text, size_t bound);
+char *strtok_r(char *text, const char *delimiters, char **save);
+void *memccpy(void *destination, const void *source, int stop, size_t length);
 char *strerror(int error);
 int strerror_r(int error, char *buffer, size_t capacity);

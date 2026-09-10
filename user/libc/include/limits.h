@@ -28,6 +28,6 @@
 #define SIZE_MAX __SIZE_MAX__
 #endif
 #define SSIZE_MAX __PTRDIFF_MAX__
-#define MB_LEN_MAX 1
+#define MB_LEN_MAX 4
 #define PATH_MAX 4096
 #define FILENAME_MAX 256

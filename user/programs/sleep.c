@@ -36,6 +36,6 @@ int program_main(int argc, char **argv, char **envp) {
         out("sleep: invalid duration\n");
         return 2;
     }
-    rix_timespec_t request = {seconds, 0};
+    struct timespec request = {seconds, 0};
     return nanosleep(&request, NULL) == 0 ? 0 : 1;
 }

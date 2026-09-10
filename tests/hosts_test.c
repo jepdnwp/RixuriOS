@@ -79,7 +79,7 @@ int socket_receive(int fd, void *data, size_t capacity,
     return -1;
 }
 
-int nanosleep(const rix_timespec_t *request, rix_timespec_t *remaining) {
+int nanosleep(const struct timespec *request, struct timespec *remaining) {
     (void)request;
     (void)remaining;
     return -1;

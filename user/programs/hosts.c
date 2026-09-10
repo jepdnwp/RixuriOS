@@ -290,7 +290,7 @@ int rix_dns_query(const char *name, uint32_t server, uint32_t *address) {
     {
         uint8_t response[512] = {0};
         int fd = socket_open(RIX_NET_SOCKET_UDP);
-        rix_timespec_t pause = {0, 100000000u};
+        struct timespec pause = {0, 100000000};
         unsigned round, attempt;
         if (fd < 0) return -1;
         for (round = 0; round < 40; ++round) {

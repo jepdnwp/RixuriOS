@@ -17,7 +17,7 @@ static void log_line(int fd,const char *s) { if(fd>=0)(void)write(fd,s,length(s)
 static void out_num(uint64_t v) { char b[24];size_t n=0;if(!v){out("0");return;}while(v&&n<sizeof(b)){b[n++]=(char)('0'+v%10u);v/=10u;}while(n){char c=b[--n];(void)write(1,&c,1);} }
 
 static int wait_with_timeout(rix_pid_t child,uint64_t *status) {
-    rix_timespec_t pause={0,100000000};
+    struct timespec pause={0,100000000};
     for(unsigned i=0;i<100u;++i){
         rix_pid_t r=waitpid(child,status,RIX_WNOHANG);
         if(r==child)return 0;

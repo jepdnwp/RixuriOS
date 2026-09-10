@@ -5,7 +5,16 @@
 #include "stdio.h"
 #include "dirent.h"
 #include "fcntl.h"
+#include "signal.h"
 #include "time.h"
+#include <sys/time.h>
+#include <sys/types.h>
+#include <pthread.h>
+#include <locale.h>
+#include <wchar.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
 #include <stdint.h>
 #include <stdarg.h>
 
@@ -13,7 +22,7 @@ int errno;
 static int time_leap(int year) { return (year%4==0&&year%100!=0)||year%400==0; }
 static const int time_month_days[12] = {31,28,31,30,31,30,31,31,30,31,30,31};
 static time_t time_days_before_year(int year) { time_t days=0;for(int y=1970;y<year;++y)days+=time_leap(y)?366:365;return days; }
-time_t time(time_t *out) { rix_timespec_t now;if(clock_gettime(&now)!=0)return(time_t)-1;if(out)*out=(time_t)now.sec;return(time_t)now.sec; }
+time_t time(time_t *out) { struct timespec now;if(clock_gettime(CLOCK_REALTIME,&now)!=0)return(time_t)-1;if(out)*out=(time_t)now.tv_sec;return(time_t)now.tv_sec; }
 struct tm *gmtime_r(const time_t *value, struct tm *result) { if(!value||!result||*value<0)return 0;time_t seconds=*value;time_t days=seconds/86400;int rem=(int)(seconds%86400);int year=1970;while(days>=(time_leap(year)?366:365)){days-=time_leap(year)?366:365;++year;}int month=0;while(month<11&&days>=(time_month_days[month]+(month==1&&time_leap(year)))){days-=time_month_days[month]+(month==1&&time_leap(year));++month;}result->tm_year=year-1900;result->tm_mon=month;result->tm_mday=(int)days+1;result->tm_hour=rem/3600;result->tm_min=(rem%3600)/60;result->tm_sec=rem%60;result->tm_yday=(int)(time_days_before_year(year)-time_days_before_year(year)+(result->tm_mon?0:0));result->tm_yday=0;for(int i=0;i<month;++i)result->tm_yday+=time_month_days[i]+(i==1&&time_leap(year));result->tm_yday+=(int)days;result->tm_wday=(int)((4+(*value/86400))%7);result->tm_isdst=0;return result; }
 struct tm *gmtime(const time_t *value) { static struct tm result;return gmtime_r(value,&result); }
 struct tm *localtime_r(const time_t *value, struct tm *result) { return gmtime_r(value,result); }
@@ -84,15 +93,24 @@ char *strcat(char *destination, const char *source) { if (!destination || !sourc
 char *strncat(char *destination, const char *source, size_t length) { if (!destination || !source) return destination;size_t offset=strlen(destination),i=0;for(;i<length&&source[i];++i)destination[offset+i]=source[i];destination[offset+i]=0;return destination; }
 char *strdup(const char *text) { if (!text) { errno=RIX_EINVAL;return 0; }size_t length=strlen(text);char *copy=malloc(length+1u);if(!copy){errno=RIX_ENOMEM;return 0;}memcpy(copy,text,length+1u);return copy; }
 char *strndup(const char *text, size_t length) { if (!text) { errno=RIX_EINVAL;return 0; }size_t actual=0;while(actual<length&&text[actual])++actual;char *copy=malloc(actual+1u);if(!copy){errno=RIX_ENOMEM;return 0;}memcpy(copy,text,actual);copy[actual]=0;return copy; }
+size_t strnlen(const char *text, size_t bound) { size_t n=0;while(n<bound&&text&&text[n])++n;return n; }
+char *strtok_r(char *text, const char *delimiters, char **save) { char *cursor=text?text:(save?*save:0);if(!cursor||!delimiters||!save)return 0;while(*cursor&&string_contains(delimiters,(unsigned char)*cursor))++cursor;if(!*cursor){*save=0;return 0;}char *token=cursor;while(*cursor&&!string_contains(delimiters,(unsigned char)*cursor))++cursor;if(*cursor)*cursor++=0;*save=cursor;return token; }
+void *memccpy(void *destination, const void *source, int stop, size_t length) { if(!destination||!source)return 0;unsigned char *out=destination;const unsigned char *in=source;for(size_t i=0;i<length;++i){out[i]=in[i];if(in[i]==(unsigned char)stop)return out+i+1;}return 0; }
 char *strerror(int error) {
     switch (error) {
     case RIX_EPERM: return "Operation not permitted"; case RIX_ENOENT: return "No such file or directory";
+    case RIX_ESRCH: return "No such process"; case RIX_EINTR: return "Interrupted system call";
     case RIX_EIO: return "I/O error"; case RIX_EBADF: return "Bad file descriptor";
+    case RIX_ECHILD: return "No child process"; case RIX_EAGAIN: return "Resource temporarily unavailable";
     case RIX_ENOMEM: return "Out of memory"; case RIX_EACCES: return "Permission denied";
-    case RIX_EFAULT: return "Bad address"; case RIX_EEXIST: return "File exists";
+    case RIX_EFAULT: return "Bad address"; case RIX_EBUSY: return "Device or resource busy";
+    case RIX_EEXIST: return "File exists";
     case RIX_EINVAL: return "Invalid argument"; case RIX_ENOTTY: return "Inappropriate ioctl for device"; case RIX_ENOSPC: return "No space left";
     case RIX_ENOSYS: return "Function not implemented"; case RIX_EPIPE: return "Broken pipe";
-    case RIX_EINTR: return "Interrupted system call"; case RIX_ERANGE: return "Result out of range";
+    case RIX_ERANGE: return "Result out of range";
+    case RIX_EMSGSIZE: return "Message too long"; case RIX_ENOPROTOOPT: return "Protocol not available";
+    case RIX_EPROTONOSUPPORT: return "Protocol not supported"; case RIX_EAFNOSUPPORT: return "Address family not supported";
+    case RIX_ETIMEDOUT: return "Connection timed out";
     default: return "Unknown error";
     }
 }
@@ -201,6 +219,12 @@ int vsnprintf(char *buffer, size_t capacity, const char *format, va_list argumen
 int snprintf(char *buffer, size_t capacity, const char *format, ...) {
     va_list arguments; va_start(arguments, format); int result = vsnprintf(buffer, capacity, format, arguments); va_end(arguments); return result;
 }
+static FILE file_stdin = { .fd = 0 };
+static FILE file_stdout = { .fd = 1 };
+static FILE file_stderr = { .fd = 2 };
+FILE *stdin = &file_stdin;
+FILE *stdout = &file_stdout;
+FILE *stderr = &file_stderr;
 static FILE standard_output = { .fd = 1 };
 static FILE standard_error = { .fd = 2 };
 static FILE *libc_stdout = &standard_output;
@@ -300,6 +324,82 @@ char *fgets(char *buffer, int capacity, FILE *stream) {
     buffer[index]=0; return buffer;
 }
 int fputs(const char *text, FILE *stream) { if (!text || !stream) { errno=RIX_EINVAL; return EOF; } size_t length=strlen(text);return fwrite(text,1,length,stream)==length?0:EOF; }
+int getc(FILE *stream) { return fgetc(stream); }
+int putc(int value, FILE *stream) { return fputc(value, stream); }
+int getchar(void) { return fgetc(stdin); }
+/* Bounded scanf subset: %d %i %u %o %x %X %s %c %% %n, optional width,
+ * '*' suppression and 'l' length. No float, no bracket sets. */
+static int conversion_digit(int value);
+static int scan_value(const char *input_start, const char **cursor, char conversion, int width, int suppress, va_list *arguments, int *assigned) {
+    const char *p=*cursor;
+    if (conversion == '%') { if (*p != '%') return 0; ++p; *cursor=p; return 1; }
+    if (conversion == 'n') { if (!suppress) *va_arg(*arguments, int *) = (int)(p - input_start); return 1; }
+    while (isspace((unsigned char)*p)) ++p;
+    if (conversion == 'c') {
+        int count = width > 0 ? width : 1;
+        for (int i = 0; i < count; ++i) if (!p[i]) return 0;
+        if (!suppress) { char *out = va_arg(*arguments, char *); for (int i=0;i<count&&p[i];++i) out[i]=p[i]; }
+        *cursor = p + count; if (!suppress) ++*assigned; return 1;
+    }
+    if (!*p) return 0;
+    if (conversion == 's') {
+        int i=0; const char *start=p;
+        while (*p && !isspace((unsigned char)*p) && (width<=0||i<width)) { ++p; ++i; }
+        if (p==start) return 0;
+        if (!suppress) { char *out=va_arg(*arguments,char*); for(int k=0;k<i;++k)out[k]=start[k]; out[i]=0; ++*assigned; }
+        *cursor=p; return 1;
+    }
+    int base=10, signed_conversion=(conversion=='d'||conversion=='i');
+    if (conversion=='o') base=8; else if(conversion=='x'||conversion=='X') base=16;
+    else if(conversion!='u'&&!signed_conversion) return -1;
+    if (conversion=='i') {
+        const char *q=p;
+        if (*q=='+'||*q=='-') ++q;
+        if (q[0]=='0'&&(q[1]=='x'||q[1]=='X')) base=16;
+        else if (q[0]=='0'&&q[1]) base=8;
+    }
+    const char *start=p; char buffer[64]; int bi=0;
+    if ((*p=='+'||*p=='-')&&(width<=0||bi<width)) buffer[bi++]=*p++;
+    if (base==16&&(width<=0||bi<width)&&p[0]=='0'&&(p[1]=='x'||p[1]=='X')&&(width<=0||bi+2<=width)){buffer[bi++]=*p++;buffer[bi++]=*p++;}
+    else if (base==0&&(width<=0||bi<width)&&p[0]=='0') buffer[bi++]=*p++;
+    for (;*p&&(width<=0||bi<width);++p) {
+        int digit=conversion_digit((unsigned char)*p);
+        if (digit<0||digit>=base) break;
+        if (bi<(int)sizeof(buffer)-1) buffer[bi++]=*p;
+    }
+    if (p==start||(bi==1&&(buffer[0]=='+'||buffer[0]=='-'))) return 0;
+    buffer[bi]=0;
+    if (!suppress) {
+        char *end=0;
+        if (signed_conversion) { long v=strtol(buffer,&end,conversion=='i'?0:base); *va_arg(*arguments,int*)=(int)v; }
+        else { unsigned long v=strtoul(buffer,&end,base); *va_arg(*arguments,unsigned*)=(unsigned)v; }
+        ++*assigned;
+    }
+    *cursor=p; return 1;
+}
+int vsscanf(const char *text, const char *format, va_list arguments) {
+    if (!text || !format) { errno=RIX_EINVAL; return -1; }
+    va_list args; va_copy(args, arguments);
+    const char *p=text; int assigned=0; int failed=0;
+    while (*format && !failed) {
+        if (isspace((unsigned char)*format)) { while (isspace((unsigned char)*p)) ++p; ++format; continue; }
+        if (*format != '%') { if (*p != *format) break; ++p; ++format; continue; }
+        ++format;
+        int suppress=0; if (*format=='*'){suppress=1;++format;}
+        int width=0; while (isdigit((unsigned char)*format)){width=width*10+(*format-'0');++format;}
+        if (*format=='l'||*format=='h'){++format;if(*format=='l')++format;}
+        if (!*format) { failed=1; break; }
+        char conversion=*format++;
+        const char *before=p;
+        int rc=scan_value(text,&p,conversion,width,suppress,&args,&assigned);
+        if (rc<0||(rc==0&&p==before)) break;
+        (void)before;
+    }
+    va_end(args);
+    if (failed) { errno=RIX_EINVAL; return -1; }
+    return assigned ? assigned : (p!=text?0:EOF);
+}
+int sscanf(const char *text, const char *format, ...) { va_list arguments; va_start(arguments,format); int result=vsscanf(text,format,arguments); va_end(arguments); return result; }
 int setvbuf(FILE *stream, char *buffer, int mode, size_t size) { if (!stream || mode < _IONBF || mode > _IOLBF || (size && !buffer)) { errno=RIX_EINVAL; return -1; } if(stream_flush(stream)<0)return -1;if(stream->owns_buffer)free(stream->buffer);stream->buffer=mode==_IONBF?0:(unsigned char*)buffer;stream->buffer_size=mode==_IONBF?0:size;stream->buffer_pos=stream->buffer_len=0;stream->mode=mode;stream->owns_buffer=0;stream->writing=0;return 0; }
 void setbuf(FILE *stream, char *buffer) { (void)setvbuf(stream, buffer, buffer ? _IOFBF : _IONBF, buffer ? BUFSIZ : 0); }
 int feof(FILE *stream) { return stream ? stream->eof : 0; }
@@ -394,3 +494,183 @@ return 0; }
 void srand(unsigned seed) { random_state=seed?seed:1u; }
 int rand(void) { random_state=random_state*1103515245u+12345u;return(int)((random_state>>1)&0x7fffffffU); }
 uint32_t arc4random(void) { uint32_t value=0; if (getrandom(&value,sizeof(value),0)==(rix_ssize_t)sizeof(value)) return value; random_state=random_state*1664525u+1013904223u;return random_state; }
+
+#define RIX_ATEXIT_MAX 16u
+static void (*atexit_handlers[RIX_ATEXIT_MAX])(void);
+static size_t atexit_count;
+int atexit(void (*function)(void)) { if(!function){errno=RIX_EINVAL;return -1;}if(atexit_count>=RIX_ATEXIT_MAX){errno=RIX_ENOMEM;return -1;}atexit_handlers[atexit_count++]=function;return 0; }
+/* No global FILE registry exists, so exit() cannot flush application
+ * streams: fflush() before exit() is required (documented).
+ * exit/abort are freestanding-only: on RIX_HOST_TEST they would
+ * interpose the host startup's exit() call, so they stay out of the
+ * host unit link (covered by the QEMU posix-test instead). */
+#ifndef RIX_HOST_TEST
+void exit(int status) { while(atexit_count)atexit_handlers[--atexit_count]();_exit(status);for(;;)__asm__ volatile("hlt"); }
+void abort(void) { (void)raise(SIGABRT);_exit(128+SIGABRT);for(;;)__asm__ volatile("hlt"); }
+#endif
+int system(const char *command) { (void)command;errno=RIX_ENOSYS;return -1; }
+
+char *setlocale(int category, const char *locale) {
+    static char name[] = "C";
+    if (category<LC_CTYPE||category>LC_ALL) { errno=RIX_EINVAL; return 0; }
+    if (!locale) return name;
+    if (!strcmp(locale,"C")||!strcmp(locale,"POSIX")||!strcmp(locale,"")) return name;
+    return 0;
+}
+struct lconv *localeconv(void) {
+    static char point[]=".", empty[]="";
+    static struct lconv value={point,empty,empty};
+    return &value;
+}
+
+/* Strict RFC 3629 UTF-8 helpers. */
+static size_t utf8_length(unsigned char lead) {
+    if (lead<0x80u) return 1;
+    if (lead>=0xc2u&&lead<=0xdfu) return 2;
+    if (lead>=0xe0u&&lead<=0xefu) return 3;
+    if (lead>=0xf0u&&lead<=0xf4u) return 4;
+    return 0;
+}
+static int utf8_decode(const unsigned char *text, size_t length, wchar_t *out) {
+    size_t need=utf8_length(text[0]);
+    if (!need||need>length) return -1;
+    for (size_t i=1;i<need;++i) if((text[i]&0xc0u)!=0x80u) return -1;
+    wchar_t value;
+    if (need==1) value=text[0];
+    else if (need==2) value=(wchar_t)(((text[0]&0x1fu)<<6)|(text[1]&0x3fu));
+    else if (need==3) value=(wchar_t)(((text[0]&0x0fu)<<12)|((text[1]&0x3fu)<<6)|(text[2]&0x3fu));
+    else value=(wchar_t)(((text[0]&0x07u)<<18)|((text[1]&0x3fu)<<12)|((text[2]&0x3fu)<<6)|(text[3]&0x3fu));
+    if ((need==2&&value<0x80)||(need==3&&value<0x800)||(need==4&&value<0x10000)) return -1;
+    if (value>=0xd800&&value<=0xdfff) return -1;
+    if ((uint64_t)value>0x10ffffu) return -1;
+    if (out) *out=value;
+    return (int)need;
+}
+size_t mbrlen(const char *text, size_t length, mbstate_t *state) { (void)state;if(!text)return 0;if(!length){errno=RIX_EINVAL;return (size_t)-1;}if(!text[0])return 0;int rc=utf8_decode((const unsigned char*)text,length,0);if(rc<0){errno=RIX_EINVAL;return (size_t)-1;}return (size_t)rc; }
+size_t mbrtowc(wchar_t *output, const char *text, size_t length, mbstate_t *state) { (void)state;if(!text)return 0;if(!length){errno=RIX_EINVAL;return (size_t)-1;}if(!text[0]){if(output)*output=0;return 0;}int rc=utf8_decode((const unsigned char*)text,length,output);if(rc<0){errno=RIX_EINVAL;return (size_t)-1;}return (size_t)rc; }
+size_t wcrtomb(char *output, wchar_t value, mbstate_t *state) {
+    (void)state;uint64_t v=(uint64_t)value;
+    if(v>0x10ffffu||(v>=0xd800u&&v<=0xdfffu)){errno=RIX_EINVAL;return (size_t)-1;}
+    char buffer[4];size_t n=0;
+    if(v<0x80u){buffer[n++]=(char)v;}
+    else if(v<0x800u){buffer[n++]=(char)(0xc0u|(v>>6));buffer[n++]=(char)(0x80u|(v&0x3fu));}
+    else if(v<0x10000u){buffer[n++]=(char)(0xe0u|(v>>12));buffer[n++]=(char)(0x80u|((v>>6)&0x3fu));buffer[n++]=(char)(0x80u|(v&0x3fu));}
+    else{buffer[n++]=(char)(0xf0u|(v>>18));buffer[n++]=(char)(0x80u|((v>>12)&0x3fu));buffer[n++]=(char)(0x80u|((v>>6)&0x3fu));buffer[n++]=(char)(0x80u|(v&0x3fu));}
+    if(output)for(size_t i=0;i<n;++i)output[i]=buffer[i];
+    return n;
+}
+size_t mbstowcs(wchar_t *output, const char *text, size_t capacity) {
+    if(!output||!text){errno=RIX_EINVAL;return (size_t)-1;}
+    size_t count=0;const unsigned char *p=(const unsigned char*)text;
+    while(*p){if(count+1>=capacity){errno=RIX_ERANGE;return (size_t)-1;}wchar_t value=0;int rc=utf8_decode(p,strlen((const char*)p),&value);if(rc<0){errno=RIX_EINVAL;return (size_t)-1;}output[count++]=value;p+=(size_t)rc;}
+    if(count>=capacity){errno=RIX_ERANGE;return (size_t)-1;}
+    output[count]=0;return count;
+}
+size_t wcstombs(char *output, const wchar_t *text, size_t capacity) {
+    if(!output||!text){errno=RIX_EINVAL;return (size_t)-1;}
+    size_t used=0;
+    for(size_t i=0;text[i];++i){mbstate_t state=0;size_t n=wcrtomb(0,text[i],&state);if(n==(size_t)-1)return (size_t)-1;if(used+n+1>capacity){errno=RIX_ERANGE;return (size_t)-1;}size_t m=wcrtomb(output+used,text[i],&state);if(m==(size_t)-1)return (size_t)-1;used+=m;}
+    if(!used||used>=capacity){if(used>=capacity){errno=RIX_ERANGE;return (size_t)-1;}}
+    output[used]=0;return used;
+}
+size_t wcslen(const wchar_t *text) { size_t n=0;while(text&&text[n])++n;return n; }
+
+int gettimeofday(struct timeval *out, void *unused_zone) {
+    (void)unused_zone;
+    if(!out){errno=RIX_EINVAL;return -1;}
+    struct timespec now;
+    if(clock_gettime(CLOCK_REALTIME,&now)!=0)return -1;
+    out->tv_sec=(time_t)now.tv_sec;
+    out->tv_usec=(suseconds_t)(now.tv_nsec/1000L);
+    return 0;
+}
+
+int pthread_mutex_init(pthread_mutex_t *mutex, const void *attributes) { (void)attributes;if(!mutex){return RIX_EINVAL;}mutex->locked=0;return 0; }
+int pthread_mutex_lock(pthread_mutex_t *mutex) { if(!mutex)return RIX_EINVAL;while(__atomic_test_and_set(&mutex->locked,__ATOMIC_ACQUIRE)){}return 0; }
+int pthread_mutex_trylock(pthread_mutex_t *mutex) { if(!mutex)return RIX_EINVAL;if(__atomic_test_and_set(&mutex->locked,__ATOMIC_ACQUIRE))return RIX_EBUSY;return 0; }
+int pthread_mutex_unlock(pthread_mutex_t *mutex) { if(!mutex)return RIX_EINVAL;__atomic_clear(&mutex->locked,__ATOMIC_RELEASE);return 0; }
+int pthread_mutex_destroy(pthread_mutex_t *mutex) { if(!mutex)return RIX_EINVAL;mutex->locked=0;return 0; }
+int pthread_once(pthread_once_t *once, void (*function)(void)) { if(!once||!function)return RIX_EINVAL;if(__atomic_load_n(&once->done,__ATOMIC_ACQUIRE))return 0;if(!__atomic_test_and_set(&once->done,__ATOMIC_ACQ_REL))function();return 0; }
+int pthread_create(pthread_t *thread, const void *attributes, void *(*start)(void *), void *argument) { (void)thread;(void)attributes;(void)start;(void)argument;return RIX_ENOSYS; }
+int pthread_join(pthread_t thread, void **result) { (void)thread;(void)result;return RIX_ENOSYS; }
+int pthread_detach(pthread_t thread) { (void)thread;return RIX_ENOSYS; }
+pthread_t pthread_self(void) { return (pthread_t)getpid(); }
+int pthread_equal(pthread_t left, pthread_t right) { return left==right; }
+
+char *optarg;
+int optind = 1;
+int opterr = 1;
+int getopt(int argc, char *const argv[], const char *options) {
+    static int position = 1;
+    if(!argv||!options||optind<1){errno=RIX_EINVAL;return -1;}
+    if(optind>=argc||!argv[optind]||argv[optind][0]!='-'||!argv[optind][1])return -1;
+    if(argv[optind][1]=='-'&&!argv[optind][2]){++optind;position=1;return -1;}
+    char choice=argv[optind][position];
+    const char *match=strchr(options,choice);
+    if(choice==':'||!match){
+        if(opterr&&options[0]!=':')(void)fprintf(stderr,"%s: illegal option -- %c\n",argv[0]?argv[0]:"?",choice);
+        if(!argv[optind][++position]){++optind;position=1;}
+        return '?';
+    }
+    if(match[1]==':'){
+        if(argv[optind][position+1]){optarg=argv[optind]+position+1;}
+        else if(optind+1<argc){optarg=argv[++optind];}
+        else{
+            if(opterr&&options[0]!=':')(void)fprintf(stderr,"%s: option requires an argument -- %c\n",argv[0]?argv[0]:"?",choice);
+            position=1;++optind;
+            return options[0]==':'?':':'?';
+        }
+        position=1;++optind;
+    }else{
+        optarg=0;
+        if(!argv[optind][++position]){++optind;position=1;}
+    }
+    return choice;
+}
+long sysconf(int name) {
+    switch(name){
+    case _SC_PAGESIZE: return 4096L;
+    case _SC_CLK_TCK: return 100L;
+    case _SC_OPEN_MAX: return 64L;
+    case _SC_CHILD_MAX: return 128L;
+    default: errno=RIX_EINVAL; return -1L;
+    }
+}
+int getpagesize(void) { return 4096; }
+
+static int parse_decimal_octet(const char **cursor, unsigned *out) {
+    const char *p=*cursor; unsigned value=0; int digits=0;
+    while(*p>='0'&&*p<='9'){value=value*10u+(unsigned)(*p-'0');++p;++digits;if(value>255u)return -1;}
+    if(!digits)return -1;
+    *cursor=p; *out=value; return 0;
+}
+int inet_pton(int family, const char *text, void *output) {
+    if(family!=AF_INET||!text||!output){errno=RIX_EINVAL;return -1;}
+    unsigned octet[4];
+    const char *p=text;
+    for(int i=0;i<4;++i){
+        if(parse_decimal_octet(&p,&octet[i])!=0)return 0;
+        if(i<3){if(*p!='.')return 0;++p;}
+    }
+    if(*p)return 0;
+    uint32_t address=(octet[0]<<24)|(octet[1]<<16)|(octet[2]<<8)|octet[3];
+    *(uint32_t*)output=htonl(address);
+    return 1;
+}
+uint32_t inet_addr(const char *text) {
+    uint32_t address=0;
+    if(inet_pton(AF_INET,text,&address)!=1)return 0xffffffffu;
+    return address;
+}
+const char *inet_ntop(int family, const void *source, char *output, uint32_t length) {
+    if(family!=AF_INET||!source||!output||length<16u){errno=RIX_EINVAL;return 0;}
+    uint32_t address=ntohl(*(const uint32_t*)source);
+    (void)snprintf(output,(size_t)length,"%u.%u.%u.%u",
+        (address>>24)&0xffu,(address>>16)&0xffu,(address>>8)&0xffu,address&0xffu);
+    return output;
+}
+char *inet_ntoa(struct in_addr address) {
+    static char buffer[16];
+    if(!inet_ntop(AF_INET,&address.s_addr,buffer,sizeof(buffer)))return 0;
+    return buffer;
+}

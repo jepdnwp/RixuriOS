@@ -12,6 +12,8 @@ typedef struct { int fd; unsigned char *buffer; size_t buffer_size; size_t buffe
 #define BUFSIZ 1024u
 int vsnprintf(char *buffer, size_t capacity, const char *format, va_list arguments);
 int snprintf(char *buffer, size_t capacity, const char *format, ...);
+int vsscanf(const char *text, const char *format, va_list arguments);
+int sscanf(const char *text, const char *format, ...);
 int vfprintf(FILE *stream, const char *format, va_list arguments);
 int fprintf(FILE *stream, const char *format, ...);
 int vprintf(const char *format, va_list arguments);
@@ -35,6 +37,12 @@ int ungetc(int value, FILE *stream);
 int fputc(int value, FILE *stream);
 char *fgets(char *buffer, int capacity, FILE *stream);
 int fputs(const char *text, FILE *stream);
+int getc(FILE *stream);
+int putc(int value, FILE *stream);
+int getchar(void);
+extern FILE *stdin;
+extern FILE *stdout;
+extern FILE *stderr;
 int setvbuf(FILE *stream, char *buffer, int mode, size_t size);
 void setbuf(FILE *stream, char *buffer);
 int feof(FILE *stream);

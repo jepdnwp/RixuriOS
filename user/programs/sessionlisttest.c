@@ -15,8 +15,8 @@ static int has_session(const rix_session_info_t *sessions, size_t count,
 }
 
 int program_main(int argc, char **argv, char **envp) {
-    const rix_timespec_t child_hold = { 1u, 0u };
-    const rix_timespec_t parent_delay = { 0u, 100000000u };
+    const struct timespec child_hold = { 1, 0 };
+    const struct timespec parent_delay = { 0, 100000000 };
     rix_pid_t child;
     rix_session_info_t sessions[8];
     size_t count = 0;
@@ -28,11 +28,11 @@ int program_main(int argc, char **argv, char **envp) {
     if (child == 0) {
         rix_pid_t session = 0;
         if (create_session(&session) != 0 || session != getpid()) _exit(1);
-        if (nanosleep(&child_hold, (rix_timespec_t *)0) != 0) _exit(1);
+        if (nanosleep(&child_hold, (struct timespec *)0) != 0) _exit(1);
         if (logout_session() != 0) _exit(1);
         _exit(0);
     }
-    if (nanosleep(&parent_delay, (rix_timespec_t *)0) != 0 ||
+    if (nanosleep(&parent_delay, (struct timespec *)0) != 0 ||
         list_sessions(sessions, 8u, &count) < 2 ||
         !has_session(sessions, count, child, child))
         return 1;

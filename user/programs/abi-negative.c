@@ -15,7 +15,7 @@ int program_main(int argc,char **argv,char **envp){
         if (getdents(fd,(rix_dirent_t *)(uintptr_t)1u,1u,&count) >= 0) passed = 0;
         (void)close(fd);
     }
-    if (nanosleep((const rix_timespec_t *)(uintptr_t)1u,NULL) >= 0) passed = 0;
+    if (nanosleep((const struct timespec *)(uintptr_t)1u,NULL) >= 0) passed = 0;
     out(passed ? "negative_abi=PASS\n" : "negative_abi=FAIL\n");
     return passed ? 0 : 1;
 }

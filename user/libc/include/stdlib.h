@@ -1,6 +1,15 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
+#define EXIT_SUCCESS 0
+#define EXIT_FAILURE 1
+_Noreturn void exit(int status);
+_Noreturn void _Exit(int status);
+_Noreturn void abort(void);
+/* Up to 16 handlers, LIFO. No locking; register before forking. */
+int atexit(void (*function)(void));
+/* No command interpreter exists; always fails with ENOSYS. */
+int system(const char *command);
 void *malloc(size_t size);
 void *calloc(size_t count, size_t size);
 void *realloc(void *pointer, size_t size);

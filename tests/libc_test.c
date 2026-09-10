@@ -6,6 +6,14 @@
 #include <fcntl.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <pthread.h>
+#include <locale.h>
+#include <wchar.h>
 #include <assert.h>
 #include <time.h>
 #include <limits.h>
@@ -31,7 +39,11 @@ int open(const char *path, uint32_t flags, ...) { (void)path; (void)flags; retur
 int close(int fd) { (void)fd; return 0; }
 int getdents(int fd, rix_dirent_t *entries, size_t capacity, size_t *count) { (void)fd; (void)entries; (void)capacity; if (count) *count = 0; return -1; }
 off_t lseek(int fd, off_t offset, int whence) { (void)fd; (void)whence; return offset; }
-int clock_gettime(rix_timespec_t *out) { if (!out) return -1; out->sec = 1700000000u; out->nsec = 0; return 0; }
+int clock_gettime(clockid_t clock, struct timespec *out) { (void)clock; if (!out) return -1; out->tv_sec = 1700000000; out->tv_nsec = 0; return 0; }
+rix_pid_t getpid(void) { return 42; }
+static int once_counter;
+static void once_function(void) { ++once_counter; }
+static void noop_handler(void) {}
 
 int main(void) {
     bool headers_ok = true;
@@ -136,5 +148,64 @@ int main(void) {
     assert(clearenv() == 0 && getenv("RIX_PUT") == 0);
     srand(1234u); int first = rand(); srand(1234u); assert(rand() == first);
     assert(arc4random() != arc4random());
+    assert(strnlen("hello", 10) == 5 && strnlen("hello", 3) == 3 && strnlen(0, 4) == 0);
+    char rtok[] = "a:b::c"; char *save = 0;
+    assert(strcmp(strtok_r(rtok, ":", &save), "a") == 0);
+    assert(strcmp(strtok_r(0, ":", &save), "b") == 0);
+    assert(strcmp(strtok_r(0, ":", &save), "c") == 0 && strtok_r(0, ":", &save) == 0);
+    char cc[8]; assert(memccpy(cc, "abcde", 'c', sizeof(cc)) == cc + 3 && cc[2] == 'c');
+    assert(memccpy(cc, "abc", 'z', 3) == 0);
+    int di = 0, dn = 0; unsigned du = 0; char ds[16]; char dc = 0;
+    assert(sscanf("  -42 0x2a hello Z", "%d %x %s %c%n", &di, &du, ds, &dc, &dn) == 4);
+    assert(di == -42 && du == 42u && strcmp(ds, "hello") == 0 && dc == 'Z' && dn > 0);
+    int sup = 0;
+    assert(sscanf("12:34", "%*d:%d", &sup) == 1 && sup == 34);
+    assert(sscanf("abc", "%d", &sup) == EOF || sscanf("abc", "%d", &sup) == 0);
+    assert(sscanf("100%", "%d%%", &sup) == 1 && sup == 100);
+    assert(setlocale(LC_ALL, 0) && strcmp(setlocale(LC_ALL, "C"), "C") == 0);
+    assert(setlocale(LC_ALL, "POSIX") && setlocale(LC_ALL, "") && !setlocale(LC_ALL, "xx_YY"));
+    assert(localeconv() && strcmp(localeconv()->decimal_point, ".") == 0);
+    wchar_t wc = 0; mbstate_t mbs = 0;
+    assert(mbrtowc(&wc, "A", 1, &mbs) == 1 && wc == L'A');
+    assert(mbrtowc(&wc, "\xc3\xa9", 2, &mbs) == 2 && wc == 0xe9);
+    assert(mbrtowc(&wc, "\xff", 1, &mbs) == (size_t)-1 && mbrtowc(&wc, "\xc3", 1, &mbs) == (size_t)-1);
+    char mb[8]; assert(wcrtomb(mb, 0xe9, &mbs) == 2 && !(memcmp(mb, "\xc3\xa9", 2)));
+    wchar_t ws[8]; assert(mbstowcs(ws, "hi\xc3\xa9", 8) == 3 && ws[2] == 0xe9 && wcslen(ws) == 3);
+    char narrow[8]; assert(wcstombs(narrow, ws, sizeof(narrow)) == 4 && !strcmp(narrow, "hi\xc3\xa9"));
+    assert(mbstowcs(ws, "\xff", 8) == (size_t)-1);
+    pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+    assert(pthread_mutex_lock(&mutex) == 0 && pthread_mutex_trylock(&mutex) == RIX_EBUSY);
+    assert(pthread_mutex_unlock(&mutex) == 0 && pthread_mutex_trylock(&mutex) == 0);
+    assert(pthread_mutex_unlock(&mutex) == 0 && pthread_mutex_destroy(&mutex) == 0);
+    assert(pthread_mutex_lock(0) == RIX_EINVAL);
+    pthread_once_t once = PTHREAD_ONCE_INIT;
+    assert(pthread_once(&once, once_function) == 0 && pthread_once(&once, once_function) == 0 && once_counter == 1);
+    assert(pthread_create(0, 0, 0, 0) == RIX_ENOSYS && pthread_join(0, 0) == RIX_ENOSYS);
+    assert(pthread_self() == 42 && pthread_equal(1, 1) && !pthread_equal(1, 2));
+    opterr = 0; optind = 1;
+    char *go_argv[] = { "prog", "-a", "-b", "val", "rest" };
+    assert(getopt(5, go_argv, "ab:") == 'a');
+    assert(getopt(5, go_argv, "ab:") == 'b' && optarg && strcmp(optarg, "val") == 0);
+    assert(getopt(5, go_argv, "ab:") == -1 && strcmp(go_argv[optind], "rest") == 0);
+    optind = 1; char *go_bad[] = { "prog", "-z" };
+    assert(getopt(2, go_bad, "ab:") == '?');
+    assert(sysconf(_SC_PAGESIZE) == 4096 && sysconf(_SC_CLK_TCK) == 100 && getpagesize() == 4096);
+    assert(sysconf(_SC_OPEN_MAX) == 64 && sysconf(9999) == -1);
+    uint32_t parsed = 0;
+    assert(inet_pton(AF_INET, "127.0.0.1", &parsed) == 1 && ntohl(parsed) == INADDR_LOOPBACK);
+    assert(inet_pton(AF_INET, "300.1.1.1", &parsed) == 0 && inet_pton(AF_INET, "abc", &parsed) == 0);
+    assert(inet_addr("10.0.2.15") == htonl(0x0a00020fu));
+    char ip_text[16]; struct in_addr loop = { htonl(INADDR_LOOPBACK) };
+    assert(inet_ntop(AF_INET, &loop.s_addr, ip_text, sizeof(ip_text)) && strcmp(ip_text, "127.0.0.1") == 0);
+    assert(inet_ntoa(loop) && strcmp(inet_ntoa(loop), "127.0.0.1") == 0);
+    assert(htons(0x1234u) == 0x3412u && htonl(0x12345678u) == 0x78563412u);
+    struct timeval moment = { 0, 0 };
+    assert(gettimeofday(&moment, 0) == 0 && moment.tv_sec == 1700000000 && moment.tv_usec == 0);
+    assert(strcmp(strerror(RIX_ESRCH), "No such process") == 0);
+    assert(strcmp(strerror(RIX_ETIMEDOUT), "Connection timed out") == 0);
+    assert(strcmp(strerror(RIX_EMSGSIZE), "Message too long") == 0);
+    assert(stdin && stdout && stderr && fileno(stdin) == 0 && fileno(stdout) == 1);
+    assert(atexit(noop_handler) == 0 && atexit(0) == -1);
+    errno = 0; assert(system("true") == -1 && errno == RIX_ENOSYS);
     return 0;
 }

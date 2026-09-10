@@ -140,7 +140,7 @@ int program_main(int argc, char **argv, char **envp) {
     }
     static char eresponse[4096];
     size_t total = 0;
-    rix_timespec_t epause = {0, 250000000u};
+    struct timespec epause = {0, 250000000};
     for (unsigned round = 0; round < 60; ++round) {
         if (!total) {
             if (socket_send(efd, eget, eget_length,

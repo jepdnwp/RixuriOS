@@ -2,8 +2,12 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <time.h>
 typedef int64_t rix_ssize_t;
+#ifndef RIXURI_OFF_T_DEFINED
+#define RIXURI_OFF_T_DEFINED
 typedef int64_t off_t;
+#endif
 typedef uint64_t rix_pid_t;
 typedef struct { rix_pid_t session; rix_pid_t leader; uint32_t uid; uint32_t controlling_tty; uint32_t flags; } rix_session_info_t;
 #define RIX_PROCESS_NAME_MAX 32u
@@ -38,10 +42,19 @@ typedef struct { uint32_t address; uint16_t port; } rix_net_endpoint_t;
    config; userspace resolution prefers /etc/hosts, then /etc/hostlist,
    then the /etc/resolv.conf nameserver with this as fallback). */
 #define RIX_NET_DEVICE_DNS 0x0a000203u
+#define STDIN_FILENO 0
+#define STDOUT_FILENO 1
+#define STDERR_FILENO 2
 #define F_OK 0
 #define X_OK 1
 #define W_OK 2
 #define R_OK 4
+/* sysconf keys actually served (anything else fails with EINVAL). */
+#define _SC_PAGESIZE 30
+#define _SC_PAGE_SIZE _SC_PAGESIZE
+#define _SC_CLK_TCK 2
+#define _SC_OPEN_MAX 4
+#define _SC_CHILD_MAX 1
 rix_ssize_t read(int fd, void *buf, size_t count);
 rix_ssize_t write(int fd,const void *buf,size_t count);
 int openat(int dirfd, const char *path, uint32_t flags, uint32_t mode);
@@ -63,12 +76,16 @@ int dup2(int old_fd, int new_fd);
 int close_pipes_except(int keep_fd0, int keep_fd1);
 rix_pid_t spawn(const char *name, const void *image, size_t image_size);
 rix_pid_t fork(void) __attribute__((returns_twice));
-rix_pid_t wait(rix_pid_t child, uint64_t *status);
-rix_pid_t waitpid(rix_pid_t child, uint64_t *status, uint32_t options);
-int nanosleep(const rix_timespec_t *request, rix_timespec_t *remaining);
 unsigned sleep(unsigned seconds);
 int usleep(unsigned usec);
-int clock_gettime(rix_timespec_t *out);
+rix_pid_t wait(rix_pid_t child, uint64_t *status);
+rix_pid_t waitpid(rix_pid_t child, uint64_t *status, uint32_t options);
+long sysconf(int name);
+int getpagesize(void);
+extern char *optarg;
+extern int optind;
+extern int opterr;
+int getopt(int argc, char *const argv[], const char *options);
 int chdir(const char *path);
 int getcwd(char *buffer, size_t capacity);
 uint32_t getuid(void);
