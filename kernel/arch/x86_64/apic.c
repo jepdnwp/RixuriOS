@@ -42,3 +42,30 @@ int lapic_init(void) {
 uint32_t lapic_id(void) { return lapic_read(APIC_REG_ID) >> 24; }
 void lapic_eoi(void) { lapic_write(APIC_REG_EOI, 0); }
 void lapic_enable_pic_extint(void) { lapic_write(APIC_REG_LVT_LINT0, 7u << 8); }
+
+/* Delivery clears within a handful of reads on healthy hardware; the
+ * bound only caps pathological MMIO stalls (slow virtualized reads must
+ * not wedge the BSP: worst case fails closed to the caller timeout). */
+#define APIC_IPI_WAIT_ITERS 50000ULL
+static int ipi_wait_idle(void) {
+    for (uint64_t i = 0; i < APIC_IPI_WAIT_ITERS; ++i) {
+        if (!(lapic_read(APIC_REG_ICR_LOW) & APIC_ICR_DELIVERY_STATUS)) return 0;
+    }
+    return -1;
+}
+
+static int ipi_send(uint32_t apic_id, uint32_t low) {
+    lapic_write(APIC_REG_ICR_HIGH, apic_id << 24);
+    lapic_write(APIC_REG_ICR_LOW, low);
+    return ipi_wait_idle();
+}
+
+int lapic_send_init(uint32_t apic_id, int assert_level) {
+    uint32_t low = APIC_DELIVERY_INIT | APIC_TRIGGER_LEVEL;
+    if (assert_level) low |= APIC_LEVEL_ASSERT;
+    return ipi_send(apic_id, low);
+}
+
+int lapic_send_sipi(uint32_t apic_id, uint8_t vector) {
+    return ipi_send(apic_id, APIC_DELIVERY_SIPI | vector);
+}

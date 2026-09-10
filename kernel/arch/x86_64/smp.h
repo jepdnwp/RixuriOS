@@ -1,4 +1,21 @@
 #pragma once
+
+/* Assembler-visible trampoline constants (no C syntax: smp_trampoline.S
+ * includes this header through the C preprocessor). */
+#define SMP_TRAMP_GDT_OFF 0x200
+#define SMP_TRAMP_GDTR_OFF 0x230
+#define SMP_TRAMP_DATA_CR3 0x280
+#define SMP_TRAMP_DATA_STACK 0x288
+#define SMP_TRAMP_DATA_ENTRY 0x290
+#define SMP_TRAMP_TEMPLATE_MAX 0x200
+#define SMP_TRAMP_STACK_TOP_OFF 0x1000
+#define SMP_TRAMP_SEL_CODE32 0x08
+#define SMP_TRAMP_SEL_DATA32 0x10
+#define SMP_TRAMP_SEL_DATAPAGE 0x18
+#define SMP_TRAMP_SEL_CODE64 0x20
+#define SMP_TRAMP_SEL_DATA64 0x28
+
+#ifndef __ASSEMBLER__
 #include <stddef.h>
 #include <stdint.h>
 #include "acpi.h"
@@ -27,6 +44,7 @@ typedef struct {
     uint8_t x2apic;
     smp_cpu_state_t state;
     uint64_t stack_phys;
+    uint64_t trampoline_phys;
 } smp_cpu_t;
 
 typedef struct {
@@ -45,3 +63,27 @@ size_t smp_online_count(void);
 uint32_t smp_bsp_apic(void);
 int smp_bsp_index(void);
 const smp_cpu_t *smp_cpu(size_t index);
+
+/* Phase B: AP startup (docs/SMP_DESIGN.md). Trampoline page layout: the
+ * assembled template (code + one patched dword) is copied to a reserved
+ * low page; C builds the GDT/GDTR/data area at fixed offsets; the AP
+ * stack grows down from page+0x1000. Template must stay under 0x200. */
+
+/* Start recorded APs (INIT-SIPI-SIPI). Returns online count (>=1) or
+ * negative when discovery never ran. Never panics: failed APs stay
+ * PRESENT and the boot continues (documented DEGRADED). */
+int smp_start_aps(void);
+/* AP C entry (called once from the trampoline, never returns). */
+void ap_entry(void);
+/* Volatile state read for the BSP poll loop. */
+smp_cpu_state_t smp_cpu_state(size_t index);
+/* GDT/GDTR builder over a caller buffer (host-testable). */
+int smp_build_gdt(uint8_t *page, uint64_t page_phys);
+/* Assembled template size in bytes. */
+size_t smp_trampoline_size(void);
+/* Copy template to page, build GDT, write data + long-jump patch.
+ * Returns 0, -1 on bad input, -2 when CR3 is not reachable in 32-bit
+ * mode (kernel PML4 above 4G). Host-testable (buffer-backed). */
+int smp_setup_trampoline(uint8_t *page, uint64_t page_phys, uint64_t cr3,
+                         uint64_t stack_top, uint64_t entry);
+#endif

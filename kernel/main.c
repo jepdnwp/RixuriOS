@@ -246,6 +246,7 @@ void kernel_main(const rixuri_boot_info_t *boot){
   if(lapic_init()!=0)panic("local APIC initialization failed");
   if(smp_discover()!=0)klog_write("SMP: discovery unavailable, uniprocessor boot\r\n");
   else{klog_write("SMP: cpus=");klog_write_dec(smp_cpu_count());klog_write(" online=");klog_write_dec(smp_online_count());klog_write(" bsp_apic=");klog_write_dec(smp_bsp_apic());klog_write("\r\n");}
+  if(smp_cpu_count()>1){int smp_online=smp_start_aps();klog_write("SMP: online=");klog_write_dec(smp_online<0?0u:(uint64_t)smp_online);klog_write("\r\n");for(size_t smp_i=0;smp_i<smp_cpu_count();smp_i++){const smp_cpu_t*smp_c=smp_cpu(smp_i);if(smp_c&&!smp_c->is_bsp&&smp_c->state==SMP_CPU_ONLINE){klog_write("AP ");klog_write_dec(smp_c->apic_id);klog_write(" online\r\n");}}}
   if(pci_init()!=0)panic("PCI initialization failed");
   klog_write("PCI: devices=");klog_write_dec(pci_device_count());klog_write("\r\n");
   pci_print_devices();

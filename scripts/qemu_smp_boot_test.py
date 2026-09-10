@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""P0 Phase A: SMP discovery boot test. Boots with -smp 4 on a disposable
-image copy and requires the discovery line plus a full boot to shell.
-APs are recorded, never started: online must stay 1 (BSP only)."""
+"""P0 Phase B: SMP AP-startup boot test. Boots with -smp 4 on a disposable
+image copy and requires discovery, all-APs-online and a full boot shell.
+A failed AP is DEGRADED (stays PRESENT), never a boot panic."""
 import os
 import select
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -24,6 +25,14 @@ proc = subprocess.Popen(
     ["bash", "./scripts/run-qemu.sh", "-smp", "4"], cwd=ROOT,
     stdin=subprocess.PIPE, stdout=subprocess.PIPE,
     stderr=subprocess.STDOUT, env=env)
+
+
+def _die(signum, frame):
+    raise SystemExit(124)
+
+
+signal.signal(signal.SIGTERM, _die)
+signal.signal(signal.SIGINT, _die)
 output = bytearray()
 cursor = 0
 
@@ -48,6 +57,11 @@ def read_until(marker: bytes, timeout: float) -> bool:
 try:
     if not read_until(b"SMP: cpus=4 online=1 bsp_apic=0", 30.0):
         raise RuntimeError("SMP discovery line not observed")
+    if not read_until(b"SMP: online=4", 240.0):
+        raise RuntimeError("SMP all-APs-online line not observed")
+    for ap in (b"AP 1 online", b"AP 2 online", b"AP 3 online"):
+        if not read_until(ap, 10.0):
+            raise RuntimeError(f"{ap!r} line not observed")
     if not read_until(b"RIXURI:KERNEL_READY", 30.0):
         raise RuntimeError("kernel ready not observed")
     if not read_until(b"RIXURI: SHELL READY", 30.0):
