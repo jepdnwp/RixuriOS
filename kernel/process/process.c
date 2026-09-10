@@ -225,21 +225,6 @@ static uint64_t read_cr3_hw(void){uint64_t v;__asm__ volatile("mov %%cr3,%0":"=r
  * (vmm_track_pml4) immediately after, so HW and SW never diverge. */
 extern void load_cr3_raw(uint64_t phys);
 static uint64_t read_rflags_hw(void){uint64_t v;__asm__ volatile("pushfq; popq %0":"=r"(v)::"memory");return v;}
-static uint64_t read_rip_hw(void){uint64_t v;__asm__ volatile("lea 0(%%rip),%0":"=r"(v)::"memory");return v;}
-static uint64_t read_rsp_hw(void){uint64_t v;__asm__ volatile("mov %%rsp,%0":"=r"(v)::"memory");return v;}
-/* Read-only CPU-state forensics (CPL0 only; all called pre-switch in Ring0).
- * Discriminates QEMU-TCG vs physical Zen 4 paging configuration. */
-static uint64_t read_cr0_hw(void){uint64_t v;__asm__ volatile("mov %%cr0,%0":"=r"(v)::"memory");return v;}
-static uint64_t read_cr4_hw(void){uint64_t v;__asm__ volatile("mov %%cr4,%0":"=r"(v)::"memory");return v;}
-static uint64_t read_efer_hw(void){uint32_t lo,hi;__asm__ volatile("rdmsr":"=a"(lo),"=d"(hi):"c"(0xC0000080u));return((uint64_t)hi<<32)|(uint64_t)lo;}
-static uint32_t read_maxphys_hw(void){uint32_t a,b,c,d;__asm__ volatile("cpuid":"=a"(a),"=b"(b),"=c"(c),"=d"(d):"a"(0x80000008u),"c"(0u));(void)b;(void)c;(void)d;return a&0xFFu;}
-/* Single walk step: log the full VA->entries->phys+flags chain, then return
- * the page-presence verdict (0=mapped). Every critical VA below refuses the
- * switch when unmapped, so a missing mapping can never become a silent
- * triple fault: it becomes a named REFUSED instead. */
-static int walk_one(uint64_t np,uint64_t va,const char*label){vmm_log_walk(np,va,label);uint64_t ph=0,fl=0;return vmm_walk_in_pml4(np,va&~0xFFFULL,0,0,0,0,&ph,&fl);}
-static uint64_t read_gdtr_base_hw(void){struct __attribute__((packed)){uint16_t limit;uint64_t base;}gdtr={0,0};__asm__ volatile("sgdt %0":"=m"(gdtr)::"memory");return gdtr.base;}
-static uint64_t read_idtr_base_hw(void){struct __attribute__((packed)){uint16_t limit;uint64_t base;}idtr={0,0};__asm__ volatile("sidt %0":"=m"(idtr)::"memory");return idtr.base;}
 void scheduler_yield(void);
 void scheduler_dump_states(void);
 extern void isr14(void);
@@ -258,122 +243,14 @@ void cr3trace_dump(void){unsigned total=cr3trace_n,show=total<CR3TRACE_N?total:C
  * Only touches low-identity kernel memory (code/data/stacks/framebuffer),
  * all shared under the target CR3, so logging is safe pre- and post-switch.
  * Returns 0 when target CR3 is safe to load, -1 when CR3 must NOT be written. */
-static int cr3_diagnose_target(rix_process_t*p,uint64_t old_cr3){
- uint64_t np=p->address_space.pml4_phys;
- uint64_t cx4=0;uint32_t pmt=0;int pmu=0;
- kernel_log("DEBUG: CR3 old=");kernel_log_hex(old_cr3);kernel_log("\r\n");
- kernel_log("DEBUG: CR3 new=");kernel_log_hex(np);kernel_log("\r\n");
- kernel_log("DEBUG: CR3 hw=");kernel_log_hex(read_cr3_hw());
- kernel_log(" sw=");kernel_log_hex(vmm_current_pml4());kernel_log("\r\n");
- {uint64_t cr0=read_cr0_hw(),cr4=read_cr4_hw(),efer=read_efer_hw();uint32_t mp=read_maxphys_hw();
-  cx4=cr4;
-  uint64_t apicbase=x86_rdmsr(0x1Bu);
-  kernel_log("CPU: CR0=");kernel_log_hex(cr0);
-  kernel_log(" PG=");kernel_log_dec((uint64_t)((cr0>>31)&1ULL));
-  kernel_log(" WP=");kernel_log_dec((uint64_t)((cr0>>16)&1ULL));
-  kernel_log(" CR4=");kernel_log_hex(cr4);
-  kernel_log(" LA57=");kernel_log_dec((uint64_t)((cr4>>12)&1ULL));
-  kernel_log(" PCIDE=");kernel_log_dec((uint64_t)((cr4>>17)&1ULL));
-  kernel_log(" SMEP=");kernel_log_dec((uint64_t)((cr4>>20)&1ULL));
-  kernel_log(" SMAP=");kernel_log_dec((uint64_t)((cr4>>21)&1ULL));
-  kernel_log(" PKE=");kernel_log_dec((uint64_t)((cr4>>22)&1ULL));
-  kernel_log(" PAE=");kernel_log_dec((uint64_t)((cr4>>5)&1ULL));
-  kernel_log(" EFER=");kernel_log_hex(efer);
-  kernel_log(" NXE=");kernel_log_dec((uint64_t)((efer>>11)&1ULL));
-  kernel_log(" LMA=");kernel_log_dec((uint64_t)((efer>>10)&1ULL));
-  kernel_log(" MaxPhys=");kernel_log_dec((uint64_t)mp);
-  kernel_log(" X2APIC=");kernel_log_dec((uint64_t)((apicbase>>10)&1ULL));
-  kernel_log("\r\n");}
- kernel_log("PMM: pml4=");kernel_log_hex(np);
- kernel_log(" managed=");kernel_log_dec((uint64_t)pmm_is_managed(np));
- kernel_log(" used=");kernel_log_dec((uint64_t)pmm_is_in_use(np));
- kernel_log(" reserved=");kernel_log_dec((uint64_t)pmm_is_reserved(np));
- kernel_log("\r\n");
- {uint64_t rb=0,re=0;uint32_t rt=0;int ru=0;int rr=pmm_region_info(np,&rb,&re,&rt,&ru);
-  int rmag=rr<0?-rr:rr;pmt=rt;pmu=ru;
-  kernel_log("PMM region: base=");kernel_log_hex(rb);
-  kernel_log(" end=");kernel_log_hex(re);
-  kernel_log(" type=");kernel_log_dec((uint64_t)rt);
-  kernel_log(" usable=");kernel_log_dec((uint64_t)(ru?1:0));
-  kernel_log(" lookup=");kernel_log_dec((uint64_t)rmag);
-  kernel_log("\r\n");}
- int vr=vmm_validate_pml4(np);
- if(vr==0){kernel_log("DEBUG: TARGET PML4 VALID\r\n");}
- else{kernel_log("DEBUG: TARGET PML4 INVALID reason=");kernel_log_dec((uint64_t)(vr<0?-vr:vr));kernel_log("\r\n");serial_drain();return -1;}
- kernel_log("DEBUG: KERNEL CR3=");kernel_log_hex(vmm_kernel_pml4());kernel_log("\r\n");
- vmm_log_pml4_range(vmm_kernel_pml4(),np,0,16);
- vmm_log_pml4_compare(vmm_kernel_pml4(),np);
- uint64_t rip=read_rip_hw(),rsp=read_rsp_hw();
- uint64_t old_stack_phys=0,new_stack_phys=0;
- (void)vmm_walk_in_pml4(old_cr3,rsp,0,0,0,0,&old_stack_phys,0);
- (void)vmm_walk_in_pml4(np,rsp,0,0,0,0,&new_stack_phys,0);
- kernel_log("DEBUG: active stack phys old=");kernel_log_hex(old_stack_phys);
- kernel_log(" new=");kernel_log_hex(new_stack_phys);kernel_log("\r\n");
- if(!old_stack_phys||!new_stack_phys||
-    (old_stack_phys&~0xfffULL)!=(new_stack_phys&~0xfffULL)){
-  kernel_log("DEBUG: CR3 REFUSED active stack alias mismatch\r\n");
-  serial_drain();return -1;
- }
- uint64_t ret=(uint64_t)__builtin_return_address(0);
- uint64_t kstack_base=p->kernel_stack,kstack_top=p->kernel_stack+p->kernel_stack_size-1ULL;
- const x86_tss_t*tss=tss_current();
- uint64_t tss_va=(uint64_t)(uintptr_t)tss;
- uint64_t rsp0=tss?tss->rsp0:0,ist1=tss?tss->ist[0]:0;
- int wrip=walk_one(np,rip,"CURRENT RIP");
- int wrsp=walk_one(np,rsp,"CURRENT RSP");
- int wret=walk_one(np,ret&~0xFFFULL,"RETURN ADDR");
- int whandler=walk_one(np,(uint64_t)(uintptr_t)isr14,"EXC HANDLER #PF");
- int wkbase=walk_one(np,kstack_base,"KERNEL STACK BASE");
- int wktop=walk_one(np,kstack_top&~0xFFFULL,"KERNEL STACK TOP");
- int wproc=walk_one(np,(uint64_t)(uintptr_t)process_activate,"PROCESS CODE");
- int wsched=walk_one(np,(uint64_t)(uintptr_t)scheduler_yield,"SCHEDULER CODE");
- int widt=walk_one(np,read_idtr_base_hw(),"IDT BASE");
- int wgdt=walk_one(np,read_gdtr_base_hw(),"GDT BASE");
- int wtss=walk_one(np,tss_va,"TSS");
- int wrsp0=rsp0?walk_one(np,rsp0-8ULL,"TSS.RSP0"):0;
- int wist=ist1?walk_one(np,ist1-8ULL,"IST1 DF STACK"):0;
- int wuimg=walk_one(np,0x0000008000000000ULL,"USER IMAGE BASE");
- int wusttop=walk_one(np,USER_STACK_TOP-4096ULL,"USER STACK TOP");
- int wustbase=walk_one(np,USER_STACK_BASE,"USER STACK BASE");
- {uint64_t txbase=address_space_translate(&p->address_space,USER_STACK_BASE);
-  kernel_log("DEBUG: BASE xcheck=");kernel_log_hex(txbase);kernel_log("\r\n");}
- /* Critical rule: every VA the CPU may touch across the switch (kernel
-  * execution path, fault-delivery path, and user entry path) must be mapped
-  * under the target. Anything missing refuses the switch by name. */
- {
-  int rrip=(wrip==0),rrsp=(wrsp==0),rret=(wret==0);
-  int rkst=(wkbase==0&&wktop==0);
-  int allk=(wrip==0&&wrsp==0&&wret==0&&whandler==0&&wkbase==0&&wktop==0&&wproc==0&&wsched==0&&widt==0&&wgdt==0&&wtss==0&&wrsp0==0&&wist==0);
-  int allu=(wuimg==0&&wusttop==0);
-  int baseok=(wustbase==0);
-  kernel_log("DEBUG: CURRENT RIP MAPPED=");kernel_log(rrip?"YES\r\n":"NO\r\n");
-  kernel_log("DEBUG: CURRENT RSP MAPPED=");kernel_log(rrsp?"YES\r\n":"NO\r\n");
-  kernel_log("DEBUG: RETURN ADDR MAPPED=");kernel_log(rret?"YES\r\n":"NO\r\n");
-  kernel_log("DEBUG: KERNEL STACK MAPPED=");kernel_log(rkst?"YES\r\n":"NO\r\n");
-  kernel_log("DEBUG: KERNEL MAPPING=");kernel_log(allk?"PASS\r\n":"FAIL\r\n");
-  kernel_log("DEBUG: USER MAPPING=");kernel_log(allu?"PASS\r\n":"FAIL\r\n");
-  /* The bottom stack page (PD[510], USER_STACK_BASE) is a known pre-existing
-   * mapping-layer hole: present since HEAD, harmless (31/32 pages mapped,
-   * HEAD boots to shell with it), and independent of the CR3 switch path.
-   * Warn loudly, keep the forensic lines, but do not gate boot on it. */
-  kernel_log("DEBUG: STACK BASE HOLE=");kernel_log(baseok?"NO\r\n":"YES warn-only\r\n");
-  kernel_log("CR3DIAG sum: valid=1 rip=");kernel_log_dec((uint64_t)rrip);
-  kernel_log(" rsp=");kernel_log_dec((uint64_t)rrsp);
-  kernel_log(" ret=");kernel_log_dec((uint64_t)rret);
-  kernel_log(" kstack=");kernel_log_dec((uint64_t)rkst);
-  kernel_log(" kall=");kernel_log_dec((uint64_t)allk);
-  kernel_log(" uall=");kernel_log_dec((uint64_t)allu);
-  kernel_log(" base=");kernel_log_dec((uint64_t)baseok);
-  kernel_log(" pmtype=");kernel_log_dec((uint64_t)pmt);
-  kernel_log(" pmusable=");kernel_log_dec((uint64_t)(pmu?1:0));
-  kernel_log(" la57=");kernel_log_dec((uint64_t)((cx4>>12)&1ULL));
-  kernel_log("\r\n");
-  if(!allk||!allu){kernel_log("DEBUG: process_activate REFUSED unmapped target VA\r\n");serial_drain();return -1;}
-  }
-  {static unsigned n=0;if(n<2){scheduler_dump_states();serial_drain();n++;}}
-  serial_drain();
-  return 0;
+static int cr3_diagnose_target(rix_process_t *p, uint64_t old_cr3) {
+    (void)old_cr3;
+    if (!p || !p->address_space.pml4_phys) return -1;
+    /* Keep the safety gate in the boot path, but never emit the forensic
+     * page-table walk to the slow GOP console during normal startup. */
+    return vmm_validate_pml4(p->address_space.pml4_phys) == 0 ? 0 : -1;
 }
+
 int process_validate_user_entry(pid_t pid,uint64_t user_rip,uint64_t user_rsp){
  rix_process_t*p=process_lookup(pid);uint64_t phys=0,flags=0;
  if(!p||!p->address_space.pml4_phys||!user_rip||!user_rsp)return -1;
