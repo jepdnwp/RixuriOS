@@ -441,7 +441,10 @@ int process_activate(pid_t pid){if(pid==0){uint64_t kb=vmm_kernel_pml4();cr3trac
 #define RIX_DEBUG_CR3_RELOAD_SELF 0
 #define RIX_DEFER_USER_CR3_TO_ENTRY 1
 {uint64_t target=p->address_space.pml4_phys;cr3trace_push(1,(uint64_t)pid,target,read_cr3_hw());if(vmm_validate_pml4(target)!=0){kernel_log("DEBUG: process_activate REFUSED invalid target CR3\r\n");serial_drain();return -1;}int sc=address_space_sync_kernel(&p->address_space);{static unsigned n=0;if(n<2||sc>0){kernel_log("DEBUG: kernel sync slots=");if(sc<0){kernel_log("-1");}else{kernel_log_dec((uint64_t)sc);}kernel_log("\r\n");serial_drain();if(n<2){n++;}}}
-uint64_t loadval=target;
+ /* Volatile snapshot: every later use re-reads the same stack slot, so no
+  * spill/reload, ordering, or stale-register theory can survive review.
+  * Cost is a few stack accesses on a proven stack. */
+ volatile uint64_t loadval=target;
 /* Sync first, then validate the exact root that will reach CR3.  The old
  * order validated the root and only afterward rewrote shared kernel slots;
  * real hardware can expose that unvalidated final state during a TLB flush. */
@@ -488,12 +491,18 @@ loadval=read_cr3_hw();
   for(volatile uint64_t d=0;d<30000000ULL;++d)__asm__ volatile("pause" ::: "memory");
   kernel_log("DEBUG: SHIFT done\r\n");serial_drain();
   n++;}}
- load_cr3_raw(loadval);
+ /* NOTE: commit uses an inline mov, not load_cr3_raw(), to eliminate the
+  * call/ret stack traffic as a variable: if C1 appears now, the CALL was
+  * the victim (stack-content corruption on HW); if not, the mov/fetch
+  * itself is implicated under identical value+tables. */
+ __asm__ volatile("movq %0,%%cr3" :: "r"(loadval) : "memory");
  /* Commit-window bisection (HW triage): the freeze sits between the
   * SHIFT lines above and "CR3 load returned" below with no fault text.
-  * These three one-line markers use the identical, just-proven print
-  * path; the first missing marker names the killing instruction. */
- {static unsigned n=0;if(n<2){kernel_log("DEBUG: C1 after-commit-mov\r\n");serial_drain();n++;}}
+  * These markers use the identical, just-proven print path; the first
+  * missing marker names the killing instruction. C1 sits immediately
+  * after the commit mov (inline form below keeps call/ret stack traffic
+  * out of the suspect window entirely). */
+ {static unsigned n=0;if(n<2){uint64_t hw=read_cr3_hw();kernel_log("DEBUG: C1 after-commit-mov cur=");kernel_log_hex(hw);kernel_log(hw==loadval?" MATCH\r\n":" MISMATCH\r\n");serial_drain();n++;}}
  /* Stackless post-switch probes (no calls, no memory, no stack except the
   * probe push itself): 'F' proves instruction fetch works on the new
   * tables; the push/pop proves RSP is writable; 'S' proves both. On a
