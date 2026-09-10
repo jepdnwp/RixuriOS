@@ -22,6 +22,7 @@ int getdents(int fd,rix_dirent_t *entries,size_t capacity,size_t *count){return(
 int getdents64(int fd,rix_dirent_t *entries,size_t capacity,size_t *count){return getdents(fd,entries,capacity,count);}
 off_t lseek(int fd,off_t offset,int whence){return(off_t)rix_int_result(rix_sys(8,fd,(long)offset,whence));}
 int stat(const char *path,rix_stat_t *out){return(int)rix_int_result(rix_sys(4,(long)path,(long)out,0));}
+int access(const char *path,int mode){if(!path||mode<0||(mode&~(R_OK|W_OK|X_OK))){errno=RIX_EINVAL;return -1;}rix_stat_t st;if(stat(path,&st)!=0)return -1;if(mode==F_OK)return 0;uint32_t permissions=st.mode&0777u;if((mode&R_OK)&&!(permissions&0444u)){errno=RIX_EACCES;return -1;}if((mode&W_OK)&&!(permissions&0222u)){errno=RIX_EACCES;return -1;}if((mode&X_OK)&&!(permissions&0111u)){errno=RIX_EACCES;return -1;}return 0;}
 int close(int fd){return(int)rix_int_result(rix_sys(3,fd,0,0));}
 int pipe(int fds[2]){return(int)rix_int_result(rix_sys(22,(long)fds,0,0));}
 int dup(int old_fd){return(int)rix_int_result(rix_sys(32,old_fd,0,0));}

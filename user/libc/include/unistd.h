@@ -38,6 +38,10 @@ typedef struct { uint32_t address; uint16_t port; } rix_net_endpoint_t;
    config; userspace resolution prefers /etc/hosts, then /etc/hostlist,
    then the /etc/resolv.conf nameserver with this as fallback). */
 #define RIX_NET_DEVICE_DNS 0x0a000203u
+#define F_OK 0
+#define X_OK 1
+#define W_OK 2
+#define R_OK 4
 rix_ssize_t read(int fd, void *buf, size_t count);
 rix_ssize_t write(int fd,const void *buf,size_t count);
 int openat(int dirfd, const char *path, uint32_t flags, uint32_t mode);
@@ -51,6 +55,7 @@ int getdents(int fd, rix_dirent_t *entries, size_t capacity, size_t *count);
 int getdents64(int fd, rix_dirent_t *entries, size_t capacity, size_t *count);
 off_t lseek(int fd, off_t offset, int whence);
 int stat(const char *path, rix_stat_t *out);
+int access(const char *path, int mode);
 int close(int fd);
 int pipe(int fds[2]);
 int dup(int old_fd);
