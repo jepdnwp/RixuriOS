@@ -248,6 +248,9 @@ static uint64_t cr3trace_b[CR3TRACE_N];
 static uint64_t cr3trace_c[CR3TRACE_N];
 static unsigned cr3trace_n;
 void cr3trace_push(uint64_t tag,uint64_t a,uint64_t b,uint64_t c){unsigned i=cr3trace_n%CR3TRACE_N;cr3trace_tags[i]=tag;cr3trace_a[i]=a;cr3trace_b[i]=b;cr3trace_c[i]=c;cr3trace_n++;}
+/* Numbered switch attempts: the gated prints below show SW#1/SW#2 so a
+ * frozen physical console unambiguously names WHICH switch died. */
+static unsigned cr3_switch_seq;
 void cr3trace_dump(void){unsigned total=cr3trace_n,show=total<CR3TRACE_N?total:CR3TRACE_N,start=total-show;for(unsigned i=0;i<show;i++){unsigned k=(start+i)%CR3TRACE_N;uint64_t tag=cr3trace_tags[k];kernel_log(tag==1u?"TRACE act-pre pid=":tag==2u?"TRACE act-post pid=":"TRACE yield old=");kernel_log_hex(cr3trace_a[k]);kernel_log(tag==3u?" next=":" tgt=");kernel_log_hex(cr3trace_b[k]);kernel_log(" hw=");kernel_log_hex(cr3trace_c[k]);kernel_log("\r\n");}}
 /* Atomic CR3-switch isolation diagnostics. Dual-output (screen+serial via
  * kernel_log) so the lines survive on physical-console-only setups as well.
@@ -445,7 +448,7 @@ if(process_user_entry_deferred){
 loadval=read_cr3_hw();
 {static unsigned n=0;if(n<2){kernel_log("DEBUG: CR3 SELFTEST reloading current CR3\r\n");serial_drain();n++;}}
 #endif
-{static unsigned n=0;if(n<2){uint64_t rf=read_rflags_hw();kernel_log("DEBUG: before mov cr3 target=");kernel_log_hex(loadval);kernel_log(" current=");kernel_log_hex(read_cr3_hw());kernel_log(" IF=");kernel_log_dec((uint64_t)((rf>>9)&1ULL));kernel_log("\r\n");serial_drain();n++;}}
+ {static unsigned n=0;if(n<2){uint64_t rf=read_rflags_hw();cr3_switch_seq++;kernel_log("DEBUG: SW#");kernel_log_dec(cr3_switch_seq);kernel_log(" pid=");kernel_log_dec((uint64_t)pid);kernel_log(" before mov cr3 target=");kernel_log_hex(loadval);kernel_log(" current=");kernel_log_hex(read_cr3_hw());kernel_log(" IF=");kernel_log_dec((uint64_t)((rf>>9)&1ULL));kernel_log("\r\n");serial_drain();n++;}}
  {int pr=cr3_probe_root(loadval);if(pr!=0){kernel_log("DEBUG: ROOT probe FAILED reason=");if(pr<0){kernel_log("-");}kernel_log_dec((uint64_t)(pr<0?-pr:pr));kernel_log("\r\n");serial_drain();return -1;}}
  {static unsigned n=0;if(n<2){uint64_t self=read_cr3_hw();load_cr3_raw(self);kernel_log("DEBUG: CR3 selftest ok cur=");kernel_log_hex(read_cr3_hw());kernel_log("\r\n");serial_drain();n++;}}
  load_cr3_raw(loadval);
@@ -477,7 +480,7 @@ loadval=read_cr3_hw();
   "outb %%al,%%dx\n\t"
   ::: "rax", "rdx", "memory");
  }}
- vmm_track_pml4(loadval);cr3trace_push(2,(uint64_t)pid,loadval,read_cr3_hw());{static unsigned n=0;if(n<2){uint64_t hw=read_cr3_hw();kernel_log("DEBUG: CR3 load returned cur=");kernel_log_hex(hw);kernel_log(hw==loadval?" SW=SYNC\r\n":" SW=MISMATCH\r\n");kernel_log("DEBUG: CR3 switched\r\n");serial_drain();n++;}}}
+ vmm_track_pml4(loadval);cr3trace_push(2,(uint64_t)pid,loadval,read_cr3_hw());{static unsigned n=0;if(n<2){uint64_t hw=read_cr3_hw();kernel_log("DEBUG: SW#");kernel_log_dec(cr3_switch_seq);kernel_log(" CR3 load returned cur=");kernel_log_hex(hw);kernel_log(hw==loadval?" SW=SYNC\r\n":" SW=MISMATCH\r\n");kernel_log("DEBUG: CR3 switched\r\n");serial_drain();n++;}}}
 #endif
 {static unsigned n=0;if(n<2){kernel_log("DEBUG: CR3 switched cur=");kernel_log_hex(read_cr3_hw());kernel_log("\r\n");serial_drain();n++;}}{static unsigned m=0;if(m<2){kernel_log("DEBUG: process_activate done\r\n");serial_drain();m++;}}return 0;}
 int process_set_state(pid_t pid,rix_process_state_t state){rix_process_t*p=process_lookup(pid);if(!p||state==RIX_PROC_UNUSED)return -1;rix_process_state_t old=p->state;p->state=state;if(state==RIX_PROC_RUNNING&&process_activate(pid)!=0){p->state=old;return -1;}return 0;}
