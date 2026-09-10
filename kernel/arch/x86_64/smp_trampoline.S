@@ -99,6 +99,23 @@ smp_trampoline_longmode:
     movw %ax,%ss
     /* RSP first: the hex printer below uses call/ret. */
     movq SMP_TRAMP_DATA_STACK(%r10),%rsp
+    /* Switch from the temporary trampoline GDT to the BSP's real GDT and
+       load the shared IDT before any C code can fault. */
+    lgdt SMP_TRAMP_DATA_GDTR(%r10)
+    pushq $SMP_TRAMP_SEL_CODE32
+    leaq 1f(%rip),%rax
+    pushq %rax
+    lretq
+1:
+    movw $SMP_TRAMP_SEL_DATA32,%ax
+    movw %ax,%ds
+    movw %ax,%es
+    movw %ax,%ss
+    lidt SMP_TRAMP_DATA_IDTR(%r10)
+    /* Publish ONLINE without entering C or relying on the AP's TSS. */
+    movq SMP_TRAMP_DATA_ONLINE(%r10),%r14
+    movl $3,(%r14)
+    mfence
     /* G probe: dump the CR3 slot (BSP wrote the AP PML4). */
     movb $0x47,%ah
     movl $0x3FD,%edx
@@ -129,10 +146,9 @@ smp_trampoline_longmode:
     push %rcx
     call hex64
     pop %rax
-    /* Fetch probe: dump the 8 bytes AT the entry point, then park. If
-     * they match the linked ap_entry bytes, instruction fetch is proven
-     * and the fault lies in C execution; otherwise the entry mapping is
-     * wrong. Either way no silent reset goes undiagnosed. */
+    /* Preserve the entry before AH is reused for the fetch marker. */
+    movq %rax,%r13
+    /* The entry pointer is preserved before the fetch marker. */
     movb $0x59,%ah
     movl $0x3FD,%edx
     movl $4096,%r12d
@@ -144,7 +160,7 @@ smp_trampoline_longmode:
 2:  movl $0x3F8,%edx
     movb %ah,%al
     outb %al,%dx
-    movq (%rax),%rcx
+    movq (%r13),%rcx
     call hex64
     cli
 halt_ap:

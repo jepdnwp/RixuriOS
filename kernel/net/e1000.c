@@ -6,11 +6,13 @@
 static rix_e1000_t controller;
 
 static volatile uint32_t *map_regs(uint64_t base, uint64_t size) {
-    if (!base || size < 0x6000u) return 0;
-    uint64_t mapped = (size + 0xfffu) & ~0xfffULL;
+    if (!base || size < 0x6000u || size > 0x1000000ULL ||
+        base > UINT64_MAX - (size - 1u)) return 0;
+    uint64_t mapped = ((base & 0xfffULL) + size + 0xfffu) & ~0xfffULL;
     for (uint64_t offset = 0; offset < mapped; offset += 0x1000u)
         if (vmm_map_page((base & ~0xfffULL) + offset, (base & ~0xfffULL) + offset,
-                         RIXURI_PTE_PRESENT | RIXURI_PTE_WRITE | RIXURI_PTE_NX) != 0) return 0;
+                         RIXURI_PTE_PRESENT | RIXURI_PTE_WRITE | RIXURI_PTE_NX |
+                         RIXURI_PTE_PWT | RIXURI_PTE_PCD) != 0) return 0;
     return (volatile uint32_t *)(uintptr_t)(base & ~0xfffULL);
 }
 

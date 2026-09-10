@@ -189,8 +189,12 @@ void scheduler_yield(void){
     if(tasks[old].state==TASK_RUNNING)tasks[old].state=TASK_RUNNABLE;
     trace_old_updated(old);
     trace_activating(tasks[next].process_pid);
-    if(tasks[next].process_pid){if(process_activate(tasks[next].process_pid)!=0){kernel_log("DEBUG: scheduler process_activate FAILED\r\n");tasks[next].state=TASK_DEAD;if(flags&0x200ULL)sti();return;}}
-    else if(tasks[next].id==0){if(process_activate(0)!=0){if(flags&0x200ULL)sti();return;}}
+    /* Keep the current CR3 until the stack switch completes.  Loading the
+       next process root here used to execute the remainder of scheduler_yield
+       on the old task's stack under the new address space.  That invariant
+       is fragile on physical CPUs and can fail immediately after MOV CR3.
+       The resumed-task path below activates the selected process after the
+       switch; task_bootstrap defers the first user load to x86_enter_user(). */
     tasks[next].state=TASK_RUNNING;current_index=next;
     trace_selected(tasks[next].id,tasks[next].process_pid);
     trace_first_task(next);

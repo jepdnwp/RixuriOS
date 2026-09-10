@@ -15,11 +15,12 @@
 #define CR0_EM (1ULL<<2)
 #define CR0_TS (1ULL<<3)
 #define CR4_PAE (1ULL<<5)
+#define CR4_LA57 (1ULL<<12)
 #define CR4_OSFXSR (1ULL<<9)
 #define CR4_OSXMMEXCPT (1ULL<<10)
 #define EFER_MSR 0xC0000080u
 #define EFER_NXE (1ULL<<11)
-#define LEAF_FLAGS (RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE|RIXURI_PTE_USER|RIXURI_PTE_NX|RIXURI_PTE_OWNED)
+#define LEAF_FLAGS (RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE|RIXURI_PTE_USER|RIXURI_PTE_PWT|RIXURI_PTE_PCD|RIXURI_PTE_NX|RIXURI_PTE_OWNED)
 static uint64_t early_pml4[512] __attribute__((aligned(4096)));static uint64_t early_pdpt[IDENTITY_PML4_COUNT][512] __attribute__((aligned(4096)));static uint64_t early_pd[IDENTITY_PDPT_COUNT][512] __attribute__((aligned(4096)));static uint64_t kernel_pml4_phys;uint64_t current_pml4_phys;
 static inline void write_cr3(uint64_t v){__asm__ volatile("mov %0,%%cr3"::"r"(v):"memory");}static inline void invlpg(uint64_t va){__asm__ volatile("invlpg (%0)"::"r"(va):"memory");}static inline uint64_t read_cr0(void){uint64_t v;__asm__ volatile("mov %%cr0,%0":"=r"(v));return v;}static inline void write_cr0(uint64_t v){__asm__ volatile("mov %0,%%cr0"::"r"(v):"memory");}static inline uint64_t read_cr4(void){uint64_t v;__asm__ volatile("mov %%cr4,%0":"=r"(v));return v;}static inline void write_cr4(uint64_t v){__asm__ volatile("mov %0,%%cr4"::"r"(v):"memory");}
 static inline uint64_t read_efer(void){uint32_t lo,hi;__asm__ volatile("rdmsr":"=a"(lo),"=d"(hi):"c"(EFER_MSR));return((uint64_t)hi<<32)|(uint64_t)lo;}
@@ -32,7 +33,7 @@ static void reserve_table_range(uint64_t start, size_t bytes){
  uint64_t last=(start+(uint64_t)bytes+0xfffULL)&~0xfffULL;
  for(uint64_t page=first;page<last;page+=0x1000ULL)pmm_reserve_page(page);
 }
-void vmm_early_init(void){for(size_t i=0;i<TABLE_ENTRIES;i++)early_pml4[i]=0;for(size_t n=0;n<IDENTITY_PML4_COUNT;n++){for(size_t i=0;i<TABLE_ENTRIES;i++)early_pdpt[n][i]=0;}for(size_t n=0;n<IDENTITY_PDPT_COUNT;n++)for(size_t i=0;i<TABLE_ENTRIES;i++)early_pd[n][i]=0;for(uint64_t p=0;p<IDENTITY_PML4_COUNT;p++){early_pml4[p]=(uint64_t)(uintptr_t)early_pdpt[p]|RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE;for(uint64_t n=0;n<TABLE_ENTRIES;n++){uint64_t pd_index=p*TABLE_ENTRIES+n;early_pdpt[p][n]=(uint64_t)(uintptr_t)early_pd[pd_index]|RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE;for(uint64_t i=0;i<TABLE_ENTRIES;i++){uint64_t pa=(pd_index*TABLE_ENTRIES+i)*0x200000ULL;early_pd[pd_index][i]=pa|RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE|PTE_PS;}}}reserve_table_range((uint64_t)(uintptr_t)early_pml4,sizeof(early_pml4));reserve_table_range((uint64_t)(uintptr_t)early_pdpt,sizeof(early_pdpt));reserve_table_range((uint64_t)(uintptr_t)early_pd,sizeof(early_pd));kernel_pml4_phys=(uint64_t)(uintptr_t)early_pml4;current_pml4_phys=kernel_pml4_phys;uint64_t cr4=read_cr4()|CR4_PAE;/* SMEP/SMAP/PKE and PCIDE are not yet handled by the uaccess/TLB code. Firmware may leave them set on physical CPUs; clear them before the first user transition. */cr4&=~((1ULL<<17)|(1ULL<<20)|(1ULL<<21)|(1ULL<<22));/* The kernel builds without -mno-sse, so GCC may emit SSE for copies/loops. OVMF leaves FXSR/XMMEXCPT on; physical firmware may not. Enable both and clear EM/TS so SSE never raises #UD/#NM on real silicon. QEMU-safe: already set there. */cr4|=CR4_OSFXSR|CR4_OSXMMEXCPT;write_cr4(cr4);uint64_t cr0=read_cr0()&~(CR0_EM|CR0_TS);write_cr0(cr0|CR0_WP);/* Every user mapping carries the NX bit; firmware is not required to leave EFER.NXE on (OVMF does, physical boards may not). Without it the first Ring-3 touch of an NX page raises #PF(RSVD). Enable unconditionally: already-set is a no-op. */write_efer(read_efer()|EFER_NXE);write_cr3(current_pml4_phys);}
+void vmm_early_init(void){for(size_t i=0;i<TABLE_ENTRIES;i++)early_pml4[i]=0;for(size_t n=0;n<IDENTITY_PML4_COUNT;n++){for(size_t i=0;i<TABLE_ENTRIES;i++)early_pdpt[n][i]=0;}for(size_t n=0;n<IDENTITY_PDPT_COUNT;n++)for(size_t i=0;i<TABLE_ENTRIES;i++)early_pd[n][i]=0;for(uint64_t p=0;p<IDENTITY_PML4_COUNT;p++){early_pml4[p]=(uint64_t)(uintptr_t)early_pdpt[p]|RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE;for(uint64_t n=0;n<TABLE_ENTRIES;n++){uint64_t pd_index=p*TABLE_ENTRIES+n;early_pdpt[p][n]=(uint64_t)(uintptr_t)early_pd[pd_index]|RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE;for(uint64_t i=0;i<TABLE_ENTRIES;i++){uint64_t pa=(pd_index*TABLE_ENTRIES+i)*0x200000ULL;early_pd[pd_index][i]=pa|RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE|PTE_PS;}}}reserve_table_range((uint64_t)(uintptr_t)early_pml4,sizeof(early_pml4));reserve_table_range((uint64_t)(uintptr_t)early_pdpt,sizeof(early_pdpt));reserve_table_range((uint64_t)(uintptr_t)early_pd,sizeof(early_pd));kernel_pml4_phys=(uint64_t)(uintptr_t)early_pml4;current_pml4_phys=kernel_pml4_phys;uint64_t cr4=read_cr4()|CR4_PAE;/* SMEP/SMAP/PKE and PCIDE are not yet handled by the uaccess/TLB code. Firmware may leave them set on physical CPUs; clear them before the first user transition. */cr4&=~(CR4_LA57|(1ULL<<17)|(1ULL<<20)|(1ULL<<21)|(1ULL<<22));/* The kernel builds without -mno-sse, so GCC may emit SSE for copies/loops. OVMF leaves FXSR/XMMEXCPT on; physical firmware may not. Enable both and clear EM/TS so SSE never raises #UD/#NM on real silicon. QEMU-safe: already set there. */cr4|=CR4_OSFXSR|CR4_OSXMMEXCPT;write_cr4(cr4);uint64_t cr0=read_cr0()&~(CR0_EM|CR0_TS);write_cr0(cr0|CR0_WP);/* Every user mapping carries the NX bit; firmware is not required to leave EFER.NXE on (OVMF does, physical boards may not). Without it the first Ring-3 touch of an NX page raises #PF(RSVD). Enable unconditionally: already-set is a no-op. */write_efer(read_efer()|EFER_NXE);write_cr3(current_pml4_phys);}
 uint64_t vmm_kernel_pml4(void){return kernel_pml4_phys;}
 uint64_t vmm_current_pml4(void){return current_pml4_phys;}
 void *vmm_phys_ptr(uint64_t physical_address){if(!physical_address||(physical_address&0xFFFULL)||physical_address>=RIXURI_MAX_PHYS_BYTES)return NULL;return(void *)(uintptr_t)physical_address;}
@@ -44,23 +45,36 @@ int vmm_map_page(uint64_t va,uint64_t pa,uint64_t flags){return vmm_map_page_in_
 void vmm_unmap_page(uint64_t va){(void)vmm_unmap_page_in_pml4(current_pml4_phys,va);}
 uint64_t vmm_translate(uint64_t va){if(!canonical48(va))return 0;uint64_t*pml4=(uint64_t *)(uintptr_t)current_pml4_phys;uint64_t e=pml4[(va>>39)&0x1FFULL];if(!(e&RIXURI_PTE_PRESENT))return 0;uint64_t*pdpt=entry_table(e);e=pdpt[(va>>30)&0x1FFULL];if(!(e&RIXURI_PTE_PRESENT))return 0;uint64_t*pd=entry_table(e);e=pd[(va>>21)&0x1FFULL];if(!(e&RIXURI_PTE_PRESENT))return 0;if(e&PTE_PS)return(e&PAGE_MASK)+(va&0x1FFFFFULL);uint64_t*pt=entry_table(e);e=pt[(va>>12)&0x1FFULL];if(!(e&RIXURI_PTE_PRESENT))return 0;return(e&PAGE_MASK)+(va&0xFFFULL);}
 uint64_t vmm_query_flags(uint64_t va){if(!canonical48(va))return 0;uint64_t*pml4=(uint64_t *)(uintptr_t)current_pml4_phys;uint64_t e=pml4[(va>>39)&0x1FFULL];if(!(e&RIXURI_PTE_PRESENT))return 0;uint64_t*pdpt=entry_table(e);e=pdpt[(va>>30)&0x1FFULL];if(!(e&RIXURI_PTE_PRESENT))return 0;uint64_t*pd=entry_table(e);e=pd[(va>>21)&0x1FFULL];if(!(e&RIXURI_PTE_PRESENT))return 0;if(e&PTE_PS)return e&(RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE|RIXURI_PTE_USER|RIXURI_PTE_NX);uint64_t*pt=entry_table(e);e=pt[(va>>12)&0x1FFULL];return e&(RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE|RIXURI_PTE_USER|RIXURI_PTE_NX|RIXURI_PTE_OWNED);}
-/* Target-PML4 validation before any CR3 write. Returns 0 when the value is
- * safe to load into CR3; negative codes name the failing check. */
-int vmm_validate_pml4(uint64_t pml4_phys){
- if(!pml4_phys)return -1;
- if(pml4_phys&0xFFFULL)return -2;
- if(pml4_phys>=RIXURI_MAX_PHYS_BYTES)return -3;
- if(pml4_phys&0xFFF0000000000000ULL)return -4;
- uint64_t*pml4=(uint64_t*)vmm_phys_ptr(pml4_phys);
- if(!pml4)return -5;
- if(!(pml4[0]&RIXURI_PTE_PRESENT))return -6;
+/* Target-PML4 validation before any CR3 write. Walk every reachable table,
+ * reject reserved bits and verify huge-page alignment. The visited set makes
+ * shared kernel tables safe without allowing a malformed cycle to recurse. */
+#define PT_ALLOWED_FLAGS (RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE|RIXURI_PTE_USER|RIXURI_PTE_PWT|RIXURI_PTE_PCD|(1ULL<<5)|(1ULL<<6)|(1ULL<<7)|(1ULL<<8)|RIXURI_PTE_OWNED|RIXURI_PTE_NX)
+#define PT_PHYS_MASK 0x000FFFFFFFFFF000ULL
+struct pt_validation_seen { uint64_t phys[4096]; size_t count; };
+static int pt_validate_table(uint64_t phys,unsigned level,struct pt_validation_seen *seen){
+ if(!phys||(phys&0xfffULL)||phys>=RIXURI_MAX_PHYS_BYTES||level>3)return -1;
+ for(size_t n=0;n<seen->count;n++)if(seen->phys[n]==phys)return 0;
+ if(seen->count>=sizeof(seen->phys)/sizeof(seen->phys[0]))return -2;
+ seen->phys[seen->count++]=phys;
+ uint64_t *table=(uint64_t *)vmm_phys_ptr(phys);if(!table)return -3;
  for(size_t i=0;i<TABLE_ENTRIES;i++){
-  uint64_t e=pml4[i];
-  if(!(e&RIXURI_PTE_PRESENT))continue;
-  uint64_t t=e&PAGE_MASK;
-  if(!t||(t&0xFFFULL)||t>=RIXURI_MAX_PHYS_BYTES)return -7;
+  uint64_t e=table[i];if(!(e&RIXURI_PTE_PRESENT))continue;
+  if(e&~(PT_PHYS_MASK|PT_ALLOWED_FLAGS))return -4;
+  uint64_t base=e&PT_PHYS_MASK;
+  if(level==1&&(e&PTE_PS)){if(base&((1ULL<<30)-1ULL))return -6;continue;}
+  if(level==2&&(e&PTE_PS)){if(base&((1ULL<<21)-1ULL))return -7;continue;}
+  if(!base||base>=RIXURI_MAX_PHYS_BYTES)return -5;
+  if(level==3)continue;
+  int rc=pt_validate_table(base,level+1,seen);if(rc)return rc;
  }
  return 0;
+}
+int vmm_validate_pml4(uint64_t pml4_phys){
+ if(!pml4_phys||(pml4_phys&0xfffULL)||pml4_phys>=RIXURI_MAX_PHYS_BYTES)return -1;
+ if(pml4_phys&0xfff0000000000000ULL)return -2;
+ uint64_t *pml4=(uint64_t *)vmm_phys_ptr(pml4_phys);if(!pml4)return -3;
+ if(!(pml4[0]&RIXURI_PTE_PRESENT))return -4;
+ struct pt_validation_seen seen;seen.count=0;return pt_validate_table(pml4_phys,0,&seen);
 }
 /* CR3-independent walk of an arbitrary PML4 (uses the phys window, never the
  * current CR3). 0=mapped (*out_phys/flags valid), 1=not present (missing

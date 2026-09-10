@@ -384,6 +384,15 @@ void tty_init(void) {
 
 void tty_set_framebuffer(uint64_t base,uint32_t size,uint32_t width,uint32_t height,
                          uint32_t pitch,uint32_t format) {
+    uint64_t required = height ? (uint64_t)(height - 1u) * pitch +
+                                  (uint64_t)width * sizeof(uint32_t) : 0;
+    if (!base || !width || !height || (uint64_t)pitch < (uint64_t)width * sizeof(uint32_t) ||
+        required > size || (format != 0u && format != 1u)) {
+        framebuffer.pixels = 0;
+        framebuffer.size = framebuffer.width = framebuffer.height = framebuffer.pitch = 0;
+        framebuffer.columns = framebuffer.rows = 0;
+        return;
+    }
     framebuffer.pixels=(volatile uint32_t *)(uintptr_t)base; framebuffer.size=size;
     framebuffer.width=width; framebuffer.height=height; framebuffer.pitch=pitch;
     framebuffer.format=format;

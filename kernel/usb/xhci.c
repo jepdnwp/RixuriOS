@@ -184,7 +184,8 @@ static int map_range(uint64_t base, uint64_t length) {
     uint64_t first = base & ~0xFFFULL;
     uint64_t last = (base + length - 1u) & ~0xFFFULL;
     for (uint64_t page = first;; page += 0x1000ULL) {
-        if (vmm_map_page(page, page, RIXURI_PTE_PRESENT | RIXURI_PTE_WRITE | RIXURI_PTE_NX) != 0) return -1;
+        if (vmm_map_page(page, page, RIXURI_PTE_PRESENT | RIXURI_PTE_WRITE |
+                         RIXURI_PTE_NX | RIXURI_PTE_PWT | RIXURI_PTE_PCD) != 0) return -1;
         if (page == last) break;
         if (page > UINT64_MAX - 0x1000ULL) return -1;
     }
@@ -861,6 +862,25 @@ static int wait_transfer(const rix_xhci_controller_t *c, xhci_runtime_t *rt,
     return -100;
 }
 
+static uint64_t xhci_dma_linear_pa(const void *buffer, uint64_t length) {
+    if (!buffer || !length) return 0;
+    uint64_t va = (uint64_t)(uintptr_t)buffer;
+    if (va > UINT64_MAX - length) return 0;
+    uint64_t first = vmm_translate(va);
+    if (!first) return 0;
+    uint64_t first_base = first & ~0xfffULL;
+    uint64_t page_va = va & ~0xfffULL;
+    uint64_t last_va = (va + length - 1u) & ~0xfffULL;
+    for (;;) {
+        uint64_t page_pa = vmm_translate(page_va);
+        if (!page_pa || (page_pa & ~0xfffULL) !=
+            first_base + (page_va - (va & ~0xfffULL))) return 0;
+        if (page_va == last_va) break;
+        page_va += 0x1000ULL;
+    }
+    return first;
+}
+
 int xhci_control_transfer(size_t controller, uint8_t slot_id,
                           const rix_usb_setup_packet_t *setup,
                           void *data, uint16_t *actual_length) {
@@ -877,15 +897,22 @@ int xhci_control_transfer(size_t controller, uint8_t slot_id,
     if (setup->length != 0u) {
         setup_control |= XHCI_TRB_CH | (data_in ? (3u << 16) : (2u << 16));
     }
-    uint32_t setup_parameter = (uint32_t)setup->request_type |
-                               ((uint32_t)setup->request << 8) |
-                               ((uint32_t)setup->value << 16);
-    uint32_t setup_status = (uint32_t)setup->index | ((uint32_t)setup->length << 16);
+    /* The Setup Stage TRB carries the complete USB setup packet in its
+       64-bit parameter field.  Putting wIndex/wLength in status produces
+       malformed requests on real xHCI controllers. */
+    uint64_t setup_parameter = (uint64_t)setup->request_type |
+                               ((uint64_t)setup->request << 8) |
+                               ((uint64_t)setup->value << 16) |
+                               ((uint64_t)setup->index << 32) |
+                               ((uint64_t)setup->length << 48);
+    uint32_t setup_status = 0;
     size_t needed = setup->length != 0u ? 3u : 2u;
     if ((size_t)slot->ep0_enqueue + needed > XHCI_CMD_RING_TRBS - 1u) ep0_write_link(c, slot);
     (void)ep0_emit(c, slot, setup_parameter, setup_status, setup_control);
     if (setup->length != 0u) {
-        (void)ep0_emit(c, slot, (uint64_t)(uintptr_t)data, setup->length,
+        uint64_t data_pa = xhci_dma_linear_pa(data, setup->length);
+        if (!data_pa) return -4;
+        (void)ep0_emit(c, slot, data_pa, setup->length,
                        (XHCI_TRB_DATA_STAGE << XHCI_TRB_TYPE_SHIFT) | XHCI_TRB_CH |
                        (data_in ? XHCI_TRB_DIR : 0u));
     }
@@ -1087,8 +1114,10 @@ static int endpoint_transfer(size_t controller, uint8_t slot_id, uint8_t endpoin
     uint16_t index = endpoint_runtime->enqueue++;
     uint64_t trb_phys = endpoint_runtime->ring_phys + (uint64_t)index * sizeof(xhci_trb_t);
     volatile xhci_trb_t *trb = &((volatile xhci_trb_t *)(uintptr_t)endpoint_runtime->ring_phys)[index];
-    trb->parameter_lo = (uint32_t)(uintptr_t)buffer;
-    trb->parameter_hi = (uint32_t)((uint64_t)(uintptr_t)buffer >> 32);
+    uint64_t buffer_pa = xhci_dma_linear_pa(buffer, length);
+    if (!buffer_pa) return -3;
+    trb->parameter_lo = (uint32_t)buffer_pa;
+    trb->parameter_hi = (uint32_t)(buffer_pa >> 32);
     trb->status = length;
     trb->control = (XHCI_TRB_NORMAL << XHCI_TRB_TYPE_SHIFT) | XHCI_TRB_IOC |
                    (endpoint_runtime->cycle ? XHCI_TRB_CYCLE : 0u);

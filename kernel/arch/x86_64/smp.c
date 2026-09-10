@@ -56,18 +56,27 @@ int smp_build_map(const acpi_cpu_info_t *entries, size_t n,
     if (n && !entries) return -1;
     size_t usable = n < SMP_MAX_CPUS ? n : SMP_MAX_CPUS;
     for (size_t i = 0; i < usable; ++i) {
-        out->cpu[i].apic_id = entries[i].apic_id;
-        out->cpu[i].enabled = entries[i].enabled ? 1u : 0u;
-        out->cpu[i].x2apic = entries[i].x2apic ? 1u : 0u;
-        out->cpu[i].state = SMP_CPU_PRESENT;
+        size_t duplicate = out->count;
+        for (size_t j = 0; j < out->count; ++j)
+            if (out->cpu[j].apic_id == entries[i].apic_id) { duplicate = j; break; }
+        if (duplicate < out->count) {
+            out->cpu[duplicate].enabled |= entries[i].enabled ? 1u : 0u;
+            out->cpu[duplicate].x2apic |= entries[i].x2apic ? 1u : 0u;
+            continue;
+        }
+        if (out->count >= SMP_MAX_CPUS) break;
+        size_t index = out->count++;
+        out->cpu[index].apic_id = entries[i].apic_id;
+        out->cpu[index].enabled = entries[i].enabled ? 1u : 0u;
+        out->cpu[index].x2apic = entries[i].x2apic ? 1u : 0u;
+        out->cpu[index].state = SMP_CPU_PRESENT;
         if (entries[i].apic_id == bsp_apic_id && out->bsp_index < 0) {
-            out->cpu[i].is_bsp = 1;
-            out->cpu[i].state = SMP_CPU_ONLINE;
-            out->bsp_index = (int)i;
+            out->cpu[index].is_bsp = 1;
+            out->cpu[index].state = SMP_CPU_ONLINE;
+            out->bsp_index = (int)index;
             out->online = 1;
         }
     }
-    out->count = usable;
     if (out->bsp_index < 0) {
         if (!bsp_fallback) return -1;
         if (usable >= SMP_MAX_CPUS) return -2;
@@ -143,6 +152,21 @@ int smp_build_gdt(uint8_t *page, uint64_t page_phys) {
 
 size_t smp_trampoline_size(void) {
     return (size_t)(smp_trampoline_end - smp_trampoline_start);
+}
+
+struct smp_descriptor_ptr {
+    uint16_t limit;
+    uint64_t base;
+} __attribute__((packed));
+
+static void smp_capture_descriptor_tables(uint8_t *page) {
+    struct smp_descriptor_ptr gdtr, idtr;
+    __asm__ volatile("sgdt %0" : "=m"(gdtr) :: "memory");
+    __asm__ volatile("sidt %0" : "=m"(idtr) :: "memory");
+    for (size_t i = 0; i < sizeof(gdtr); ++i)
+        page[SMP_TRAMP_DATA_GDTR + i] = ((const uint8_t *)&gdtr)[i];
+    for (size_t i = 0; i < sizeof(idtr); ++i)
+        page[SMP_TRAMP_DATA_IDTR + i] = ((const uint8_t *)&idtr)[i];
 }
 
 int smp_setup_trampoline(uint8_t *page, uint64_t page_phys, uint64_t cr3,
@@ -250,10 +274,6 @@ int smp_start_aps(void) {
         smp_cpu_t *cpu = &smp_map.cpu[i];
         if (cpu->is_bsp || !cpu->enabled ||
             cpu->state != SMP_CPU_PRESENT) continue;
-        if (cpu->x2apic) {
-            kernel_log("SMP: AP skipped (x2APIC mode unsupported in Phase B)\r\n");
-            continue;
-        }
         uint64_t page = smp_find_trampoline_page();
         if (!page) {
             kernel_log("SMP: no low page for AP trampoline\r\n");
@@ -272,8 +292,10 @@ int smp_start_aps(void) {
         int wrc = vmm_walk_in_pml4(ap_pml4, page, &we0, &we1, &we2, &we3,
                                    &wphys, &wflags);
         if (wrc != 0 || !(wflags & RIXURI_PTE_PRESENT) || wphys != page) {
+            /* The trampoline executes from this identity page.  NX here
+               makes the fallback path fault as soon as long mode begins. */
             if (vmm_map_page_in_pml4(ap_pml4, page, page,
-                    RIXURI_PTE_PRESENT | RIXURI_PTE_WRITE | RIXURI_PTE_NX) != 0) {
+                    RIXURI_PTE_PRESENT | RIXURI_PTE_WRITE) != 0) {
                 kernel_log("SMP: AP identity map failed\r\n");
                 continue;
             }
@@ -290,6 +312,10 @@ int smp_start_aps(void) {
             kernel_log("SMP: trampoline setup failed\r\n");
             continue;
         }
+        smp_capture_descriptor_tables(buffer);
+        uint64_t online_ptr = (uint64_t)(uintptr_t)&cpu->state;
+        for (size_t b = 0; b < sizeof(online_ptr); ++b)
+            buffer[SMP_TRAMP_DATA_ONLINE + b] = (uint8_t)(online_ptr >> (8 * b));
         {
             uint64_t rb = 0;
             for (size_t i = 0; i < 8; ++i)

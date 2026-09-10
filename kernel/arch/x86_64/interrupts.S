@@ -33,7 +33,8 @@ isr\n:
     leaq 120(%rsp), %rdi
     call x86_exception_dispatch
     RESTORE_REGS
-    addq $8, %rsp
+    /* Remove both the synthetic vector and the CPU-pushed error code. */
+    addq $16, %rsp
     iretq
 .endm
 .macro IRQ n

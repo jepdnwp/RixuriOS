@@ -9,10 +9,11 @@ static rix_rtl8125_t controller;
 static volatile uint8_t *map_regs(uint64_t base, uint64_t size) {
     if (!base || size < 0x100u || size > 0x1000000ULL ||
         base > UINT64_MAX - (size - 1u)) return 0;
-    uint64_t mapped = (size + 0xfffu) & ~0xfffULL;
+    uint64_t mapped = ((base & 0xfffULL) + size + 0xfffu) & ~0xfffULL;
     for (uint64_t offset = 0; offset < mapped; offset += 0x1000u)
         if (vmm_map_page((base & ~0xfffULL) + offset, (base & ~0xfffULL) + offset,
-                         RIXURI_PTE_PRESENT | RIXURI_PTE_WRITE | RIXURI_PTE_NX) != 0) return 0;
+                         RIXURI_PTE_PRESENT | RIXURI_PTE_WRITE | RIXURI_PTE_NX |
+                         RIXURI_PTE_PWT | RIXURI_PTE_PCD) != 0) return 0;
     return (volatile uint8_t *)(uintptr_t)(base & ~0xfffULL);
 }
 
