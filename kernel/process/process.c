@@ -472,7 +472,19 @@ loadval=read_cr3_hw();
    "popq %%rax\n\t"
    "movq %1,%%cr3\n\t"
    :: "r"(loadval), "r"(back) : "rax", "memory");
-  kernel_log("DEBUG: PROBE ok back=");kernel_log_hex(read_cr3_hw());kernel_log("\r\n");serial_drain();
+   kernel_log("DEBUG: PROBE ok back=");kernel_log_hex(read_cr3_hw());kernel_log("\r\n");serial_drain();
+   n++;}}
+  /* Timing-shift control: a short PAUSE spin between probe and commit moves
+  * every wall-clock-aligned external agent (SMI cadence, watchdog) out of
+  * the commit window without touching any architectural state. If the
+  * freeze point MOVES (later line, different symptom), the killer is
+  * timing-dependent and external; if it stays byte-identical, the killer
+  * is code-deterministic. 30M iterations (~0.1-1s silicon, seconds on TCG;
+  * keeps the QEMU boot budget intact). Gated like its neighbors. */
+ {static unsigned n=0;if(n<2){
+  kernel_log("DEBUG: SHIFT delay\r\n");serial_drain();
+  for(volatile uint64_t d=0;d<30000000ULL;++d)__asm__ volatile("pause" ::: "memory");
+  kernel_log("DEBUG: SHIFT done\r\n");serial_drain();
   n++;}}
  load_cr3_raw(loadval);
  /* Stackless post-switch probes (no calls, no memory, no stack except the
