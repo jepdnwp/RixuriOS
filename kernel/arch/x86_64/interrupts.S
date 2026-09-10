@@ -2,6 +2,7 @@
 .extern x86_exception_dispatch
 .extern x86_irq_dispatch
 .extern syscall_dispatch
+.extern current_pml4_phys
 
 .macro SAVE_REGS
     pushq %rax; pushq %rbx; pushq %rcx; pushq %rdx; pushq %rsi; pushq %rdi; pushq %rbp
@@ -69,6 +70,10 @@ isr128:
     pushq $0
     pushq $128
     SAVE_REGS
+    /* The first user entry avoids a global store after MOV CR3.  Synchronize
+       the software tracker once the CPU has returned through the kernel IDT. */
+    movq %cr3,%rax
+    movq %rax,current_pml4_phys(%rip)
     movq %rsp,%rdi
     call syscall_dispatch
     RESTORE_REGS

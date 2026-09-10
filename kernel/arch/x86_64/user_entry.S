@@ -39,9 +39,9 @@ x86_enter_user:
     popq %rsi
     popq %rdi
 
-    /* Marker B is the last C call. CR3 and software tracking follow it. */
+    /* Marker B is the last C call. Do not touch kernel globals after CR3:
+       the first syscall synchronizes the software tracker from hardware CR3. */
     movq %rdi,%cr3
-    movq %rdi,current_pml4_phys(%rip)
     iretq
 
 .section .rodata
