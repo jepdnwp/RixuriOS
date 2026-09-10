@@ -516,1069 +516,538 @@ Real keyboard input must travel through xHCI → USB → HID → input subsystem
 - terminal dimensions.
 - controlling terminal.
 - sessions/process groups.
-- foreground ownership.
-- terminal signals.
-- pipes and redirection integration.
-- console recovery path.
 
 ---
 
-# PHASE 18 — Rixuri Shell 2.0
+# PHASE 18 — Shell, Job Control and Command Execution
 
-### Language
-- lexer/parser/AST;
+- shell parser;
 - quoting/escaping;
-- variables/environment;
-- parameter expansion;
-- command substitution;
-- arithmetic expansion;
-- pathname expansion;
-- comments;
-- here-documents;
-- operators.
-
-### Execution
-- PATH search;
-- builtins;
-- external exec;
 - pipelines;
 - redirections;
-- `&&`, `||`, `;`;
-- subshells;
-- background jobs;
-- process groups;
-- signals;
+- environment expansion;
+- globbing;
+- command lookup;
 - exit status;
-- `exec`.
-
-### Interactive
-- history;
-- persistent history;
-- line editor;
-- cursor movement;
-- completion;
-- aliases/functions;
-- startup scripts;
-- prompt expansion;
-- job control.
+- foreground/background jobs;
+- process groups;
+- controlling terminal;
+- signal-aware job control.
 
 ### Gate
-Real programs must compose through real process/pipe/file APIs; demos that merely print expected text do not count.
-
-### Current evidence — 2026-09-06
-
-The disposable NVMe-backed RixFS image was exercised through the real serial-to-TTY shell path after a strict build. The observed commands included `echo one > /tmp`, `echo two >> /tmp`, `cat /tmp`, a three-stage `echo | grep | grep` pipeline, a background `true &`, and a foreground command following the background launch. The console produced the expected `one`, `two`, `alpha`, and `foreground` results, with `NVMe: controllers=1`, `VFS: mount nvme0n1 rc=0`, and `RIXURI:KERNEL_READY` in the same run.
-
-This closes the observed execution cases for append redirection, pipeline depth greater than two, and background launch. It does not close the broader Phase 18 gate: background completion notification, explicit `waitpid(WNOHANG)` output, foreground process-group signal behavior, subshells, here-documents, malformed-pointer runtime tests, and physical USB keyboard input remain open.
+A real user can launch, pipe, redirect, background and terminate processes without kernel bypasses.
 
 ---
 
-# PHASE 19 — Unix Coreutils and System Utilities
+# PHASE 19 — Unix Utilities and Base Userland
 
-Implement real programs over RixuriOS APIs:
+Provide a coherent terminal-first base userland covering core filesystem, process, text, diagnostics and system utilities. Utilities must use the documented RixuriOS ABI rather than private kernel interfaces.
 
-`ls cp mv rm mkdir rmdir touch ln stat cat head tail wc cut tr sort uniq grep sed find xargs env printf echo pwd cd kill ps sleep uname mount umount df du free dmesg true false test which`
+### Initial utility families
+- filesystem navigation and manipulation;
+- process inspection/control;
+- text and stream processing;
+- terminal utilities;
+- system information;
+- storage inspection;
+- networking diagnostics;
+- basic administrative utilities.
 
-Then add:
-
-- tar/archive tools;
-- checksum tools;
-- text processing;
-- process inspection;
-- disk utilities;
-- network utilities;
-- diagnostic tools.
-
-Every command gets argument validation, errors, exit status and pipeline behavior.
-
-### Current evidence — 2026-09-06
-
-`/bin/touch` is implemented over the existing `openat(O_WRONLY|O_CREAT, 0644)` and `close` ABI. A real QEMU serial harness passed new-file creation, reopening an existing file, missing-parent rejection, cleanup with `/bin/rm`, and final directory verification. Timestamp mutation semantics remain unsupported because the current stat/inode ABI exposes no timestamp update operation. The existing kernel `RIX_SYS_STAT` path is now exposed through libc and `/bin/stat`; QEMU passed regular-file, directory, and missing-path observations. Regular-file hard links are now implemented as well: QEMU passed same-inode source/alias observations, alias survival after source unlink, and invalid-source failures. Directory links and symbolic links remain unsupported. Default `/bin/head` and `/bin/tail` now support regular-file and stdin/pipeline modes; QEMU passed both through `/usr/bin/args` pipelines and missing-path failures. Options, multi-file labels, and large-file tail behavior remain open. The text-core group `/usr/bin/wc`, `/usr/bin/cut`, `/usr/bin/tr`, `/usr/bin/sort`, and `/usr/bin/uniq` is implemented with bounded stdin/path behavior and QEMU-validated pipeline/error scenarios; full POSIX option, locale, and unbounded-input semantics remain open. Environment/shell utilities `/usr/bin/env`, `/usr/bin/printf`, `/bin/pwd`, and `/usr/bin/which` are also QEMU-validated for the current fixed environment and PATH model; full environment mutation, dynamic cwd, and POSIX printf semantics remain open. Process/system utilities `/usr/bin/kill`, `/usr/bin/ps`, `/usr/bin/uname`, and `/usr/bin/du` are QEMU-validated for current-PID, fixed system identity, stat-based file size, and error scenarios; full process enumeration, recursive disk accounting, df/free/dmesg data APIs, and mount operations remain blocked by missing kernel interfaces.
+### Gate
+Utilities execute as normal userspace programs, return meaningful exit codes, handle errors and do not assume Linux-specific kernel behavior.
 
 ---
 
-# PHASE 20 — Users, Groups, Credentials and Security Model
+# PHASE 20 — Users, Groups, Credentials, Sessions and Security Policy
 
-- UID/GID.
+- UID/GID model.
 - supplementary groups.
-- root/superuser policy.
-- credential objects.
-- file ownership/modes.
-- ACL architecture where justified.
-- privilege transitions.
-- secure password storage.
-- authentication/session framework.
-- login/lock/logout.
-- capability/least-privilege model.
-- environment sanitization.
-- setuid/setgid policy if implemented.
-- audit identity.
+- credential propagation.
+- file permission model.
+- ACL architecture.
+- capability architecture where justified.
+- login/session model.
+- controlling terminal ownership.
+- privilege separation.
+- audit events.
+- security policy configuration.
+- ASLR/stack-hardening integration.
 
-### Security foundation
-- W^X.
-- NX/WP.
-- SMEP/SMAP.
-- ASLR.
-- stack protections where compatible.
-- syscall filtering architecture.
-- secure boot/signature verification architecture where feasible.
-- secrets handling.
+### Gate
+Privilege boundaries are enforced by the kernel and cannot be bypassed by userspace command wrappers.
 
 ---
 
-# PHASE 21 — Full Network Stack
+# PHASE 21 — Networking Stack and Device Integration
 
-### Link/network
-- Ethernet framing.
+### Network stack
+- Ethernet frame handling.
 - ARP.
 - IPv4.
 - ICMP.
 - UDP.
 - TCP state machine.
-- routing table.
-- interfaces.
-- MTU.
+- retransmission.
+- ordering.
+- flow/window control.
 - checksums.
-- packet buffers.
-- socket layer.
-- blocking/nonblocking I/O.
-- DNS resolver.
-- DHCP architecture.
-- loopback.
-- firewall/filtering architecture.
-- IPv6 architecture and later implementation.
+- socket API integration.
+- blocking/nonblocking receive/transmit semantics.
+- DNS resolver architecture.
 
-### RTL8125
-- PCI probe.
-- MMIO.
-- MAC setup.
-- DMA rings.
-- TX/RX.
-- interrupts.
-- link negotiation/state.
-- statistics.
-- reset/recovery.
+### Drivers
+- E1000/QEMU reference path.
+- RTL8125 `10EC:8125`.
+- device reset and recovery.
+- RX/TX rings.
+- interrupt/MSI-X path where supported.
 
-### Regression
-Manual ping and automated network tests must use the same real driver/socket path. A self-test timeout cannot be replaced with fabricated success.
+### Evidence
+Loopback success, guest-to-host packets, external connectivity and physical RTL8125 evidence are tracked separately.
 
 ---
 
-# PHASE 22 — libc, musl, POSIX and Linux Compatibility
+# PHASE 22 — libc, POSIX Compatibility and C Runtime Surface
 
 ### libc
-- syscall wrappers;
-- `errno`;
-- memory/string;
-- stdio;
-- files;
+- freestanding standard headers;
+- errno and standard constants;
+- string/memory routines;
+- stdio streams;
+- formatted I/O;
+- scanf-family subset;
+- allocation APIs;
+- environment APIs;
+- ctype;
+- time APIs;
+- directory APIs;
 - process APIs;
-- time;
-- signals;
-- threads;
+- POSIX filesystem wrappers;
 - sockets;
-- locale/UTF-8 foundations;
-- TLS.
+- signals;
+- pthread synchronization surface;
+- locale/wchar compatibility;
+- utility APIs such as getopt/sysconf/getpagesize.
 
-### musl
-- dedicated RixuriOS sysroot;
-- architecture configuration;
-- syscall layer;
-- startup objects;
-- dynamic linker;
-- pthread integration;
-- regression suite.
+### POSIX compatibility
+Maintain the compatibility matrix with explicit implemented/partial/stub/missing states. ENOSYS is acceptable only where the documented ABI intentionally has no implementation yet and the behavior is tested.
 
-### Compatibility
-- POSIX semantics where practical;
-- selected Linux/glibc ABI compatibility shims;
-- porting notes for incompatible behavior;
-- application compatibility test corpus.
-
-Architecture must remain:
-
-`kernel ABI → RixuriOS libc → POSIX/Linux compatibility → application`.
-
----
-
-# PHASE 23 — Dynamic Linking, TLS and Runtime Loader
-
-- ELF shared objects.
-- `PT_DYNAMIC`.
-- symbol lookup.
-- relocation processing.
-- GOT/PLT.
-- lazy/immediate binding policy.
-- dependency loading.
-- `DT_NEEDED`.
-- SONAME.
-- TLS models.
-- `dlopen/dlsym/dlclose` architecture.
-- loader security.
-- library search paths.
-- versioned symbols where needed.
+### musl trajectory
+Provide a documented syscall/ABI compatibility layer and bootstrap sysroot shape without claiming a full musl port until dynamic linking, TLS, threading and the required syscall surface exist.
 
 ### Gate
-A real dynamically linked application starts, resolves libraries, performs TLS initialization and exits normally.
+Static compatibility tests pass in host and QEMU scopes, with deferred dynamic-linking/TLS/hardware evidence explicitly recorded.
 
 ---
 
-# PHASE 24 — init, Services, devfs, procfs, sysfs and IPC Bus
+# PHASE 23 — Dynamic ELF Loader, Shared Libraries and TLS
 
-### PID 1
-- first userspace process;
-- service dependency graph;
-- startup ordering;
-- restart policy;
-- supervision;
-- shutdown.
+### ELF dynamic execution
+- PT_INTERP handling;
+- PT_DYNAMIC parsing;
+- dynamic section validation;
+- GOT/PLT relocation;
+- REL/RELA processing;
+- symbol lookup;
+- `DT_NEEDED` dependency loading;
+- SONAME resolution;
+- shared-library search paths;
+- dynamic linker entry;
+- executable/interpreter ABI contract;
+- secure loader failure handling.
 
-### Pseudo-filesystems
-- `/dev` device nodes.
-- `/proc` processes, memory, CPU, mounts, uptime.
-- `/sys` devices, drivers, attributes.
+### Dynamic APIs
+- `dlopen`;
+- `dlsym`;
+- `dlclose`;
+- `dlerror`.
 
-### System services
-- logger;
-- device manager;
-- network manager foundation;
-- time synchronization foundation;
-- service manager.
+### TLS
+- PT_TLS parsing;
+- static TLS layout;
+- dynamic TLS architecture;
+- `%fs` thread pointer setup;
+- TLS relocation models;
+- loader/thread handoff contract.
 
-### IPC
-- Unix sockets;
-- service discovery;
-- capability/credential propagation.
+### Gate
+A genuinely dynamically linked userspace program loads at boot, resolves shared-library dependencies and accesses TLS without Linux-specific shortcuts.
 
 ---
 
-# PHASE 25 — Source-Driven Native Package Manager and Software Lifecycle
+# PHASE 23A — Rix Privileged Command Interface
 
-Phase 25 defines how RixuriOS turns **user-supplied source code** into a native, verified and transactionally installed `.rix` package. It is not a package-name store and it must not depend on a central catalog for the basic install workflow.
+`rix` is the native RixuriOS privileged/system-management command interface. It is inspired by the operational role of `sudo`, but is designed around the RixuriOS syscall ABI and privilege model rather than copying Linux `sudo` semantics.
 
-### Accepted Inputs
+### Core commands
 
-The package manager command is `rix` and accepts either a Git repository URL or an existing local source tree.
+```text
+rix status
+rix diagnostics
 
-Examples:
+rix shutdown
+rix poweroff
+rix reboot
+rix halt
 
-`rix install https://github.com/user/project.git`
+rix service <name> <action>
 
-`rix install https://gitlab.com/user/project.git`
+rix user <action>
+rix group <action>
 
-`rix install ./my-project`
+rix mount <device> <path>
+rix umount <path>
 
-`rix install /home/vey/my-project`
+rix network <action>
+rix storage <action>
+```
 
-The source itself is authoritative for the build. A package name such as `firefox` is not required to locate software.
+### Command architecture
 
-### Source Acquisition
+```text
+user
+ ↓
+rix
+ ↓
+argument parser
+ ↓
+authorization policy
+ ↓
+RixuriOS syscall ABI
+ ↓
+privileged kernel subsystem
+```
 
-For Git sources, `rix` must:
+The command dispatcher must use a stable internal command model, common argument/error handling, documented exit statuses and auditable operation records.
 
-- validate and fetch supported Git URLs;
-- resolve the requested revision/version deterministically;
-- record repository URL, revision and source provenance;
-- verify source integrity where checksums/signatures are available;
-- keep a source cache without bypassing verification.
+### Authorization
 
-For local sources, `rix` must:
+- UID/GID-based privilege policy.
+- root/administrator policy.
+- command-specific authorization.
+- kernel-enforced privilege boundaries.
+- fail-closed `EPERM`/authorization errors.
+- no implicit privilege through `PATH`.
+- no trusted execution of attacker-controlled relative paths.
+- safe environment handling.
+- controlled child environment and file-descriptor inheritance.
+- symlink/path-traversal and TOCTOU review.
+- successful and failed authorization audit records.
 
-- operate on the supplied directory without requiring a repository;
-- inspect the source tree safely;
-- avoid modifying the source tree unless the build system explicitly requires an allowed generated-file step;
-- support a disposable/copy-based build mode for isolation.
+### Power management
 
-### Build-System Detection
+```text
+rix shutdown
+rix poweroff
+rix reboot
+rix halt
+```
 
-`rix` must inspect the source tree and select an explicitly supported build backend, including as applicable:
+These commands must flow through the documented syscall ABI into the kernel power-management layer and then into ACPI/platform mechanisms where available. Userspace must not directly access ACPI or platform hardware registers for privileged power operations.
 
-- `Makefile` → Make;
-- `CMakeLists.txt` → CMake;
-- `meson.build` → Meson;
-- `configure`/Autotools files → Autotools;
-- `Cargo.toml` → Cargo;
-- `go.mod` → Go;
-- Python build metadata → supported Python build backend.
+### Service management
 
-Detection must not mean blindly executing arbitrary files. Each backend has a defined command model, environment, dependency discovery rules and safety policy.
+```text
+rix service start <name>
+rix service stop <name>
+rix service restart <name>
+rix service status <name>
+```
 
-### Recursive Dependency Resolution
+The first implementation may be minimal, but unsupported service-manager operations must fail explicitly rather than reporting fake success.
 
-Dependency resolution is mandatory and must operate on the complete transitive graph.
+### Administration surface
 
-The resolver must:
+The interface may grow to include:
 
-- parse direct build/runtime dependencies exposed by the source/build metadata;
-- recursively resolve dependencies of dependencies to arbitrary depth;
-- support dependency sources as Git/local source inputs and later repository-provided metadata where implemented;
-- deduplicate shared dependencies;
-- detect dependency cycles;
-- detect incompatible version constraints;
-- resolve compatible constraints deterministically;
-- construct the complete dependency graph before changing the live system;
-- calculate a valid topological build/install order.
+```text
+rix user add
+rix user del
+rix user passwd
 
-Example:
+rix group add
+rix group del
 
-`Firefox → A → B → C → D`
+rix network status
+rix network up
+rix network down
 
-must account for **A, B, C and D**, not only A.
+rix storage list
+rix storage info
+```
 
-If the graph cannot be satisfied, `rix` must abort before modifying the installed system.
+Every added subcommand requires its own authorization, error semantics and tests.
 
-### Native RixuriOS Build Environment
+### Diagnostics
 
-Every package must be built against the RixuriOS userspace ABI and native sysroot.
+`rix status` and `rix diagnostics` should expose useful system state through documented interfaces without requiring private kernel structures or unsafe memory access.
 
-The build environment must:
+### Security requirements
 
-- use the RixuriOS compiler/toolchain;
-- use the RixuriOS libc/sysroot;
-- prevent accidental host Linux headers, libraries and pkg-config data from leaking into the build;
-- provide deterministic environment variables and paths;
-- isolate build outputs and temporary files;
-- distinguish native RixuriOS APIs from Linux/glibc/systemd APIs;
-- reject unsupported kernel/userspace requirements;
-- record the exact build inputs and toolchain identity.
+Test and review:
 
-A Linux binary must never be treated as a native RixuriOS package merely because it has a compatible filename or architecture.
+- malicious `PATH`;
+- malicious environment variables;
+- relative executable paths;
+- symlink attacks;
+- path traversal;
+- TOCTOU races;
+- malformed/oversized arguments;
+- invalid UID/GID values;
+- unauthorized users;
+- repeated authorization failures;
+- inherited file descriptors;
+- privilege retention/drop behavior;
+- signal handling;
+- concurrent invocations;
+- shutdown/reboot race conditions.
 
-### Package Format
+`rix` must not become a privilege-escalation mechanism.
 
-Every successful build produces a native `.rix` package containing at minimum:
+### Evidence
 
-- package name and source identity;
-- version/revision;
-- architecture;
-- RixuriOS ABI compatibility information;
-- runtime dependencies;
-- build dependencies;
-- installed file manifest;
-- checksums;
-- source URL/provenance and revision where applicable;
-- build metadata;
-- package format version.
-
-### Build and Package Cache
-
-Cache:
-
-- fetched source;
-- dependency metadata;
-- completed native dependency builds;
-- generated `.rix` packages.
-
-Cached artifacts must be integrity-verified and must never bypass compatibility or dependency checks.
-
-### Transactional Installation
-
-Installation must be transactional. Before changing the live system, `rix` must:
-
-1. resolve the complete dependency graph;
-2. verify dependency constraints and package metadata;
-3. build all missing native dependencies;
-4. generate and verify all required `.rix` packages;
-5. calculate the complete filesystem operation set;
-6. detect conflicts with files already owned by installed packages or protected system paths;
-7. prepare the transaction;
-8. commit atomically where possible.
-
-A failed operation must not leave a partially installed dependency tree.
-
-### Rollback and Recovery
-
-The package manager must provide:
-
-- transaction logs;
-- pre-install state capture;
-- rollback of failed transactions;
-- recovery after interrupted installation;
-- resulting filesystem verification;
-- integration with the RixuriOS checkpoint/recovery system.
-
-If any transaction step fails, the live system must return to its pre-transaction state to the extent guaranteed by the transaction model.
-
-### Repository and Trust Model
-
-Repositories are optional sources for distributing already-built metadata/packages and for future convenience, not a prerequisite for source-driven installation.
-
-When repositories are used, support:
-
-- repositories and mirrors;
-- package indexes;
-- version/revision selection;
-- metadata signatures;
-- trusted keys/root configuration;
-- checksum verification;
-- package/source provenance.
-
-Untrusted or corrupted metadata must fail closed.
-
-### Safety and Compatibility Gate
-
-A source is installable only when its complete dependency, build and runtime requirements are compatible with RixuriOS.
-
-Unsupported requirements such as:
-
-- Linux kernel-only APIs;
-- glibc-only interfaces;
-- systemd-only integration;
-- unsupported syscalls;
-- unsupported filesystem assumptions;
-- unsupported compiler/runtime requirements
-
-must produce a deterministic failure with no live-system modification.
-
-### Acceptance Workflow
-
-The canonical Phase 25 workflow is:
-
-`Git URL or local source → source analysis → build-system detection → complete dependency graph → recursive dependency resolution → version/cycle validation → build order → native RixuriOS build → .rix → verification → transactional install → checkpoint`.
-
-A large real-world source tree such as Firefox is an end-to-end acceptance target. It is not a claim that Firefox will build before the underlying libc, dynamic loader, graphics, networking, toolchain and other required platform phases are complete.
+QEMU and physical-hardware evidence are separate classes. Successful QEMU power operations do not establish physical hardware qualification.
 
 ### Checkpoints
 
-`P25-01` input/source model → `P25-02` source acquisition → `P25-03` build-system detection → `P25-04` recursive dependency graph → `P25-05` version solving/cycle detection → `P25-06` native Rix build environment → `P25-07` `.rix` generation → `P25-08` transactional install → `P25-09` rollback/recovery → `P25-10` repository/trust model → `P25-11` end-to-end source installation.
+`P23A-01` dispatcher → `P23A-02` authorization → `P23A-03` audit logging → `P23A-04` `rix status` → `P23A-05` `rix diagnostics` → `P23A-06` `rix shutdown` → `P23A-07` `rix reboot` → `P23A-08` `rix poweroff` → `P23A-09` service interface → `P23A-10` negative/security tests → `P23A-11` QEMU integration → `P23A-12` physical evidence where applicable → `P23A-13` documentation/release checkpoint.
 
-No package-manager checkpoint is complete merely because a package can be copied into `/bin`; every gate requires real build/install/failure evidence appropriate to the checkpoint.
+### Definition of Done
 
----
-
-# PHASE 26 — Developer Platform and Build Ecosystem
-
-### Native development
-- GCC/binutils or equivalent.
-- Clang/LLVM.
-- debugger support.
-- assembler/linker.
-- make/ninja-like build tooling.
-- pkg-config-like metadata.
-- C/C++ headers.
-- static/dynamic libraries.
-
-### Languages roadmap
-- C first;
-- C++;
-- Rust;
-- Go;
-- Python runtime;
-- JavaScript/Node ecosystem where resources permit.
-
-### Developer workflow
-`clone → configure → build → test → install → run → debug → package`.
-
-### Debugging
-- symbols;
-- core dumps architecture;
-- backtraces;
-- kernel crash dumps;
-- serial capture;
-- GDB remote debugging;
-- deterministic QEMU snapshots.
+Phase 23A is complete only when the command dispatcher, authorization model, kernel integration, real supported operations, positive/negative tests, QEMU integration, required hardware evidence, security review, regression coverage and documentation are complete. Command presence or a printed success message is not evidence of completion.
 
 ---
 
-# PHASE 27 — Mayo, Documentation, Observability and System Administration
+# PHASE 24 — Threads, Futex and Concurrency Runtime
 
-### Mayo
-- open/save/save-as;
-- cursor/navigation;
-- insert/delete;
-- search;
-- line handling;
-- UTF-8;
-- terminal rendering;
-- keyboard integration;
-- crash-safe save/recovery.
-
-The editor name is **Mayo**; do not reintroduce the old RixEdit name.
-
-### Observability
-- structured kernel logs;
-- log levels/categories;
-- ring buffer;
-- persistent logs;
-- tracepoints;
-- syscall tracing;
-- scheduler tracing;
-- block/network/USB traces;
-- crash reports;
-- health/status commands.
-
-### Administration
-- configuration files;
-- hostname;
-- users;
-- services;
-- network configuration;
-- mount management;
-- logs;
-- diagnostics;
-- recovery shell.
-
----
-
-# PHASE 28 — Audio and Media Services
-
-- audio device model;
-- HDA-oriented driver;
-- PCM;
-- DMA/ring buffers;
-- mixer/control API;
-- playback/capture;
-- latency measurement;
-- device hotplug/recovery;
-- userspace audio API.
-
-Also prepare media abstractions for future video/camera support without coupling them to GUI.
-
----
-
-# PHASE 29 — Graphics Device Foundation and Vulkan
-
-**Still pre-GUI.** Graphics infrastructure must be mature before a desktop exists.
-
-### Display
-- GOP handoff.
-- framebuffer abstraction.
-- modes/pixel formats.
-- scanout buffers.
-- display hotplug architecture.
-
-### GPU memory
-- VRAM.
-- system/GTT memory.
-- DMA.
-- mappings.
-- synchronization.
-- fences/events.
-- resource lifetime.
-
-### QEMU GPU
-Keep QEMU `1B36:0100` completely distinct from physical AMD paths.
-
-### AMD
-Target RX 6800 XT `1002:73BF` with real capability discovery, VRAM/GTT, queues/rings, interrupts, fences, submission and reset/recovery.
-
-### Vulkan
-- loader;
-- ICD boundary;
-- physical/logical devices;
-- queue families;
-- memory allocation;
-- buffers/images;
-- descriptors;
-- command buffers;
-- synchronization;
-- pipeline/shader interfaces;
-- validation/diagnostics;
-- device-loss recovery.
-
-No Vulkan feature may be advertised unless the underlying hardware/software path is actually implemented and tested.
-
----
-
-# PHASE 30 — Reliability Engineering, Fuzzing, Fault Injection and Recovery
-
-This phase exists **before GUI** specifically to prevent a fragile desktop being built on a fragile OS.
-
-### Fuzzing targets
-- ELF parser;
-- filesystem parser;
-- path resolver;
-- syscall arguments;
-- USB descriptors/HID reports;
-- network packets;
-- configuration files;
-- package metadata.
-
-### Fault injection
-- allocation failure;
-- DMA mapping failure;
-- device timeout;
-- malformed completion;
-- unplug/reset;
-- disk I/O error;
-- packet loss/reordering;
-- process exhaustion;
-- FD exhaustion;
-- corrupted filesystem metadata.
-
-### Recovery
-- driver reset;
-- service restart;
-- filesystem recovery;
-- network reconnect;
-- shell recovery;
-- safe reboot;
-- crash dump preservation.
-
----
-
-# PHASE 31 — Performance, Scalability and Resource Governance
-
-Measure before optimizing:
-
-- syscall latency;
-- context-switch latency;
-- scheduler throughput;
-- page-fault cost;
-- allocator throughput;
-- filesystem IOPS/latency;
-- NVMe queue performance;
-- network throughput/latency;
-- TCP connection rate;
-- USB transfer latency;
-- shell startup;
-- dynamic-loader startup;
-- memory footprint;
-- boot time.
-
-Add resource limits:
-
-- process/thread limits;
-- FD limits;
-- address-space limits;
-- memory accounting;
-- disk quotas architecture;
-- socket/packet limits;
-- service resource policies.
-
-No optimization may weaken isolation or correctness without an explicit architectural decision.
-
----
-
-# PHASE 32 — Installer, Recovery Environment and Update System
-
-### Installer
-- disk/partition discovery;
-- filesystem creation;
-- EFI System Partition;
-- bootloader installation;
-- system image deployment;
-- userspace setup;
-- boot configuration;
-- verification.
-
-### Safety
-Formatting, partition deletion and disk overwrite require explicit confirmation. Installer must identify the exact target device and refuse ambiguous targets.
-
-### Recovery
-- boot recovery menu;
-- rescue shell;
-- filesystem check;
-- logs;
-- rollback;
-- backup/restore.
-
-### Updates
-- atomic system updates where feasible;
-- bootable previous version;
-- package transaction recovery;
-- version compatibility checks.
-
----
-
-# PHASE 33 — Real Hardware Qualification Lab
-
-Before GUI, qualify the entire platform on target hardware.
-
-### Required qualification classes
-- UEFI firmware variations.
-- CPU feature variations.
-- multi-core boot.
-- target NVMe.
-- USB controller and HID.
-- RTL8125.
-- RX 6800 XT identification/graphics foundation.
-- audio hardware.
-- suspend/reboot/power behavior.
-
-### Evidence
-Every hardware test records:
-
-`machine identity + firmware version + PCI inventory + kernel build + test command + raw log + result + known limitations`.
-
-QEMU evidence never substitutes for physical evidence.
-
----
-
-# PHASE 34 — Pre-GUI Platform Certification
-
-This is the **largest gate in the project**.
-
-The system must be usable entirely without a GUI:
-
-```text
-UEFI
- ↓
-kernel
- ↓
-memory / interrupts / SMP
- ↓
-scheduler / processes / syscalls
- ↓
-NVMe / RixFS / VFS
- ↓
-USB / keyboard / TTY / PTY
- ↓
-init / users / permissions
- ↓
-network / sockets / DNS
- ↓
-musl / POSIX / dynamic linking
- ↓
-shell / coreutils
- ↓
-package manager / developer tools
- ↓
-Mayo / diagnostics / recovery
-```
-
-### Certification suites
-- boot suite;
-- memory suite;
-- CPU/SMP suite;
-- process/scheduler suite;
-- syscall suite;
-- ELF/runtime suite;
-- storage/NVMe suite;
-- filesystem/fsck suite;
-- USB/HID suite;
-- TTY/shell suite;
-- authentication suite;
-- network suite;
-- libc/POSIX suite;
-- package/toolchain suite;
-- audio suite;
-- graphics/Vulkan foundation suite;
-- security suite;
-- recovery suite;
-- performance suite;
-- long-duration soak test.
+- kernel thread objects;
+- user thread creation;
+- join/detach;
+- thread exit;
+- futex-like wait/wake primitive;
+- robust synchronization semantics;
+- per-thread errno/TLS integration;
+- pthread runtime integration;
+- scheduler/thread lifetime interaction;
+- cancellation architecture.
 
 ### Gate
-No GUI development begins merely because the framebuffer works. Phase 34 must certify that the OS is already a useful Unix-like computer from the terminal.
+Multiple user threads execute concurrently with defined synchronization, cleanup and failure behavior.
 
 ---
 
-# PHASE 35 — GUI / Desktop (ABSOLUTE LAST)
+# PHASE 25 — Hardened Memory, Fault Recovery and Process Isolation
 
-Only after Phase 34 is released.
+- real kernel heap reclaim;
+- allocator coalescing/slabs;
+- guard pages;
+- stack guards;
+- ASLR;
+- SMAP/SMEP policy;
+- fault-safe uaccess;
+- page-fault recovery policy;
+- copy-on-write where justified;
+- memory quotas/OOM policy;
+- hardened kernel mappings;
+- W^X across appropriate privilege domains.
 
-### Display server/compositor
-- display discovery;
-- modes;
-- surfaces;
-- buffers;
-- composition;
-- synchronization;
-- GPU/Vulkan integration;
-- multi-monitor architecture.
+---
 
-### Window system
-- windows;
-- focus;
-- input routing;
-- clipboard;
-- drag/drop;
-- decorations;
-- workspaces;
-- virtual desktops.
+# PHASE 26 — Advanced VFS, Filesystem Semantics and Recovery
 
-### Desktop services
-- session manager;
-- launcher;
-- settings;
-- notifications;
-- authentication UI;
+- symlinks and link-count semantics;
+- `fstat`/`lstat` and full stat metadata;
+- timestamps;
+- file locking;
+- rename/unlink corner cases;
+- path-cache coherency;
+- fsync semantics;
+- crash recovery tests;
+- power-loss regression;
+- filesystem corruption corpus;
+- repair/recovery tooling.
+
+---
+
+# PHASE 27 — Advanced Networking and System Services
+
+- complete TCP retransmission/window/congestion behavior;
+- DNS resolver;
+- blocking socket waits integrated with scheduler;
+- service manager;
+- logging daemon;
+- time synchronization architecture;
+- network configuration management;
+- local IPC/service sockets.
+
+---
+
+# PHASE 28 — GUI and Graphics Stack
+
+GUI remains absolutely last and cannot consume engineering capacity while pre-GUI release gates are open.
+
+### Graphics
+- framebuffer abstraction;
+- graphics memory management;
+- modesetting architecture;
+- GPU command submission architecture;
+- synchronization/fences;
+- display pipeline;
+- cursor;
+- input integration.
+
+### Windowing
+- compositor;
+- windows/surfaces;
+- event loop;
+- keyboard/mouse routing;
+- terminal emulator client;
+- application lifecycle.
+
+### GPU targets
+- QEMU reference graphics path;
+- AMD RX 6800 XT `1002:73BF` hardware qualification;
+- acceleration only after stable software rendering/reference path.
+
+### Gate
+GUI is a consequence of a stable pre-GUI OS, not a substitute for one.
+
+---
+
+# PHASE 29 — Package, Toolchain and Developer Environment
+
+- package format;
+- repository/index format;
+- dependency resolution;
+- signed metadata;
+- compiler/toolchain distribution;
+- debugger support;
+- profiler/tracing tools;
+- developer SDK;
+- reproducible package builds.
+
+---
+
+# PHASE 30 — Installer, Recovery Environment and System Lifecycle
+
+- installer UI/CLI;
+- disk partitioning safety;
+- ESP setup;
+- filesystem creation;
+- bootloader installation;
+- upgrade/rollback;
+- recovery environment;
+- rescue shell;
+- backup/restore architecture;
+- migration handling.
+
+---
+
+# PHASE 31 — Security Hardening and Audit
+
+- threat model refresh;
+- privilege review;
+- syscall fuzzing;
+- parser fuzzing;
+- filesystem fuzzing;
+- network fuzzing;
+- driver fault injection;
+- DMA/IOMMU review;
+- secret handling;
+- secure boot/signing architecture;
+- exploit regression corpus.
+
+---
+
+# PHASE 32 — Performance, Reliability and Soak Testing
+
+- boot-time measurement;
+- syscall latency;
+- scheduler latency;
+- storage throughput/latency;
+- network throughput/latency;
+- allocator performance;
+- memory pressure;
+- long-run soak tests;
+- power-cycle loops;
+- suspend/resume loops;
+- crash-free endurance criteria.
+
+---
+
+# PHASE 33 — Physical Hardware Qualification
+
+### Required evidence
+For every supported physical target record:
+
+- machine identifier;
+- motherboard/firmware;
+- CPU;
+- memory;
+- storage controller/device;
+- PCI inventory;
+- network controller;
+- USB controller;
+- GPU/display device;
+- boot mode;
+- kernel configuration;
+- raw serial/framebuffer log;
+- test command;
+- observed result;
+- regression status.
+
+### Initial target evidence
+Explicitly qualify, where present:
+
+- RTL8125 `10EC:8125`;
+- NVMe device;
+- xHCI controller;
+- USB HID keyboard/mouse;
+- AMD RX 6800 XT `1002:73BF`;
+- PCIe/MSI-X behavior.
+
+QEMU results may support development but cannot close physical-hardware gates.
+
+---
+
+# PHASE 34 — Release Candidate, Compliance and Pre-GUI Gate
+
+### Release gates
+- all mandatory phases complete or explicitly waived;
+- complete regression suite;
+- security review closed;
+- hardware matrix reviewed;
+- reproducible build artifacts;
+- release notes;
+- known-limitations register;
+- rollback/recovery procedure;
+- signed release artifacts where supported.
+
+### Pre-GUI rule
+No GUI milestone may be considered complete until the required pre-GUI gates are closed with evidence.
+
+---
+
+# PHASE 35 — Graphical OS Productization
+
+### Product
+- desktop/session model;
+- user-facing settings;
+- display manager/login UI;
+- terminal emulator;
+- system monitor;
+- file manager;
+- networking UI;
+- storage UI;
 - power UI;
-- network UI;
-- audio UI;
-- file manager.
-
-### Toolkit
-- text/fonts;
-- widgets;
-- layout;
-- accessibility;
-- theming;
-- internationalization.
-
-### Critical property
-A compositor crash must not destroy the kernel, userspace or filesystem. The system must fall back to the terminal/recovery environment.
-
----
-
-# Release ladder
-
-- **R0 — Firmware Boot:** UEFI → validated kernel.
-- **R1 — Protected Kernel:** memory + exceptions + interrupts.
-- **R2 — SMP Kernel:** timers + APIC + multicore + synchronization.
-- **R3 — Multitasking:** scheduler + real user process + syscalls.
-- **R4 — Storage OS:** block layer + NVMe + VFS + RixFS.
-- **R5 — Unix CLI:** TTY/PTY + shell + coreutils.
-- **R6 — Networked Unix:** users + sockets + TCP/IP + RTL8125.
-- **R7 — Developer Unix:** musl + POSIX + dynamic linking + toolchain.
-- **R8 — Managed OS:** init + services + package manager + recovery.
-- **R9 — Hardware Platform:** audio + GPU/Vulkan foundation + qualified hardware.
-- **R10 — Certified Pre-GUI OS:** Phase 34 complete.
-- **R11 — Graphical OS:** Phase 35 complete.
-
-## Definition of done
-
-A feature is complete only when its evidence demonstrates:
-
-`correct implementation + real execution + integration + failure handling + regression coverage + security review + measured behavior + documentation`.
-
-The detailed checkpoint ledger belongs in `docs/CHECKPOINTS.md`; implementation procedures belong in `docs/IMPLEMENTATION_PLAYBOOK.md`.
-
-
-### Phase 19 continuation — 2026-09-06
-
-The next increment added `/usr/bin/find`, `/usr/bin/xargs`, `/usr/bin/sed` and `/bin/test` over the existing libc and syscall ABI. All four have strict freestanding ELF builds and RixFS image entries. `find` uses recursive `stat`/`getdents`; `sed` uses bounded basic substitution; `test` returns defined 0/1/2 results for its supported forms; and `xargs` uses bounded tokenization plus real fork/exec/wait. A real QEMU boot reached the mounted NVMe/RixFS shell, but the dedicated utility harness lost the prompt at the xargs pipeline. The correct status is therefore `IMPLEMENTED / NOT YET VALIDATED`, not COMPLETE.
-
-`df`, `free`, `dmesg`, `mount` and `umount` are explicitly deferred. The next kernel design step is a versioned `statfs`/mount-accounting ABI, a privilege-checked kernel-log ring reader, a `sysinfo`-style memory snapshot, and mount namespace/device operations with ownership, rollback, and corrupt-media failure semantics. No utility may report fabricated values until those APIs and their negative/QEMU tests exist.
-
-
-The provisional syscall/data-model design for this work is maintained in [`docs/PHASE19_KERNEL_API.md`](PHASE19_KERNEL_API.md). It is intentionally separate from implementation status so that API review can happen before any utility reports data.
-
-
-### xargs runtime regression follow-up
-
-Before closing the xargs gate, add a focused disposable-image QEMU regression for `fork → execve → wait` with one inherited pipe descriptor and no xargs parsing. Capture PMM allocation/free ownership for every address-space page-table level, verify bootstrap VMM tables cannot be returned by the allocator, and verify the child’s exec replacement leaves inherited descriptors and the parent’s CR3 valid. Then rerun the full xargs pipeline harness.
-
-
-### Minimal fork-return regression
-
-Add a standalone QEMU case where the second-fork child executes only `_exit(7)`. Log the syscall ISR frame pointer, saved user RIP/RSP, and the exact five-word `iretq` frame immediately before `x86_enter_user_context`. Compare parent and child kernel-stack bounds and verify no user buffer write overlaps the frame. This must pass before returning to nested `execve` and xargs.
-
-
-### Fork/address-space redesign
-
-Implement the phased design in [`docs/FORK_ADDRESS_SPACE_DESIGN.md`](FORK_ADDRESS_SPACE_DESIGN.md): first introduce a permanent kernel page-table mapping window, then ownership journals and transactional clone rollback, followed by kernel-stack/scratch-storage hardening and the minimal fork-return regression. Only after those gates pass should xargs be re-enabled as the final pipeline acceptance test.
-
-
-Phase A has started with a checked `vmm_phys_ptr()` access boundary. The next implementation step is to back this boundary with a permanent mapped kernel window; the current identity fallback is deliberately not considered a fork/xargs fix.
-
-
-### Current evidence — 2026-09-07
-
-The RixFS/VFS rename path now has a bounded redo-journal transaction for regular-file moves. Real QEMU/NVMe evidence passed same-directory inode-preserving rename, overwrite replacement, rename-to-directory failure safety, cross-directory move, cross-directory overwrite, and round-trip movement. Deleted directory sectors are skipped consistently by lookup, readdir, remove, and rename discovery, so repeated create/remove and transactional rename operations do not fail on reusable holes. The cp/mv edge harness also passed empty-file movement, metadata-preserving fallback, overwrite, and multi-sector executable copy/readback.
-
-The Phase 20 authentication path now passes the complete QEMU credential/session/authentication suite, including account add, password rotation, verification with the new password, login session creation and teardown, old-password rejection, protected shadow access, account removal, and account-count checks. A rotation preserves `/etc/passwd` and replaces only the requested `/etc/shadow` record. These results are QEMU-validated on the disposable NVMe-backed image; physical NVMe behavior, power-loss injection during commit, directory rename semantics, symlinks, and broader policy matrices remain open.
-
-
-### Current evidence — 2026-09-07
-
-The Phase 20 QEMU credential regression now covers not only owner/group/other regular-file access but also path-search and parent-mutation denial through a root-owned mode-0700 directory. After dropping to UID/GID 1000, open, stat, child creation and unlink through that inaccessible path return the documented permission error, while missing paths remain distinguishable. Group-owned mode-0640 read access through supplementary groups and write denial continue to pass, together with persisted owner/group/mode metadata checks. The complete credential, capability, session and account/authentication suites pass on the disposable NVMe-backed image. Broader policy matrices, physical hardware security evidence and remaining Phase 20 boundaries are still open.
-
-
-### Current evidence — 2026-09-07
-
-The bounded account store now supports reversible lock and unlock operations. A locked shadow record fails password verification and login while preserving its hash; unlock restores verification. The real QEMU auth harness also attempts a rotation for an unknown account, requires the command to fail, and immediately verifies that the existing operator password remains valid before continuing with a successful rotation/login and old-password rejection. This closes the bounded lock/unlock and invalid-input no-mutation slice, but not power-loss injection or a full interactive login manager.
-
-
-### Current evidence — 2026-09-07
-
-The set-ID exec regression now supplies a deliberately tainted environment and requires the privileged target to receive an empty environment while still completing the UID/GID transition. This provides real QEMU evidence for the privileged-environment sanitization branch; a complete environment-management subsystem and physical security qualification remain outside the bounded Phase 20 model.
-
-
-### Current evidence — 2026-09-07
-
-Authentication now verifies the password, creates a session, transitions the session leader to the account UID/GID, verifies that identity, and logs out without requiring retained administrative capabilities. The QEMU regression requires a separate login-identity marker. The permission matrix also validates group-owned directory child creation, readback and unlink through supplementary-group search/write/execute access. Full rmdir policy coverage remains a distinct filesystem boundary; hardware and crash-injection gates remain unavailable in this environment.
-
-
-### Current evidence — 2026-09-07
-
-The shell prompt is now active as a colored dynamic `username@hostname directory :` presentation. It derives the username from the process UID, uses the `rixurios` machine label and reads cwd at each redraw. The Phase 19 QEMU regression requires both the colored root/hostname marker and the colored `/p19ext` marker after directory change; prompt text is not used as an authorization source.
-
-
-### Current evidence — 2026-09-07
-
-Phase 20 now has a reproducible disposable-image power-loss matrix covering add, rotate and remove account transactions at 1 ms, 10 ms, 50 ms and 150 ms crash points; all 12 recovery cases pass in QEMU. `make iso` creates a bootable UEFI El Torito `build/RixuriOS.iso`, and `make test-all` runs the complete host/QEMU/ISO/power-loss verification with timestamped logs. The first unified run reached 20 PASS and exposed one remaining page fault in the existing pipe/fork stress regression, so Phase 20 closure must not be marked all-green until that fault is resolved.
-
-
-### Current evidence — 2026-09-07
-
-A native `/usr/bin/rixtest` C runner is now available directly from the RixuriOS shell. Running `rixtest` executes the safe smoke suite, emits colored results and records `/usr/rixtest.log`; `rixtest --full` selects fixture-sensitive tests and `rixtest --pipe-stress` explicitly selects the currently faulting pipe stress case. Physical power-loss remains a manual hardware operation and is reported rather than falsely simulated in user space.
-
-
-### Current evidence — 2026-09-07
-
-UEFI GOP output is now a real kernel TTY framebuffer console with embedded ASCII glyph rendering. The shell prompt and command output are visible on the device display, while canonical Backspace removes the character from both the input queue and rendered line. QEMU interactive verification passed.
-
-
-### Phase 21 continuation — 2026-09-08
-
-The deterministic network slice now has bounded UDP and TCP wire-segment serialization/parsing with IPv4 pseudo-header checksums. TCP loopback connect validates SYN/SYN-ACK/ACK sequence transitions, and loopback HTTP success requires a validated TCP GET and validated response rather than a direct string-triggered shortcut. QEMU serial-to-TTY evidence passes for loopback `ping` and `curl`; QEMU E1000 evidence remains limited to PCI/MMIO/ring setup. The next Phase 21 gate is completion-polled E1000 TX/RX integration with Ethernet/IP/ARP delivery, followed by DNS/DHCP/routing and physical RTL8125 qualification. No external-network or physical-hardware success is claimed.
-
-
-### Phase 21 network-device checkpoint — 2026-09-08
-
-E1000 now has a correct legacy descriptor ABI, below-4GiB DMA allocation, TX/RX completion polling, link/MAC discovery and host/QEMU evidence. ARP Ethernet/IPv4 wire request/reply parsing and construction is implemented and tested. The next required gate is device-to-socket dispatch with on-wire ARP/IPv4, DHCP or static interface configuration, DNS and external TCP. `curl google.com` remains expected to fail closed until that gate is passed.
-
-
-### Phase 21 external-network gate — 2026-09-08
-
-External QEMU user-net now sees valid RixuriOS ARP requests and emits the expected gateway ARP replies, proven by pcap. The next gate is E1000 RX DMA descriptor delivery (`DD` remains clear despite the reply). DNS, TCP and Google HTML remain after this hardware boundary.
-
-
-### Phase 21 TCP handshake and external HTTP evidence — 2026-09-08
-
-The RX gate is closed: the descriptor Length field is programmed and restored, and descriptor completion is observed on ARP, DNS and TCP frames. Device-to-socket dispatch now serves UDP and wire TCP (SYN-ACK accept, in-order data queueing, FIN EOF, RST abort) with a bounded RX queue, ARP pending timeout/retransmit and a blocking connect with timeout. `curl google.com` completes DNS, TCP handshake, HTTP GET and a validated external HTTP response (`curl: HTTP 301 external PASS`), cross-checked between serial diagnostics and packet capture. Remaining Phase 21 scope is DHCP (unneeded for static QEMU parameters), IPv6 architecture, firewall/filtering architecture, TCP retransmission timers and close semantics, interrupt-driven RX, and RTL8125 plus full physical-hardware qualification. `curl google.com` no longer fails closed on a working virtual network.
-
-
-### Phase 21 DHCP evidence — 2026-09-08
-
-The DHCP item is closed on QEMU user-net: bounded DISCOVER/OFFER/REQUEST/ACK with XID/type/magic validation, `rix_net_device_configure()` applying the learned address/netmask/gateway/DNS, a boot-time attempt with static fallback, and host unit tests. Quirk documented: explicit `-device e1000,netdev=net0` under TCG delays SLIRP-to-guest delivery ~1s at boot, absorbed by the 12-round window (round 10 accepts; stale queued OFFERs are correctly discarded by type check); default-NIC boots succeed in round 0. Remaining Phase 21 scope is userspace propagation of the learned DNS, lease renewal, IPv6 architecture, firewall/filtering architecture, TCP retransmission timers and close semantics, interrupt-driven RX, and RTL8125 plus full physical-hardware qualification.
-
-
-### Phase 21 exit checkpoint — 2026-09-09
-
-**Phase 21 — Full Network Stack** is complete for the software, host-test and QEMU virtual-network scope. Host/NIC tests and QEMU validation now cover packet buffers, Ethernet, ARP, IPv4, ICMP, UDP, DNS, DHCPv4, bounded TCP, sockets, loopback, E1000 TX/RX and validated external HTTP responses. `ping` and `curl` use the same real packet/device/socket path and fail closed when a response is unavailable. A scheduler CR3-resume correction also closes the repeated-user-process regression exposed by the network harness.
-
-Checkpoint status: `CP0 SPEC PASS`, `CP1 BUILD PASS`, `CP2 UNIT PASS`, `CP3 BOOT PASS`, `CP4 INTEGRATION PASS`, `CP5 HARDWARE DEFERRED`, `CP6 REGRESSION PASS`, `CP7 SECURITY REVIEWED`, `CP8 PERFORMANCE DEFERRED`, `CP9 DOCS PASS`, `CP10 RELEASE DEFERRED`. Physical RTL8125 TX/RX, link, interrupt, recovery and final Ring 3 evidence remain assigned to the physical hardware qualification track; they are not claimed as QEMU evidence.
-
-
-### Phase 21 IPv6 foundation checkpoint — 2026-09-09
-
-IPv6 is no longer only an architecture placeholder. Ethernet now accepts `0x86DD`; bounded IPv6 header construction/parsing, payload validation, ICMPv6 pseudo-header checksums, Echo Request/Reply and option-free Neighbor Solicitation/Advertisement bodies are implemented and covered by host tests. Full IPv6 remains open for address autoconfiguration, Router Solicitation/Advertisement, neighbor-cache/device dispatch, routing, transport sockets and QEMU/physical traffic evidence.
-
-
-### Phase 21 IPv6 control-plane checkpoint — 2026-09-09
-
-Router Solicitation/Advertisement, Prefix Information parsing, `/64` SLAAC construction, modified-EUI-64 link-local generation and an expiring Neighbor Cache are implemented and host-tested. IPv6 transport sockets, device-stack dispatch and independent QEMU/physical IPv6 evidence remain the final IPv6 integration gate.
-
-
-### Phase 21 IPv6 device-stack checkpoint — 2026-09-09
-
-The network stack now has a separate bounded IPv6 RX queue, IPv6 Ethernet polling, and Neighbor Cache-backed IPv6 transmission. Unknown neighbors fail closed. IPv6 transport sockets and independent QEMU/physical traffic evidence remain the final integration work.
-
-
-### Phase 21 IPv6 software closure — 2026-09-09
-
-The IPv6 software path now includes a bounded longest-prefix/default route table and a separate IPv6 UDP endpoint ABI with open, bind, send, poll and receive operations. The stack performs route lookup, Neighbor Cache resolution and IPv6 Ethernet transmission, and dispatches received UDPv6 payloads into the IPv6 socket queue. External IPv6 traffic evidence remains a hardware/network qualification item because the available QEMU harness is IPv4-only.
-
-
-### Phase 22 initial libc checkpoint — 2026-09-09
-
-The first Phase 22 slice adds freestanding memory/string APIs, errno storage, and a bounded deterministic allocator to the userspace image and program link chain. Host libc tests and the complete strict test suite pass. A future slice must replace the fixed arena with a kernel-backed memory-growth ABI before claiming musl/POSIX completion.
-
-
-### Phase 22 kernel-backed heap checkpoint — 2026-09-09
-
-A bounded `brk` heap-growth syscall now backs the freestanding libc allocator. User processes receive mapped, zeroed, writable/NX heap pages with rollback on partial failure and page return on shrink. `sbrk`/`malloc` no longer depend on the previous fixed 64 KiB arena. The remaining Phase 22 work is broader POSIX/musl API coverage and syscall errno normalization.
-
-
-### Phase 22 errno normalization checkpoint — 2026-09-09
-
-The freestanding syscall wrappers now expose POSIX-style failure semantics: kernel negative error codes become `-1` (or `(rix_pid_t)-1` for PID APIs) and update `errno`. This covers file, process, session, capability, signal, socket and clock wrappers. Remaining Phase 22 work is broader header/API coverage and conformance testing.
-
-
-### Phase 22 ctype/stdio checkpoint — 2026-09-09
-
-Freestanding character classification and conversion APIs plus bounded stdio formatting/output are implemented and linked into userspace. Host conformance tests cover the supported format subset and truncation behavior. Broader POSIX headers and stream/file abstractions remain future Phase 22 work.
-
-
-### Phase 22 file/POSIX header checkpoint — 2026-09-09
-
-Compatibility headers for file flags, directory entries and stat mode/type macros are now linked to the existing syscall ABI. `open`, `creat` and `getdents64` are available as libc aliases/wrappers. Full POSIX stream and directory-object semantics remain future work.
-
-
-### Phase 22 stream/directory checkpoint — 2026-09-09
-
-A minimal descriptor-backed `FILE` API and bounded directory iterator API are now available in freestanding libc. They provide a POSIX-shaped surface over the existing RixuriOS syscalls; full buffering, seek state and multi-batch directory refill remain open work.
-
-
-### Phase 22 seek/refill checkpoint — 2026-09-09
-
-The POSIX-shaped file layer now has persistent descriptor offsets, kernel-backed `lseek`, libc stream seek helpers, and multi-batch directory iteration through `readdir`. Full buffering and advanced stream state remain future work.
-
-
-### Phase 22 stdio I/O checkpoint — 2026-09-09
-
-Descriptor-backed character and line I/O now covers `fgetc`, `fputc`, `fgets` and `fputs`, with `setvbuf`/`setbuf` compatibility entry points. Buffer validation is implemented, while true buffered read/write optimization remains future work.
-
-
-### Phase 22 real stdio buffering checkpoint — 2026-09-09
-
-The descriptor-backed `FILE` layer now performs real read and write buffering, preserves unread input across seek transitions, flushes on close/explicit `fflush`, and accepts caller-owned buffers through `setvbuf`. Host tests verify deferred output and flush delivery.
-
-
-### Phase 22 stdlib checkpoint — 2026-09-09
-
-Freestanding numeric conversion, absolute-value and comparator-based sorting helpers are now available, including base autodetection and errno-aware range handling. Broader environment, random and process utility APIs remain future work.
-
-
-### Phase 22 environment/random checkpoint — 2026-09-09
-
-A bounded heap-backed environment API and deterministic random helpers are now available. The random helpers are explicitly non-cryptographic until a kernel entropy source is added; security-sensitive consumers must not use them.
-### Phase 22 time compatibility checkpoint — 2026-09-09
-The freestanding libc now exposes a UTC-oriented `time.h` surface: `time`, `gmtime[_r]`, `localtime[_r]`, `mktime`, `asctime[_r]`, `ctime[_r]` and `difftime`. `time` is backed by the existing kernel realtime clock syscall; calendar conversion handles leap years and epoch round trips. Locale/timezone formatting remains intentionally minimal and UTC-based. Strict libc, complete host-suite, kernel image and whitespace checks pass.
-### Phase 22 printf width checkpoint — 2026-09-09
-`vsnprintf` now parses basic `-` and `0` flags plus decimal field widths for character, string and integer conversions. Left alignment, space padding and zero padding are covered by tests, including `%08x`; this also makes the existing calendar rendering helpers produce fixed-width fields. Strict libc, complete host-suite, kernel image and whitespace checks pass.
-### Phase 22 printf conversion checkpoint — 2026-09-09
-Integer formatting now accepts `%i` as a signed-decimal alias and supports octal `%o` plus uppercase hexadecimal `%X`, including the existing width, alignment and zero-padding rules. Literal `%%` remains supported. Regression coverage includes truncation, mixed conversions and exact output lengths. Strict libc, complete host-suite, kernel image and whitespace checks pass.
-### Phase 22 printf alternate-form checkpoint — 2026-09-09
-`vsnprintf` now recognizes the `#` alternate-form flag for nonzero octal, lowercase hexadecimal and uppercase hexadecimal output, producing `0`, `0x` and `0X` prefixes respectively. Pointer formatting remains explicitly `0x`-prefixed. Regression tests cover mixed alternate forms and pointer output alongside the existing truncation checks.
-### Phase 22 process timing checkpoint — 2026-09-09
-The POSIX-facing unistd layer now exposes `sleep` and `usleep` wrappers over the real kernel `nanosleep` syscall, with interrupted-second accounting and microsecond range validation. The userspace libc dependency rule was also corrected so the new time header is tracked without turning the target line into a shell recipe. Full libc, kernel and whitespace checks pass.
-### Phase 22 process identity checkpoint — 2026-09-09
-The process ABI now includes `RIX_SYS_GETPPID` and a libc `getppid` wrapper. The kernel resolves the current process record and returns its recorded parent PID, while PID errors use the existing wrapper normalization path. Full libc, kernel image and whitespace checks pass.
-### Phase 22 terminal detection checkpoint — 2026-09-09
-The process I/O ABI now includes `RIX_SYS_ISATTY` and a libc `isatty` wrapper. Standard descriptors 0–2 are recognized as terminal streams when they are not occupied by VFS file descriptors; invalid descriptors return `EBADF`, while non-terminal open descriptors return `ENOTTY`. The libc error table now includes the corresponding diagnostic string. Full libc, kernel image and whitespace checks pass.
-### Phase 22 freestanding headers checkpoint — 2026-09-10
-The libc include surface now provides freestanding `limits.h` and `stdbool.h`, including integer bounds, pointer/size limits, path constants, `bool`, `true` and `false`. Host-provided overlapping macros are guarded to keep strict `-Werror` builds clean while preserving the same definitions for the freestanding user image. Header assertions, libc tests, kernel image and whitespace checks pass.
-### Phase 22 integer and layout headers checkpoint — 2026-09-10
-Freestanding `stdint.h` and `stddef.h` are now available to user programs. They define fixed-width and pointer-sized integer types using compiler ABI types, the standard limit and constant-construction macros, `size_t`, `ptrdiff_t`, `wchar_t`, `wint_t`, `NULL` and `offsetof`. The headers remain compatible with host test translation units through guarded overlapping macros. Type-width, pointer-width and structure-layout assertions pass with the full libc, kernel and whitespace checks.
-### Phase 22 assertions checkpoint — 2026-09-10
-The user libc now ships a freestanding `assert.h` with expression assertions, `NDEBUG` behavior and C17 `static_assert` compatibility. Assertions use the compiler trap primitive and therefore require no hosted runtime or diagnostic I/O. The libc test suite now exercises both runtime and compile-time assertions, and all libc, kernel and whitespace checks pass.
-### Phase 22 signal compatibility checkpoint — 2026-09-10
-The libc signal surface now provides standard signal numbers, `sigset_t` construction and membership helpers, `sigpending` backed by the existing kernel pending-signal syscall, and `raise` backed by the real process `kill` syscall. This slice intentionally does not advertise handler installation until the kernel has a signal-frame delivery ABI; mask constants remain available for future `sigprocmask` support. User image, libc, kernel and whitespace checks pass.
-### Phase 22 signal masking checkpoint — 2026-09-10
-Signal masking is now backed by `RIX_SYS_SIGPROCMASK`. The kernel reads and returns the current process mask, applies `SIG_BLOCK`, `SIG_UNBLOCK` or `SIG_SETMASK`, and continues to protect unmaskable `SIGKILL` and `SIGSTOP`. The libc `sigprocmask` wrapper uses the four-register syscall ABI and preserves copy/error normalization. Full libc, kernel image and whitespace checks pass.
-### Phase 22 filesystem access checkpoint — 2026-09-10
-The unistd surface now exposes `F_OK`, `R_OK`, `W_OK`, `X_OK` and `access()`. `access()` uses the real `stat` syscall for existence and evaluates the file mode permission classes, returning normalized `EINVAL` or `EACCES` errors for invalid or unavailable requests. The implementation deliberately stays stat-based until the kernel exposes credential-aware access-checking and descriptor `fcntl` commands. Full libc, kernel image and whitespace checks pass.
-### Phase 22 descriptor control checkpoint — 2026-09-10
-The VFS descriptor ABI now supports `F_DUPFD`, `F_GETFL` and `F_SETFL` through `RIX_SYS_FCNTL`. Duplication honors a minimum descriptor number; status reads expose writable/append state; status updates can toggle append mode while invalid flag bits are rejected. The libc variadic `fcntl` wrapper preserves syscall error normalization. `F_GETFD`/`F_SETFD` and nonblocking I/O remain reserved until descriptor-close-on-exec and pipe readiness semantics are implemented.
-### Phase 22 stdlib search/allocation checkpoint — 2026-09-09
-The freestanding libc now provides comparator-based `bsearch`, complementing `qsort`. The allocator rejects size-plus-header and alignment-rounding overflow before invoking `sbrk`; sorted lookup tests cover hits and misses, while existing heap tests continue to cover zeroing and reallocation. Strict libc, complete host-suite, kernel image and whitespace checks pass.
-### Phase 22 ctype compatibility checkpoint — 2026-09-09
-The freestanding libc ctype layer now covers blank, control, graph, printable, punctuation and hexadecimal-digit classification through `isblank`, `iscntrl`, `isgraph`, `isprint`, `ispunct` and `isxdigit`, in addition to the existing classification and case-conversion functions. Tests cover ASCII boundaries and representative characters. Strict libc, complete host-suite, kernel image and whitespace checks pass.
-### Phase 22 string search/token checkpoint — 2026-09-09
-The libc string layer now includes reverse search (`strrchr`), substring search (`strstr`), span/set helpers (`strspn`, `strcspn`, `strpbrk`) and stateful delimiter tokenization through `strtok`. Tests cover empty/absent matches, delimiter runs and successive tokens. Strict libc, full host-suite, kernel image and whitespace checks pass.
-### Phase 22 string compatibility checkpoint — 2026-09-09
-The freestanding libc string surface now includes `memchr`, bounded and unbounded copy/concatenation (`strcpy`, `strncpy`, `strcat`, `strncat`) and heap-backed duplication (`strdup`, `strndup`). The bounded operations preserve terminators and zero-fill `strncpy` tails; allocation failures use the existing errno contract. Strict libc, complete host-suite, kernel image and whitespace checks pass.
-### Phase 22 stdio pushback checkpoint — 2026-09-09
-`FILE` now supports one-character pushback through `ungetc`. The pushed character is returned before buffered or descriptor-backed input, clears the EOF indicator, and is discarded on seek. Repeated pushback and `EOF` input are rejected. Strict libc tests, complete host regressions, kernel image checks and whitespace validation pass.
-### Phase 22 file stream helper checkpoint — 2026-09-09
-The freestanding libc now exposes `tmpfile`, `remove` and `fileno`. Temporary streams use exclusive creation under `/tmp`, retain their path for close-time cleanup, and use the existing buffered `FILE` machinery. The stream structure now safely initializes temporary-file ownership state. Strict libc tests, the complete host suite, kernel image checks and whitespace validation pass.
-### Phase 22 POSIX environment checkpoint — 2026-09-09
-The freestanding libc environment surface now includes `putenv` and `clearenv` in addition to `getenv`, `setenv` and `unsetenv`. Target userspace exports a rebuilt `environ` vector containing owned `NAME=VALUE` strings after every mutation; host tests use an isolated mode to avoid collision with the host C runtime. Strict libc, complete host-suite and kernel image checks pass.
-### Phase 22 errno and stream-status checkpoint — 2026-09-09
-The freestanding libc now provides static errno descriptions through `strerror` and bounded `strerror_r`, including truncation reporting. `FILE` tracks EOF and I/O-error state; `feof`, `ferror` and `clearerr` expose and reset those states. Read, write and flush paths now distinguish EOF from operational failure. Strict libc, host-suite and kernel image checks pass.
-### Phase 22 stdio formatting checkpoint — 2026-09-09
-The freestanding libc now provides `vfprintf`, `fprintf`, `vprintf`, `printf` and `perror` over the descriptor-backed `FILE` implementation. Formatted output uses a sizing pass followed by a heap-backed rendering pass, preserves the existing format subset, and reports invalid streams through `errno`. Host conformance tests cover formatted stream output and the strict kernel/userspace build remains passing.
-### Phase 22 kernel entropy checkpoint — 2026-09-09
-
-The libc random surface now has a real kernel entropy path. The x86_64 CPU layer detects RDRAND and RDSEED through CPUID and attempts hardware-generated 64-bit values with bounded retries. Syscall 139 (`getrandom`) validates flags and request size, copies generated bytes safely to userspace, and returns `ENOSYS` when no supported entropy source is available. `arc4random` consumes this syscall and retains its deterministic fallback for unsupported hardware or transient entropy failure; `rand`/`srand` remain deterministic POSIX-style helpers. Strict kernel build, libc-test, complete host tests and `git diff --check` pass.
-
-
-### Phase 22 POSIX surface checkpoint — 2026-09-10
-
-The freestanding libc now carries the full static POSIX spelling: `sys/types.h`, `sys/wait.h` (status macros over the native 64-bit status word), `sys/mman.h`, `sys/time.h` (`gettimeofday`), `sys/ioctl.h`, `sys/socket.h` + `netinet/in.h` + `arpa/inet.h` (AF_INET loopback with `ntohl`/`ntohs` endpoint conversion and EAGAIN/EMSGSIZE/ETIMEDOUT remap), `poll.h`, `pthread.h` (process-local spinlock mutex/once; create/join/detach fail closed), `locale.h` (C locale), `wchar.h` (strict UTF-8), `sscanf`/`vsscanf` subset, `strnlen`/`strtok_r`/`memccpy`, `exit`/`atexit`/`abort`/`system`, `stdin`/`stdout`/`stderr`, `getc`/`putc`/`getchar`, `getopt`/`sysconf`/`getpagesize`, and `signal`/`sigaction`/`pause` (handlers stay ENOSYS until the delivery ABI exists). `clock_gettime`/`nanosleep` migrated to POSIX `struct timespec` (layout-identical to the kernel word); `date`, `sleep`, `ping`, `curl`, `hosts`, `rixtest`, `sessionlisttest` and `abi-negative` moved with it. `SIZE_MAX` is now also provided by `stdint.h` (C11 7.20.3), which repairs the `head`/`tail` strict build. Host libc tests cover the pure surface; `make test`, `make image` and `git diff --check` pass.
-
-
-### Phase 22 socket-close checkpoint — 2026-09-10
-
-`RIX_SYS_CLOSE` now falls back to the per-process socket table when no VFS descriptor matches, so POSIX `close()` releases sockets instead of leaking one of 16 slots. The fallback only fires after `vfs_close` already failed, so file/pipe/TTY close paths are unchanged. The VFS/socket fd-namespace overlap and the absence of `read`/`write` on socket fds are documented limitations in `docs/PHASE22_COMPAT.md`, not silent behavior.
-
-
-### Phase 22 exit checkpoint — 2026-09-10
-
-**Phase 22 — libc, musl, POSIX and Linux Compatibility** is complete for the static software, host-test and QEMU disposable-image scope. The syscall table, errno mapping, header matrix, Linux/glibc divergences, porting notes, musl-sysroot shape (`make sysroot`), TLS/loader handoff and application corpus are recorded in `docs/PHASE22_COMPAT.md`; the architecture invariant `kernel ABI → RixuriOS libc → POSIX/Linux compatibility → application` holds (kernel includes no libc headers). `/usr/bin/posix-test` plus `scripts/qemu_posix_test.py` prove 27 groups on real NVMe/RixFS boot: POSIX clocks, mmap-family/poll/ioctl ENOSYS, signal/sigaction ENOSYS with working mask/pending, socket errors, UDP loopback echo with source validation, 20× socket rebind after close, empty-recv EAGAIN, `exit`+`atexit` through fork/pipe/wait with `WEXITSTATUS`, and on-target sscanf/getopt/inet/pthread. Neighbor regressions re-passed for the touched paths: phase19-extended (`date`), session lifecycle, foreground signals and ISO UEFI boot.
-
-Checkpoint status: `CP0 SPEC PASS`, `CP1 BUILD PASS`, `CP2 UNIT PASS`, `CP3 BOOT PASS`, `CP4 INTEGRATION PASS`, `CP5 HARDWARE DEFERRED`, `CP6 REGRESSION PASS`, `CP7 SECURITY REVIEWED`, `CP8 PERFORMANCE DEFERRED`, `CP9 DOCS PASS`, `CP10 RELEASE DEFERRED`. Dynamic linking/loader/TLS, full musl, kernel threads/futex, signal delivery, blocking socket receive, file-backed mmap and physical-hardware qualification remain assigned to Phase 23 and the hardware track; they are not claimed as QEMU evidence.
+- accessibility infrastructure.
+
+### Quality
+- usability testing;
+- crash recovery;
+- update lifecycle;
+- hardware compatibility matrix;
+- documentation;
+- release engineering.
+
+GUI must remain downstream of the verified kernel, userspace, networking, storage, security and hardware platform.
