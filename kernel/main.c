@@ -33,16 +33,12 @@
 #include "net/stack.h"
 #include "net/dhcp.h"
 
-static uint8_t klog_ready;
 static rix_net_stack_t net_stack;
-static size_t klog_strlen(const char *s) { size_t n = 0; while (s[n]) n++; return n; }
 static void klog_write(const char *s) {
     serial_write(s);
-    if (klog_ready) { size_t w = 0; tty_output(0, s, klog_strlen(s), &w); }
 }
 static void klog_write_n(const char *s, size_t n) {
     serial_write_n(s, n);
-    if (klog_ready) { size_t w = 0; tty_output(0, s, n, &w); }
 }
 static void klog_write_dec(uint64_t v) {
     char buf[21]; size_t i = sizeof(buf);
@@ -231,7 +227,6 @@ void kernel_main(const rixuri_boot_info_t *boot){
                        boot->framebuffer_width,boot->framebuffer_height,
                        boot->framebuffer_pitch,boot->framebuffer_format);
   serial_console_enable();
- klog_ready=1;
  klog_write("RixuriOS kernel: display diagnostics enabled\r\n");
  klog_write("PMM: total=");klog_write_dec(pmm_total_pages());klog_write(" free=");klog_write_dec(pmm_free_pages());klog_write("\r\n");
  klog_write("GOP: base=");klog_write_hex(boot->framebuffer_base);
