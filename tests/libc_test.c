@@ -8,6 +8,8 @@
 #include <sys/stat.h>
 #include <assert.h>
 #include <time.h>
+#include <limits.h>
+#include <stdbool.h>
 
 static unsigned char test_heap[128u * 1024u];
 static size_t test_break;
@@ -29,6 +31,8 @@ off_t lseek(int fd, off_t offset, int whence) { (void)fd; (void)whence; return o
 int clock_gettime(rix_timespec_t *out) { if (!out) return -1; out->sec = 1700000000u; out->nsec = 0; return 0; }
 
 int main(void) {
+    bool headers_ok = true;
+    assert(headers_ok && INT_MAX > 0 && UINT_MAX > INT_MAX && SIZE_MAX > 0 && PATH_MAX >= 256);
     char source[] = "rixurios";
     char buffer[32];
     assert(strlen(source) == 8);
