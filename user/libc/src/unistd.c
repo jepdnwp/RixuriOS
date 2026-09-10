@@ -1,5 +1,6 @@
 #include "unistd.h"
 #include "errno.h"
+#include "signal.h"
 #include <stdarg.h>
 
 static long rix_sys(long n,long a,long b,long c){long r;__asm__ volatile("int $0x80":"=a"(r):"a"(n),"D"(a),"S"(b),"d"(c):"rcx","r11","memory");return r;}
@@ -66,6 +67,14 @@ rix_pid_t getpid(void){return(rix_pid_t)rix_sys(39,0,0,0);}
 rix_pid_t getppid(void){return rix_pid_result(rix_sys(140,0,0,0));}
 int isatty(int fd){return(int)rix_int_result(rix_sys(141,fd,0,0));}
 int kill(rix_pid_t pid,uint32_t signal){return(int)rix_int_result(rix_sys(62,(long)pid,(long)signal,0));}
+static int signal_bit_valid(int signal){return signal>=1&&signal<=64;}
+int sigemptyset(sigset_t *set){if(!set){errno=RIX_EFAULT;return -1;}*set=0;return 0;}
+int sigfillset(sigset_t *set){if(!set){errno=RIX_EFAULT;return -1;}*set=UINT64_MAX;return 0;}
+int sigaddset(sigset_t *set,int signal){if(!set||!signal_bit_valid(signal)){errno=RIX_EINVAL;return -1;}*set|=1ULL<<(signal-1);return 0;}
+int sigdelset(sigset_t *set,int signal){if(!set||!signal_bit_valid(signal)){errno=RIX_EINVAL;return -1;}*set&=~(1ULL<<(signal-1));return 0;}
+int sigismember(const sigset_t *set,int signal){if(!set||!signal_bit_valid(signal)){errno=RIX_EINVAL;return -1;}return(*set&(1ULL<<(signal-1)))!=0;}
+int sigpending(sigset_t *set){if(!set){errno=RIX_EFAULT;return -1;}return(int)rix_int_result(rix_sys(127,(long)set,0,0));}
+int raise(int signal){return kill(getpid(),(uint32_t)signal);}
 int socket_open(int type){return(int)rix_int_result(rix_sys(41,type,0,0));}
 int socket_bind(int fd,rix_net_endpoint_t endpoint){return(int)rix_int_result(rix_sys(42,fd,(long)&endpoint,0));}
 int socket_connect(int fd,rix_net_endpoint_t endpoint){return(int)rix_int_result(rix_sys(43,fd,(long)&endpoint,0));}
