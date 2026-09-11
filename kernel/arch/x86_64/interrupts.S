@@ -51,6 +51,21 @@ isr\n:
     addq $16, %rsp
     iretq
 .endm
+/* Phase D inter-processor interrupts. Same frame discipline as IRQs;
+ * the vector selects the protocol (see SMP_IPI_* in smp.h). */
+.macro IPI n
+.global isr\n
+.type isr\n,@function
+isr\n:
+    pushq $0
+    pushq $\n
+    SAVE_REGS
+    leaq 120(%rsp), %rdi
+    call x86_ipi_dispatch
+    RESTORE_REGS
+    addq $16, %rsp
+    iretq
+.endm
 
 .global isr_default
 .type isr_default,@function
@@ -128,5 +143,7 @@ IRQ 44
 IRQ 45
 IRQ 46
 IRQ 47
+IPI 224
+IPI 225
 
 .section .note.GNU-stack,"",@progbits

@@ -19,6 +19,8 @@ DECL(0) DECL(1) DECL(2) DECL(3) DECL(4) DECL(5) DECL(6) DECL(7) DECL(8) DECL(9) 
 DECL(16) DECL(17) DECL(18) DECL(19) DECL(20) DECL(21) DECL(22) DECL(23) DECL(24) DECL(25) DECL(26) DECL(27) DECL(28) DECL(29) DECL(30) DECL(31)
 DECL(32) DECL(33) DECL(34) DECL(35) DECL(36) DECL(37) DECL(38) DECL(39) DECL(40) DECL(41) DECL(42) DECL(43) DECL(44) DECL(45) DECL(46) DECL(47)
 #undef DECL
+extern void isr224(void);
+extern void isr225(void);
 
 static struct idt_gate idt[256] __attribute__((aligned(16)));
 static void set_gate(unsigned vector,void (*handler)(void),uint8_t ist,uint8_t attr){uint64_t address=(uint64_t)(uintptr_t)handler;idt[vector].offset_low=(uint16_t)address;idt[vector].selector=0x08;idt[vector].ist=ist&7u;idt[vector].type_attr=attr;idt[vector].offset_mid=(uint16_t)(address>>16);idt[vector].offset_high=(uint32_t)(address>>32);idt[vector].reserved=0;}
@@ -112,6 +114,11 @@ void idt_init(void){
     set_gate(13,isr13,1,0x8E);
     set_gate(14,isr14,1,0x8E);
     for(unsigned i=0;i<16;i++)set_gate(32+i,irqs[i],0,0x8E);
+    /* Phase D IPIs: kernel-only gates (DPL0); the AP park loop is the only
+     * other CPU that can take them. IST=0 like IRQs: arrival stacks are
+     * sane by design (per-CPU kernel stacks, CPL0 park). */
+    set_gate(224,isr224,0,0x8E);
+    set_gate(225,isr225,0,0x8E);
     set_gate(0x80,isr128,0,0xEE);
     struct idt_ptr ptr={(uint16_t)(sizeof(idt)-1U),(uint64_t)(uintptr_t)idt};lidt(&ptr);
 }

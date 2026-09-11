@@ -29,6 +29,41 @@ int lapic_send_sipi(uint32_t apic_id, uint8_t vector) {
     if (ipi_count < 32) ipi_log[ipi_count++] = (int)(apic_id * 10 + 3);
     return 0;
 }
+/* Phase D1 doubles: fixed-IPI send log with optional synchronous AP
+ * receipt synthesis (drives the real x86_ipi_dispatch path), EOI counter,
+ * and a recording smp_flush_one override (host ring 3 cannot invlpg). */
+static int fixed_ipi_log[16];
+static size_t fixed_ipi_count;
+static int fixed_ipi_rc;
+static int fixed_ipi_synth;
+static int eoi_count;
+void lapic_eoi(void) { eoi_count++; }
+static int ap_enable_count;
+void lapic_ap_enable(void) { ap_enable_count++; }
+static uint64_t flushed[8];
+static size_t flushed_count;
+void smp_flush_one(uint64_t va) {
+    if (flushed_count < 8) flushed[flushed_count++] = va;
+}
+int lapic_send_ipi(uint32_t apic_id, uint8_t vector) {
+    if (fixed_ipi_count < 16)
+        fixed_ipi_log[fixed_ipi_count++] = (int)(apic_id * 256u + vector);
+    if (fixed_ipi_synth && fixed_ipi_rc == 0) {
+        stub_lapic = apic_id;
+        struct { uint64_t vector, error, rip, cs, rflags, rsp, ss; } fr =
+            { vector, 0, 0, 0, 0, 0, 0 };
+        x86_ipi_dispatch(&fr);
+    }
+    return fixed_ipi_rc;
+}
+/* Test-only const bend: the API hands out const handles, but the harness
+ * must arrange ONLINE states that real APs would publish. Production code
+ * never casts this away. */
+static void force_online(size_t i) {
+    smp_cpu_t *c = (smp_cpu_t *)smp_cpu(i);
+    assert(c != 0);
+    c->state = SMP_CPU_ONLINE;
+}
 static uint64_t stub_pml4 = 0x200000ULL;
 uint64_t vmm_kernel_pml4(void) { return stub_pml4; }
 uint64_t vmm_current_pml4(void) { return stub_pml4; }
@@ -161,6 +196,7 @@ int main(void) {
     assert(SMP_TRAMP_CRUMB_OFF < SMP_TRAMP_STACK_TOP_OFF);
 
     static uint8_t page[4096];
+    static uint8_t vpage[4096];
     for (size_t i = 0; i < sizeof(page); ++i) page[i] = 0;
     assert(smp_build_gdt(page, 0x8000ULL) == 0);
     assert(smp_build_gdt(0, 0x8000ULL) != 0);
@@ -260,6 +296,96 @@ int main(void) {
         assert(ipi_log[ap * 4 + 1] == (int)(id * 10 + 2));
         assert(ipi_log[ap * 4 + 2] == (int)(id * 10 + 3));
         assert(ipi_log[ap * 4 + 3] == (int)(id * 10 + 3));
+    }
+    /* Phase D2: trampoline checksum contract (offsets + guards). The
+     * reference sum below replicates the documented wire format
+     * ([CSUM_BEGIN, CSUM_END) LE words vs the CSUM slot); production and
+     * the asm gate must compute the same value (QEMU proves the asm side
+     * by reaching ONLINE). */
+    for (size_t i = 0; i < sizeof(vpage); ++i) vpage[i] = 0;
+    assert(smp_verify_trampoline(0) != 0);
+    assert(smp_verify_trampoline(vpage) != 0);
+    for (size_t i = 0; i < 8; ++i) vpage[SMP_TRAMP_DATA_CSUM + i] = 0xA5;
+    assert(smp_verify_trampoline(vpage) != 0);
+    for (size_t i = SMP_TRAMP_CSUM_BEGIN; i < SMP_TRAMP_CSUM_END; ++i)
+        vpage[i] = (uint8_t)(i * 3u + 1u);
+    {
+        uint64_t s = 0;
+        for (uint64_t off = SMP_TRAMP_CSUM_BEGIN; off + 8 <= SMP_TRAMP_CSUM_END; off += 8) {
+            uint64_t w = 0;
+            for (size_t b = 0; b < 8; ++b) w |= (uint64_t)vpage[off + b] << (8 * b);
+            s += w;
+        }
+        for (size_t b = 0; b < 8; ++b) vpage[SMP_TRAMP_DATA_CSUM + b] = (uint8_t)(s >> (8 * b));
+    }
+    assert(smp_verify_trampoline(vpage) == 0);
+    vpage[SMP_TRAMP_DATA_IDTR + 8] ^= 0xFFu;
+    assert(smp_verify_trampoline(vpage) != 0);
+    /* Phase D1: bad ping targets never send (BSP index, out of range,
+     * PRESENT-but-offline AP). */
+    assert(smp_ping(99) == -2);
+    assert(smp_ping(0) == -2);
+    assert(smp_ping(1) == -2);
+    assert(fixed_ipi_count == 0);
+    /* Ping timeout terminates bounded with no ack (send succeeds). */
+    force_online(1);
+    stub_lapic = 1;
+    fixed_ipi_rc = 0;
+    fixed_ipi_synth = 0;
+    assert(smp_ping(1) == -1);
+    assert(fixed_ipi_count == 1);
+    assert(fixed_ipi_log[0] == (int)(1u * 256u + SMP_IPI_PING));
+    /* Ping success through the real send->dispatch->ack->poll path. */
+    force_online(2);
+    stub_lapic = 2;
+    fixed_ipi_synth = 1;
+    {
+        size_t before = fixed_ipi_count;
+        int eoi_before = eoi_count;
+        assert(smp_ping(2) == 0);
+        assert(fixed_ipi_count == before + 1);
+        assert(eoi_count == eoi_before + 1);
+    }
+    /* Direct dispatch contract: EOI always, unknown/NULL frames safe. */
+    {
+        struct { uint64_t vector, error, rip, cs, rflags, rsp, ss; } fr =
+            { SMP_IPI_PING, 0, 0, 0, 0, 0, 0 };
+        int eoi_before = eoi_count;
+        stub_lapic = 2;
+        x86_ipi_dispatch(&fr);
+        fr.vector = 0xE2u;
+        x86_ipi_dispatch(&fr);
+        x86_ipi_dispatch(0);
+        assert(eoi_count == eoi_before + 3);
+    }
+    /* Shootdown negatives: no IPI, no flush. */
+    flushed_count = 0;
+    assert(smp_shootdown(0) == -2);
+    assert(smp_shootdown(1ULL << 47) == -2);
+    assert(fixed_ipi_count == 2);
+    assert(flushed_count == 0);
+    /* Shootdown success across two ONLINE APs (seq logic exercised:
+     * one local flush plus one synthesized flush per AP). */
+    fixed_ipi_synth = 1;
+    fixed_ipi_rc = 0;
+    assert(smp_shootdown(0x5000u) == 0);
+    assert(flushed_count == 3);
+    assert(flushed[0] == 0x5000u && flushed[1] == 0x5000u && flushed[2] == 0x5000u);
+    assert(fixed_ipi_count == 4);
+    /* Shootdown send failure fails closed. */
+    fixed_ipi_rc = -1;
+    assert(smp_shootdown(0x6000u) == -1);
+    /* UP fast path: single-CPU map flushes locally with no IPI. */
+    stub_cpu_count = 1;
+    stub_cpus[0] = entry(0, 1, 0);
+    stub_lapic = 0;
+    assert(smp_discover() == 0 && smp_cpu_count() == 1);
+    flushed_count = 0;
+    {
+        size_t ipi_before = fixed_ipi_count;
+        assert(smp_shootdown(0x2000u) == 0);
+        assert(fixed_ipi_count == ipi_before);
+        assert(flushed_count == 1 && flushed[0] == 0x2000u);
     }
     return 0;
 }

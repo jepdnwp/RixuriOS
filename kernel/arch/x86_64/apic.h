@@ -23,3 +23,9 @@ void lapic_enable_pic_extint(void);
 #define APIC_TRIGGER_LEVEL (1u << 15)
 int lapic_send_init(uint32_t apic_id, int assert_level);
 int lapic_send_sipi(uint32_t apic_id, uint8_t vector);
+/* Phase D: fixed-delivery IPI to one LAPIC (physical destination). Same
+ * bounded delivery-status discipline as INIT/SIPI. No sleep, no scheduler. */
+int lapic_send_ipi(uint32_t apic_id, uint8_t vector);
+/* Enable a secondary CPU's LAPIC for fixed IPIs (SVR + EOI flush).
+ * Used by ap_entry; the BSP path is lapic_init(). */
+void lapic_ap_enable(void);

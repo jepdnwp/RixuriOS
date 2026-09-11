@@ -128,6 +128,98 @@ int smp_cpu_id(void) {
     return -1;
 }
 
+struct smp_intr_frame { uint64_t vector; uint64_t error; uint64_t rip, cs, rflags, rsp, ss; };
+
+/* Phase D1 cross-CPU protocol state (.bss, cache-coherent on x86). The BSP
+ * is the only writer of shootdown_seq/va and the only caller of ping and
+ * shootdown (single-flight); APs only write their own ack slots. No lock
+ * is needed until a second writer exists (Phase E re-examines this). */
+static volatile uint64_t ipi_ping_ack[SMP_MAX_CPUS];
+static volatile uint64_t shootdown_seq;
+static volatile uint64_t shootdown_va;
+static volatile uint64_t shootdown_ack[SMP_MAX_CPUS];
+
+/* Response polls (ping/shootdown ack): the target is parked with IF=1, so
+ * an ack costs microseconds on silicon; 10 rounds x 10K pauses (~5 ms)
+ * keeps three orders of magnitude of margin while bounding worst-case
+ * virtualized runs. Protocol waits (ONLINE startup) keep their own 60. */
+#define SMP_IPI_POLL_ROUNDS 10u
+#define SMP_IPI_POLL_CHUNK 10000ULL
+static void ipi_pause(uint64_t iters) {
+    for (volatile uint64_t i = 0; i < iters; ++i) __asm__ volatile("pause" ::: "memory");
+}
+
+/* Privileged TLB flush, weak so the host unit test links a recording stub
+ * (same pattern as smp_read_cr3_hw). */
+__attribute__((weak)) void smp_flush_one(uint64_t va) {
+    __asm__ volatile("invlpg (%0)" :: "r"(va) : "memory");
+}
+
+void x86_ipi_dispatch(const void *raw) {
+    const struct smp_intr_frame *frame = (const struct smp_intr_frame *)raw;
+    unsigned vec = frame ? (unsigned)frame->vector : 0xFFu;
+    if (vec == SMP_IPI_PING || vec == SMP_IPI_SHOOTDOWN) {
+        int me = smp_cpu_id();
+        if (me >= 0) {
+            if (vec == SMP_IPI_PING) {
+                ipi_ping_ack[me]++;
+            } else {
+                uint64_t s = shootdown_seq;
+                uint64_t v = shootdown_va;
+                __asm__ volatile("" ::: "memory");
+                smp_flush_one(v);
+                shootdown_ack[me] = s;
+            }
+        }
+    }
+    lapic_eoi();
+}
+
+int smp_ping(size_t index) {
+    if (index >= SMP_MAX_CPUS || index >= smp_map.count) return -2;
+    const smp_cpu_t *c = &smp_map.cpu[index];
+    if (c->is_bsp || !c->enabled || smp_cpu_state(index) != SMP_CPU_ONLINE) return -2;
+    uint64_t before = ipi_ping_ack[index];
+    if (lapic_send_ipi(c->apic_id, SMP_IPI_PING) != 0) return -1;
+    for (uint32_t r = 0; r < SMP_IPI_POLL_ROUNDS; ++r) {
+        if (ipi_ping_ack[index] != before) return 0;
+        ipi_pause(SMP_IPI_POLL_CHUNK);
+    }
+    return ipi_ping_ack[index] != before ? 0 : -1;
+}
+
+static int smp_canonical48(uint64_t va) {
+    return va < (1ULL << 47) || va >= (~0ULL - (1ULL << 47) + 1ULL);
+}
+
+int smp_shootdown(uint64_t va) {
+    if (!va || !smp_canonical48(va)) return -2;
+    smp_flush_one(va);
+    /* No online-counter fast path by design: the loop below naturally
+     * skips everything that is not an ONLINE AP, so UP and single-online
+     * topologies need no special case and cannot diverge from the state
+     * bits (a host-test catch: counter/state consistency must never be
+     * load-bearing). */
+    shootdown_va = va;
+    __asm__ volatile("" ::: "memory");
+    uint64_t seq = shootdown_seq + 1u;
+    if (!seq) seq = 1u;
+    shootdown_seq = seq;
+    __asm__ volatile("mfence" ::: "memory");
+    int rc = 0;
+    for (size_t i = 0; i < smp_map.count && i < SMP_MAX_CPUS; ++i) {
+        if (smp_map.cpu[i].is_bsp || !smp_map.cpu[i].enabled) continue;
+        if (smp_cpu_state(i) != SMP_CPU_ONLINE) continue;
+        if (lapic_send_ipi(smp_map.cpu[i].apic_id, SMP_IPI_SHOOTDOWN) != 0) { rc = -1; continue; }
+        for (uint32_t r = 0; r < SMP_IPI_POLL_ROUNDS; ++r) {
+            if (shootdown_ack[i] == seq) break;
+            ipi_pause(SMP_IPI_POLL_CHUNK);
+        }
+        if (shootdown_ack[i] != seq) rc = -1;
+    }
+    return rc;
+}
+
 static void gdt_store(uint8_t *g, uint32_t base, uint32_t limit,
                       uint8_t access, uint8_t flags) {
     g[0] = (uint8_t)(limit & 0xFFu);
@@ -180,6 +272,33 @@ static void smp_capture_descriptor_tables(uint8_t *page) {
         page[SMP_TRAMP_DATA_IDTR + i] = ((const uint8_t *)&idtr)[i];
 }
 
+/* Phase D2: additive checksum over the trampoline DATA area the AP
+ * consumes ([CSUM_BEGIN, CSUM_END), CSUM slot itself excluded). Stored by
+ * the BSP after every slot write, verified by the BSP pre-SIPI and by the
+ * AP pre-lidt: any scribble (stale low-memory content, DMA, SMM, future
+ * layout bug) parks the AP silently instead of triple-faulting the
+ * machine with zero output. */
+static uint64_t trampoline_checksum(const uint8_t *page) {
+    uint64_t sum = 0;
+    for (uint64_t off = SMP_TRAMP_CSUM_BEGIN; off + 8 <= SMP_TRAMP_CSUM_END; off += 8) {
+        uint64_t w = 0;
+        for (size_t b = 0; b < 8; ++b) w |= (uint64_t)page[off + b] << (8 * b);
+        sum += w;
+    }
+    return sum;
+}
+
+/* Returns 0 when the page's stored checksum matches its DATA area (and is
+ * nonzero, so a never-written page cannot pass). Host-testable. */
+int smp_verify_trampoline(const uint8_t *page) {
+    if (!page) return -1;
+    uint64_t stored = 0;
+    for (size_t b = 0; b < 8; ++b)
+        stored |= (uint64_t)page[SMP_TRAMP_DATA_CSUM + b] << (8 * b);
+    if (!stored) return -1;
+    return trampoline_checksum(page) == stored ? 0 : -2;
+}
+
 int smp_setup_trampoline(uint8_t *page, uint64_t page_phys, uint64_t cr3,
                          uint64_t stack_top, uint64_t entry) {
     size_t size = smp_trampoline_size();
@@ -214,6 +333,10 @@ int smp_setup_trampoline(uint8_t *page, uint64_t page_phys, uint64_t cr3,
 
 void ap_entry(void) {
     uint32_t id = lapic_id();
+    /* Phase D1: accept fixed IPIs before anyone can target this CPU: the
+     * BSP sends the first ping the moment it observes ONLINE, so SVR comes
+     * before the publish (a pre-SVR IPI would be lost, not pended). */
+    lapic_ap_enable();
     kernel_log("AP");
     kernel_log_dec(id);
     kernel_log(" E\r\n");
@@ -224,11 +347,10 @@ void ap_entry(void) {
             break;
         }
     }
-    /* Parked: interrupts are never enabled on APs in Phase B, so HLT
-     * sleeps until a later phase replaces this loop with the per-CPU
-     * idle task. The success path is silent; the BSP prints ordered
-     * online lines after observing the flag. */
-    for (;;) __asm__ volatile("hlt" ::: "memory");
+    /* Parked idle: hlt wakes per IPI and the handler returns here. PIT
+     * stays BSP-routed, so only directed IPIs arrive. sti/hlt back to
+     * back is interrupt-safe by architecture (one-instruction shadow). */
+    for (;;) __asm__ volatile("sti; hlt" ::: "memory");
 }
 
 static int trampoline_taken(uint64_t base) {
@@ -360,6 +482,18 @@ int smp_start_aps(void) {
         for (size_t b = 0; b < sizeof(online_ptr); ++b)
             buffer[SMP_TRAMP_DATA_ONLINE + b] = (uint8_t)(online_ptr >> (8 * b));
         {
+            uint64_t csum = trampoline_checksum(buffer);
+            for (size_t b = 0; b < 8; ++b)
+                buffer[SMP_TRAMP_DATA_CSUM + b] = (uint8_t)(csum >> (8 * b));
+        }
+        /* Verify through the same mapping the AP will fetch: a mismatch
+         * means the page changed under us (stale content, DMA, SMM) and
+         * the AP must never be started on it. */
+        if (smp_verify_trampoline(buffer) != 0) {
+            kernel_log("SMP: AP setup verify failed\r\n");
+            continue;
+        }
+        {
             uint64_t rb = 0;
             for (size_t i = 0; i < 8; ++i)
                 rb |= (uint64_t)buffer[SMP_TRAMP_DATA_ENTRY + i] << (8 * i);
@@ -421,5 +555,23 @@ int smp_start_aps(void) {
             cpu->state = SMP_CPU_PRESENT;
         }
     }
+    /* Phase D1 boot self-test: ping every ONLINE AP once, then one TLB
+     * shootdown of a scratch (never mapped, invlpg-safe) address. Bounded
+     * by construction; any failure only logs and continues DEGRADED. */
+    for (size_t i = 0; i < smp_map.count; ++i) {
+        if (smp_map.cpu[i].is_bsp || !smp_map.cpu[i].enabled) continue;
+        if (smp_cpu_state(i) != SMP_CPU_ONLINE) continue;
+        if (smp_ping(i) == 0) {
+            kernel_log("SMP: ping ");
+            kernel_log_dec(smp_map.cpu[i].apic_id);
+            kernel_log(" ok\r\n");
+        } else {
+            kernel_log("SMP: ping ");
+            kernel_log_dec(smp_map.cpu[i].apic_id);
+            kernel_log(" timeout\r\n");
+        }
+    }
+    if (smp_shootdown(0x1000u) == 0) kernel_log("SMP: shootdown ok\r\n");
+    else kernel_log("SMP: shootdown timeout\r\n");
     return (int)smp_map.online;
 }

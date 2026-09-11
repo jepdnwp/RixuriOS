@@ -10,9 +10,9 @@
  *
  * Breadcrumbs (reset-proof): the AP announces each stage on COM1 with raw
  * port I/O (no stack, no kernel): R = real, P = protected, L = long mode.
- * Known-answer probes then dump what the BSP wrote: G = CR3 slot,
- * T = entry slot, then jump. A triple fault still leaves the death stage
- * in the serial log. */
+ * Before consuming anything, long mode verifies the DATA-area checksum
+ * the BSP stored; a mismatch parks here with crumb 0xEE instead of
+ * loading a corrupt RSP/IDT and triple-faulting with zero output. */
 smp_trampoline_start:
     cli
     movw %cs,%ax
@@ -108,6 +108,22 @@ smp_trampoline_longmode:
      * R10 keeps the base (call-clobbered but hex64 preserves it). */
     lea smp_trampoline_longmode(%rip),%r10
     sub $smp_trampoline_longmode-smp_trampoline_start,%r10
+    /* Checksum gate over the DATA area consumed below ([CSUM_BEGIN,
+     * CSUM_END)) against the BSP-stored sum. Uses no stack and preserves
+     * R10; a mismatch parks with crumb 0xEE (IF stays clear, silent). */
+    xorq %r11,%r11
+    leaq SMP_TRAMP_CSUM_BEGIN(%r10),%rsi
+    movl $(SMP_TRAMP_CSUM_END-SMP_TRAMP_CSUM_BEGIN)/8,%ecx
+1:  addq (%rsi),%r11
+    addq $8,%rsi
+    decl %ecx
+    jnz 1b
+    cmpq SMP_TRAMP_DATA_CSUM(%r10),%r11
+    je 2f
+    movb $0xEE,SMP_TRAMP_CRUMB_OFF(%r10)
+3:  hlt
+    jmp 3b
+2:
     movb $0xCC,SMP_TRAMP_CRUMB_OFF(%r10)
     movw $SMP_TRAMP_SEL_DATA64,%ax
     movw %ax,%ds
@@ -118,13 +134,30 @@ smp_trampoline_longmode:
     /* Load the BSP's live IDTR snapshot (the kernel IDT, captured by
      * smp_capture_descriptor_tables just before SIPI): from here an AP
      * fault reaches the kernel handlers on IST#1 with full diagnostics
-     * instead of triple-faulting off the BIOS IDT with zero output.
-     * GDT stays the trampoline's (flat and sufficient for parking). */
+     * instead of triple-faulting off the BIOS IDT with zero output. */
     lidt SMP_TRAMP_DATA_IDTR(%r10)
-    /* The trampoline GDT is already flat and valid in long mode. Do not load
-     * firmware/BSP descriptor snapshots here: a malformed or incompatible
-     * firmware GDT can fault before the AP publishes its state. APs keep IF
-     * clear and remain parked in ap_entry until per-CPU setup exists. */
+    /* Switch to the snapshotted kernel GDT: every kernel IDT gate targets
+     * kernel CS (0x08, 64-bit), while the trampoline GDT's 0x08 is a
+     * 32-bit segment, so the first AP interrupt triple-faults on the CS
+     * load with #GP(0x8). Far-return into 0x08, reload data segments,
+     * null FS (trampoline DATAPAGE unused past this point) and load the
+     * kernel TSS so IST-using gates (#DF safety net) resolve. TSS/RSP0
+     * stay BSP-oriented and shared until per-CPU TSS exists (Phase C);
+     * RSP0 is unused without CPL changes. IF stays clear throughout. */
+    lgdt SMP_TRAMP_DATA_GDTR(%r10)
+    pushq $0x08
+    leaq .Lcs_switched(%rip),%rax
+    pushq %rax
+    lretq
+.Lcs_switched:
+    movw $0x10,%ax
+    movw %ax,%ds
+    movw %ax,%es
+    movw %ax,%ss
+    xorw %ax,%ax
+    movw %ax,%fs
+    movw $0x28,%ax
+    ltr %ax
     /* Publish ONLINE without entering C or relying on the AP's TSS. */
     movq SMP_TRAMP_DATA_ONLINE(%r10),%r14
     movl $3,(%r14)

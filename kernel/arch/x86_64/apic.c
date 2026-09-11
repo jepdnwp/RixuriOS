@@ -103,3 +103,12 @@ int lapic_send_init(uint32_t apic_id, int assert_level) {
 int lapic_send_sipi(uint32_t apic_id, uint8_t vector) {
     return ipi_send(apic_id, APIC_DELIVERY_SIPI | vector);
 }
+
+int lapic_send_ipi(uint32_t apic_id, uint8_t vector) {
+    return ipi_send(apic_id, (uint32_t)vector);
+}
+
+void lapic_ap_enable(void) {
+    lapic_write(APIC_REG_SVR, APIC_SVR_ENABLE | RIXURI_LAPIC_SPURIOUS_VECTOR);
+    lapic_eoi();
+}

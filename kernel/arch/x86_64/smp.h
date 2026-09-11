@@ -9,7 +9,10 @@
 #define SMP_TRAMP_DATA_ENTRY 0x290
 #define SMP_TRAMP_DATA_GDTR 0x2A0
 #define SMP_TRAMP_DATA_IDTR 0x2B0
-#define SMP_TRAMP_DATA_ONLINE 0x2B8
+#define SMP_TRAMP_DATA_ONLINE 0x2C0
+#define SMP_TRAMP_DATA_CSUM 0x2C8
+#define SMP_TRAMP_CSUM_BEGIN 0x280
+#define SMP_TRAMP_CSUM_END 0x2C8
 #define SMP_TRAMP_CRUMB_OFF 0x300
 #define SMP_TRAMP_CRUMB_REAL 0xAAu
 #define SMP_TRAMP_CRUMB_PROT32 0xBBu
@@ -33,6 +36,26 @@
  * Ownership: smp_build_map() is pure (no HW, no globals) and host
  * tested. smp_discover() runs once pre-scheduler on the BSP; the
  * published map is read-only until Phase C introduces the smp lock. */
+
+/* Trampoline data-area layout guard: every slot is addressed by absolute
+ * offset from both C and assembly, so overlaps fail silently at runtime
+ * (the 8-byte ONLINE pointer once overlapped the last 2 bytes of the
+ * 10-byte IDTR snapshot, corrupting the AP's IDTR base and turning every
+ * AP IPI into a silent triple fault). */
+_Static_assert(SMP_TRAMP_DATA_GDTR + 10 <= SMP_TRAMP_DATA_IDTR,
+               "trampoline GDTR overlaps IDTR snapshot");
+_Static_assert(SMP_TRAMP_DATA_IDTR + 10 <= SMP_TRAMP_DATA_ONLINE ||
+               SMP_TRAMP_DATA_ONLINE + 8 <= SMP_TRAMP_DATA_IDTR,
+               "trampoline ONLINE overlaps IDTR snapshot");
+_Static_assert(SMP_TRAMP_DATA_ONLINE + 8 <= SMP_TRAMP_CRUMB_OFF,
+               "trampoline ONLINE overlaps crumb");
+_Static_assert(SMP_TRAMP_DATA_CSUM + 8 <= SMP_TRAMP_CRUMB_OFF,
+               "trampoline CSUM overlaps crumb");
+_Static_assert(SMP_TRAMP_CSUM_BEGIN < SMP_TRAMP_CSUM_END &&
+               SMP_TRAMP_CSUM_END <= SMP_TRAMP_DATA_CSUM,
+               "trampoline checksum range invalid");
+_Static_assert(SMP_TRAMP_CRUMB_OFF < SMP_TRAMP_STACK_TOP_OFF,
+               "trampoline crumb outside page");
 
 #define SMP_MAX_CPUS 64
 
@@ -86,6 +109,23 @@ void ap_entry(void);
 smp_cpu_state_t smp_cpu_state(size_t index);
 /* Phase C1: calling CPU's smp_map index, or -1 when unknown. */
 int smp_cpu_id(void);
+
+/* Phase D1: fixed-delivery IPI protocol vectors (IDT gates, DPL0).
+ * 0xFF (spurious) is deliberately unused. */
+#define SMP_IPI_PING 224u
+#define SMP_IPI_SHOOTDOWN 225u
+/* IPI entry called from the isr224/isr225 stubs (same frame layout as
+ * IRQs). Never blocks; unknown vectors are EOId and ignored. */
+void x86_ipi_dispatch(const void *frame);
+/* Ping one AP and wait for its ack, bounded. 0 acked, -1 timeout/send
+ * failure, -2 bad target (unknown index, BSP, disabled or not ONLINE). */
+int smp_ping(size_t index);
+/* invlpg(va) on this CPU plus every other ONLINE AP, bounded single-flight
+ * (only the BSP calls it; APs only ack). 0 complete, -1 timeout/send
+ * failure, -2 bad address (zero or non-canonical). On a UP/single-online
+ * topology only the local flush runs (no IPI). VMM integration (unmap
+ * hook) is Phase D2. */
+int smp_shootdown(uint64_t va);
 /* GDT/GDTR builder over a caller buffer (host-testable). */
 int smp_build_gdt(uint8_t *page, uint64_t page_phys);
 /* Assembled template size in bytes. */
@@ -97,4 +137,8 @@ uint64_t smp_read_cr3_hw(void);
  * mode (kernel PML4 above 4G). Host-testable (buffer-backed). */
 int smp_setup_trampoline(uint8_t *page, uint64_t page_phys, uint64_t cr3,
                          uint64_t stack_top, uint64_t entry);
+/* Recompute the DATA-area checksum and compare with the stored slot.
+ * 0 match (and stored nonzero), -1 bad input/never-written, -2 mismatch.
+ * Host-testable (buffer-backed). */
+int smp_verify_trampoline(const uint8_t *page);
 #endif
