@@ -179,17 +179,9 @@ static int xhci_bios_handoff(volatile uint8_t *base, uint64_t mmio_size) {
     return -3;
 }
 
-static int map_range(uint64_t base, uint64_t length) {
-    if (length == 0 || base > UINT64_MAX - (length - 1u)) return -1;
-    uint64_t first = base & ~0xFFFULL;
-    uint64_t last = (base + length - 1u) & ~0xFFFULL;
-    for (uint64_t page = first;; page += 0x1000ULL) {
-        if (vmm_map_page(page, page, RIXURI_PTE_PRESENT | RIXURI_PTE_WRITE |
-                         RIXURI_PTE_NX | RIXURI_PTE_PWT | RIXURI_PTE_PCD) != 0) return -1;
-        if (page == last) break;
-        if (page > UINT64_MAX - 0x1000ULL) return -1;
-    }
-    return 0;
+static uint64_t map_range(uint64_t base, uint64_t length) {
+    if (length == 0 || base > UINT64_MAX - (length - 1u)) return 0;
+    return vmm_map_mmio(base, length);
 }
 
 static void zero_page(uint64_t phys) {
@@ -348,7 +340,8 @@ int xhci_init(void) {
                 serial_write("xHCI: candidate BAR size implausible\r\n");
                 continue;
             }
-            if (map_range(bar_base, bar_size) != 0) {
+            uint64_t regs_va = map_range(bar_base, bar_size);
+            if (!regs_va) {
                 serial_write("xHCI: candidate BAR map failed\r\n");
                 continue;
             }
@@ -367,13 +360,14 @@ int xhci_init(void) {
                 }
             }
             {
-                volatile uint8_t *base = (volatile uint8_t *)(uintptr_t)bar_base;
+                volatile uint8_t *base = (volatile uint8_t *)(uintptr_t)regs_va;
                 rix_xhci_controller_t *c = &controllers[count];
                 int handoff;
                 c->bus = d->bus;
                 c->device = d->device;
                 c->function = d->function;
                 c->bar0 = bar_base;
+                c->mmio_va = regs_va;
                 c->cap_length = base[XHCI_CAPLENGTH];
                 c->hci_version = *(volatile uint16_t *)(base + XHCI_HCIVERSION);
                 {
@@ -441,7 +435,7 @@ const rix_xhci_controller_t *xhci_controller(size_t index) { return index < coun
 
 static volatile uint32_t *port_reg(const rix_xhci_controller_t *c, uint8_t port) {
     if (!c || !c->running || port == 0 || port > c->max_ports) return NULL;
-    volatile uint8_t *base = (volatile uint8_t *)(uintptr_t)c->bar0;
+    volatile uint8_t *base = (volatile uint8_t *)(uintptr_t)c->mmio_va;
     return (volatile uint32_t *)(base + c->cap_length + XHCI_PORTSC_BASE +
                                   (uint32_t)(port - 1u) * XHCI_PORT_STRIDE);
 }
@@ -480,7 +474,7 @@ int xhci_reset_port(size_t controller, uint8_t port) {
 }
 
 static volatile uint8_t *runtime_base(const rix_xhci_controller_t *c) {
-    volatile uint8_t *base = (volatile uint8_t *)(uintptr_t)c->bar0;
+    volatile uint8_t *base = (volatile uint8_t *)(uintptr_t)c->mmio_va;
     uint32_t rt_off = *(volatile uint32_t *)(base + XHCI_RTSOFF) & ~0x1Fu;
     return base + rt_off;
 }
@@ -666,7 +660,7 @@ static int submit_command(size_t controller, uint64_t parameter, uint32_t contro
     rt->command_enqueue = (uint16_t)(index + 1u);
     __asm__ volatile("mfence" ::: "memory");
 
-    volatile uint8_t *base = (volatile uint8_t *)(uintptr_t)c->bar0;
+    volatile uint8_t *base = (volatile uint8_t *)(uintptr_t)c->mmio_va;
     uint32_t db_off = *(volatile uint32_t *)(base + XHCI_DBOFF) & ~0x3u;
     *(volatile uint32_t *)(base + db_off) = 0;
     return wait_command(c, rt, command_phys, out_slot);
@@ -920,7 +914,7 @@ int xhci_control_transfer(size_t controller, uint8_t slot_id,
         (XHCI_TRB_STATUS_STAGE << XHCI_TRB_TYPE_SHIFT) | XHCI_TRB_IOC |
         ((setup->length == 0u || !data_in) ? XHCI_TRB_DIR : 0u));
     __asm__ volatile("mfence" ::: "memory");
-    volatile uint8_t *base = (volatile uint8_t *)(uintptr_t)c->bar0;
+    volatile uint8_t *base = (volatile uint8_t *)(uintptr_t)c->mmio_va;
     uint32_t db_off = *(volatile uint32_t *)(base + XHCI_DBOFF) & ~0x3u;
     *(volatile uint32_t *)(base + db_off + (uint32_t)slot_id * 4u) = 1u;
     return wait_transfer(c, &runtimes[controller], status_trb, slot_id, 1u,
@@ -1122,7 +1116,7 @@ static int endpoint_transfer(size_t controller, uint8_t slot_id, uint8_t endpoin
     trb->control = (XHCI_TRB_NORMAL << XHCI_TRB_TYPE_SHIFT) | XHCI_TRB_IOC |
                    (endpoint_runtime->cycle ? XHCI_TRB_CYCLE : 0u);
     __asm__ volatile("mfence" ::: "memory");
-    volatile uint8_t *base = (volatile uint8_t *)(uintptr_t)c->bar0;
+    volatile uint8_t *base = (volatile uint8_t *)(uintptr_t)c->mmio_va;
     uint32_t db_off = *(volatile uint32_t *)(base + XHCI_DBOFF) & ~0x3u;
     *(volatile uint32_t *)(base + db_off + (uint32_t)slot_id * 4u) = endpoint_id;
     return wait_transfer(c, &runtimes[controller], trb_phys, slot_id,

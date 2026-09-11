@@ -699,3 +699,18 @@ The receive-control enable write was moved after ring setup, MAC filter programm
 
 ## 2026-09-09 — Full regression matrix: 26/26 PASS
 `make test-all` completed successfully with **26 PASS / 0 FAIL**. The run covered the strict build/image path, ring-3 boot, process and signal utilities, RixFS/VFS/file utilities, shell/text utilities, xHCI probe, Phase 19 extended behavior and Phase 21 external-network behavior. QEMU external networking was validated without fake success: when HTTP responses were available, curl reported validated `HTTP 301 external PASS`; when ICMP/DNS was unavailable, ping/curl reported explicit fail-closed diagnostics. The E1000 RX-DMA issue and physical RTL8125 qualification remain documented as open hardware-validation items.
+
+
+## 2026-09-11 — P0 baseline on dirty tree + smp_test NX-contract fix
+
+HEAD is `e0f0c22`, not the `590b02d` named in the work order (mismatch recorded, work proceeds on actual HEAD). The tree was dirty at baseline start: 14 modified files from the uncommitted ring3/MMIO/TTY debug arc plus one untracked junk file (`nul`, stale build log, left alone).
+
+Baseline with the canonical flags (`CROSS=x86_64-linux-gnu- HOST_CC=gcc`):
+
+- `make test`: FAIL twice before the fix. First at `rtl-test` (undefined `vmm_map_mmio` — a regression from the uncommitted driver work, which swapped `vmm_map_page` for `vmm_map_mmio` without updating the host-test stubs). Fixed by adding `vmm_map_mmio` stubs beside the existing `vmm_map_page` stubs in `tests/e1000_test.c` / `tests/rtl8125_test.c` and by initializing the new `driver.mmio` field in `e1000_test.c`. Then FAIL at `smp-test` (`tests/smp_test.c:204` NX assertion). Production `kernel/arch/x86_64/smp.c` deliberately maps the AP trampoline PRESENT|WRITE with no NX (comment: NX faults the long-mode fallback); the assertion contradicted that documented intent, so the assertion was corrected to pin NX-clear instead of touching production. After both fixes `make test` is RC=0: check/usb/hid/tty/shell/pipe/net/libc/hosts/rtl/e1000/acpi/smp/rixfs-mount PASS, symlink SKIP by design (`tests/symlink_test.c` absent — recorded as SKIP, not PASS).
+- `make image`: RC=0. `make iso`: RC=0. `make iso-test`: PASS (`qemu ISO UEFI boot`). `make sysroot`: RC=0 but reports bootstrap only (musl port pending Phase 23 — DEFERRED, not a port). `git diff --check`: clean.
+- QEMU `-smp 1`: `SHELL READY` + `USER_ENTER`, no exceptions (UP regression intact).
+- QEMU `-smp 4`: discovery OK (`SMP: cpus=4 online=1 bsp_apic=0`), AP1 trampoline prepared and INIT IPI sent, then no further serial output within 150 s (stall between the DEASSERT and SIPI marker lines; slow-TCG-pause vs real hang undetermined). Recorded as BLOCKED, not claimed. P0 Phase B stays IN PROGRESS.
+- Re-verified against code (not docs): cooperative scheduler only (voluntary yields, `irq.c`), `kfree` is an explicit no-op (`heap.c`), no MMAP path in `syscall.c` (default `-ENOSYS`), static ELF only (no INTERP/DYN in `kernel/elf`), no TLS/FSMSR usage, no futex primitive, signals are mask/pending/take only (`signal.c`, no delivery/frame), TCP has no kernel retransmission timer or window (caller-paced per comments), no DNS resolver, no `fstat`/`lstat` numbers, no CI configuration, no hardware PASS evidence.
+
+Next: diagnose the `-smp 4` post-DEASSERT stall before any further P0 work.

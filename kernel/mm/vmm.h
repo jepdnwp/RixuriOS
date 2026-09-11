@@ -27,6 +27,17 @@ int vmm_map_page_in_pml4(uint64_t pml4_phys,uint64_t virtual_address,uint64_t ph
 int vmm_unmap_page_in_pml4(uint64_t pml4_phys,uint64_t virtual_address);
 int vmm_map_page(uint64_t virtual_address,uint64_t physical_address,uint64_t flags);
 void vmm_unmap_page(uint64_t virtual_address);
+/* Supervisor-uncached MMIO mapping for device drivers. vmm_map_page targets
+ * the CURRENT address space, which is a user root inside syscalls/IRQs, so
+ * it must never be used for device MMIO reached from those contexts (the
+ * entries would pollute user tables and trip the validator). This maps into
+ * the KERNEL PML4 and borrows the slot into the current tree when it
+ * differs, so the mapping is usable immediately under any CR3. Identity
+ * VA==phys is kept when the range sits in a kernel-shared PML4 slot;
+ * otherwise a window VA in the shared MMIO slot is assigned (deduped per
+ * phys range). Returns the usable VA (phys intra-page offset preserved),
+ * or 0 on failure. Single-CPU only (no lock); teardown never unmaps. */
+uint64_t vmm_map_mmio(uint64_t physical_address,uint64_t size);
 uint64_t vmm_translate(uint64_t virtual_address);
 uint64_t vmm_query_flags(uint64_t virtual_address);
 /* CR3-switch diagnostics (CR3-independent: use phys window, never current CR3).

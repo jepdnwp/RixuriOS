@@ -5,6 +5,7 @@
 .type x86_enter_user,@function
 x86_enter_user:
     cli
+    cld
     pushq %rdi
     pushq %rsi
     pushq %rdx
@@ -14,21 +15,12 @@ x86_enter_user:
     popq %rsi
     popq %rdi
 
-    /* LRETQ changes CS/SS but does not reload DS/ES.  Leaving the kernel
+    /* IRETQ does not reload DS/ES.  Leaving the kernel
        data selector cached here makes the first CPL3 data access fault on
        real CPUs.  Load the user data selector while still at CPL0. */
     movw $0x23,%ax
     movw %ax,%ds
     movw %ax,%es
-
-    /* Build the far-return frame in shared kernel .bss rather than on the
-       current task stack.  After CR3 changes, the CPU must read this frame
-       using the new address space; a task stack mapping is not a safe place
-       for that read on physical hardware. */
-    movq %rsi,x86_user_entry_frame+0(%rip)
-    movq $0x1b,x86_user_entry_frame+8(%rip)
-    movq %rdx,x86_user_entry_frame+16(%rip)
-    movq $0x23,x86_user_entry_frame+24(%rip)
 
     pushq %rdi
     pushq %rsi
@@ -39,27 +31,50 @@ x86_enter_user:
     popq %rsi
     popq %rdi
 
+    /* Build the IRETQ frame on the current task stack, not in a shared
+       32-byte .bss slot.  The task stack lives in kernel .bss (PML4[0]
+       identity, shared into every user address space), so it stays mapped
+       across MOV CR3, while a tiny .bss frame overflows on any NMI in the
+       MOV CR3 -> far-return window (real ASUS/AMD boards deliver SMIs/NMIs
+       where QEMU delivers none).  IRETQ (not LRETQ) loads a controlled
+       RFLAGS.  IF stays CLEAR here by design: a pending physical IRQ
+       (PIT/keyboard, certain on real HW) must not fire before the first
+       synchronous int 0x80, otherwise it races TSS.RSP0/IRETQ delivery.
+       The first syscall return sets IF (see syscall_dispatch). */
+    pushq $0x23
+    pushq %rdx
+    pushq $0x002
+    pushq $0x1b
+    pushq %rsi
     movq %rdi,%cr3
-    leaq x86_user_entry_frame(%rip),%rsp
-    lretq
+    /* .bss is in shared PML4[0]; safe after CR3 while IF=0.  Sync the SW
+       tracker immediately so a fault on the first user instruction walks
+       the target tables instead of the stale kernel root. */
+    movq %rdi,current_pml4_phys(%rip)
+    /* C marker: CR3 is loaded and the tracker is in sync; only iretq
+       remains. The framebuffer is mapped under every CR3, so this line is
+       safe to emit here. If C never appears, the freeze is inside the
+       mov-cr3/store above; if C appears with nothing after, iretq or the
+       first user instruction is at fault (watch for FAULT: lines). */
+    pushq %rdi
+    leaq .Luser_post_cr3(%rip),%rdi
+    call kernel_log
+    popq %rdi
+    iretq
 
 .section .rodata
 .Luser_pre_cr3:
     .asciz "BOOT: USER ENTRY A pre-cr3\r\n"
 .Luser_frame_ready:
-    .asciz "BOOT: USER ENTRY B lret-frame-ready\r\n"
-
-.section .bss
-.align 16
-.type x86_user_entry_frame,@object
-.size x86_user_entry_frame,32
-x86_user_entry_frame:
-    .zero 32
+    .asciz "BOOT: USER ENTRY B iret-frame-ready\r\n"
+.Luser_post_cr3:
+    .asciz "BOOT: USER ENTRY C post-cr3\r\n"
 
 .global x86_enter_user_return
 .type x86_enter_user_return,@function
 x86_enter_user_return:
     cli
+    cld
     movq %rdi,%cr3
     movq %rdi,current_pml4_phys(%rip)
     movw $0x23,%ax
@@ -81,6 +96,7 @@ x86_enter_user_return:
 .type x86_enter_user_context,@function
 x86_enter_user_context:
     cli
+    cld
     movq %rdi,%cr3
     movq %rdi,current_pml4_phys(%rip)
     pushq $0x23

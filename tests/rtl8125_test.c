@@ -35,6 +35,10 @@ int vmm_map_page(uint64_t virtual_address, uint64_t physical_address,
     (void)virtual_address; (void)physical_address; (void)flags;
     return -1;
 }
+uint64_t vmm_map_mmio(uint64_t physical_address, uint64_t size) {
+    (void)physical_address; (void)size;
+    return 0;
+}
 
 int main(void) {
     rix_pci_device_t device = {0};

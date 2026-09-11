@@ -45,7 +45,7 @@ static rix_nvme_controller_t controllers[NVME_MAX_CONTROLLERS];
 static nvme_block_ctx_t block_ctx[RIX_NVME_MAX_NAMESPACES];
 static rix_block_device_t block_devices[RIX_NVME_MAX_NAMESPACES];
 static size_t count;
-static volatile uint32_t *map_regs(uint64_t bar){uint64_t page=bar&~0xFFFULL;for(uint64_t offset=0;offset<0x2000;offset+=0x1000)if(vmm_map_page(page+offset,page+offset,RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE|RIXURI_PTE_NX|RIXURI_PTE_PWT|RIXURI_PTE_PCD)!=0)return NULL;return(volatile uint32_t*)(uintptr_t)page;}
+static volatile uint32_t *map_regs(uint64_t bar){uint64_t va=vmm_map_mmio(bar&~0xFFFULL,0x2000);if(!va)return NULL;return(volatile uint32_t*)(uintptr_t)va;}
 static uint64_t bar_address(const rix_pci_device_t*d){uint32_t lo=d->bars[0];if(lo&1u)return 0;uint64_t base=(uint64_t)(lo&NVME_BAR_MEM_MASK);if(((lo>>1)&3u)==2u)base|=(uint64_t)d->bars[1]<<32;return base;}
 static void zero_page(uint64_t phys){volatile uint8_t*p=(volatile uint8_t*)(uintptr_t)phys;for(size_t i=0;i<NVME_PAGE_SIZE;i++)p[i]=0;}
 static void copy_trimmed(char*dst,size_t cap,const volatile uint8_t*src,size_t len){if(!dst||cap<1)return;size_t n=len<cap-1?len:cap-1;while(n&&src[n-1]==' ')n--;for(size_t i=0;i<n;i++)dst[i]=(src[i]>=32&&src[i]<127)?(char)src[i]:'?';dst[n]=0;}

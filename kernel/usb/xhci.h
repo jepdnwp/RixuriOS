@@ -6,6 +6,7 @@
 typedef struct {
     uint8_t bus, device, function;
     uint64_t bar0;
+    uint64_t mmio_va;
     uint8_t cap_length, max_slots, max_intrs, max_ports;
     uint32_t hci_version, hcc_params1, usbcmd, usbsts;
     uint64_t dcbaa_phys, cmd_ring_phys, event_ring_phys, erst_phys;

@@ -24,8 +24,9 @@ int ioapic_init(void){
         const acpi_ioapic_info_t *info=acpi_ioapic(i);
         if(!info||!info->address)continue;
         uint64_t page=info->address&~0xfffULL;
-        if(vmm_map_page(page,page,RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE|RIXURI_PTE_NX|RIXURI_PTE_PWT|RIXURI_PTE_PCD)!=0)continue;
-        ioapic_state_t*c=&chips[chip_count++];c->base=(volatile uint32_t*)(uintptr_t)page;c->gsi_base=info->gsi_base;
+        uint64_t vpage=vmm_map_mmio(page,0x1000ULL);
+        if(!vpage)continue;
+        ioapic_state_t*c=&chips[chip_count++];c->base=(volatile uint32_t*)(uintptr_t)(vpage+(info->address-page));c->gsi_base=info->gsi_base;
         c->max_redir=((rd(c,1)>>16)&0xffu)+1u;
         for(uint32_t r=0;r<c->max_redir;r++){wr(c,REDIR_BASE+r*2,MASK|0xff);wr(c,REDIR_BASE+r*2+1,0);}
     }

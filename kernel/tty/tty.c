@@ -1,5 +1,8 @@
 #include "tty.h"
 #include "font_psf.h"
+#ifndef RIX_HOST_TEST
+#include "../mm/vmm.h"
+#endif
 
 #ifdef RIX_HOST_TEST
 const unsigned char _binary_assets_fonts_terminus_12x24_psf_start[] = {0};
@@ -398,6 +401,29 @@ void tty_set_framebuffer(uint64_t base,uint32_t size,uint32_t width,uint32_t hei
         return;
     }
     framebuffer.pixels=(volatile uint32_t *)(uintptr_t)base; framebuffer.size=size;
+    /* The console must stay writable under ANY CR3: exception diagnostics
+     * and the first user syscalls run on user roots. Ranges in
+     * kernel-shared PML4 slots are already visible everywhere via the
+     * identity map; anything else (a dGPU VRAM BAR above 512 GiB lands in
+     * the private user-image slot) would nested-fault on first touch and
+     * freeze the machine with zero output. Remap those through the shared
+     * MMIO window instead. */
+#ifndef RIX_HOST_TEST
+    {
+        unsigned idx=(unsigned)((base>>39)&0x1FFu);
+        int shared=idx==0||idx==2||idx==3||idx>=256;
+        if(!shared){
+            uint64_t mapped=vmm_map_mmio(base,size);
+            if(!mapped){
+                framebuffer.pixels=0;
+                framebuffer.size=framebuffer.width=framebuffer.height=framebuffer.pitch=0;
+                framebuffer.columns=framebuffer.rows=0;
+                return;
+            }
+            framebuffer.pixels=(volatile uint32_t *)(uintptr_t)mapped;
+        }
+    }
+#endif
     framebuffer.width=width; framebuffer.height=height; framebuffer.pitch=pitch;
     framebuffer.format=format;
     uint32_t cell_width=(psf&&psf->width)?psf->width:8u;
@@ -463,12 +489,42 @@ static int echo_bytes(rix_tty_t *t, const uint8_t *data, size_t n) {
     return tty_output((unsigned)(t - ttys), data, n, &written) == 0 ? 0 : -3;
 }
 
-static void tty_edit_redraw(rix_tty_t *t) {
-    uint8_t s[2u + RIX_TTY_LINE_MAX + 3u * RIX_TTY_LINE_MAX]; size_t n=0;
-    s[n++]='\r'; s[n++]=0x1b; s[n++]='['; s[n++]='2'; s[n++]='K';
-    for(uint16_t i=0;i<t->edit_length;++i) s[n++]=(uint8_t)t->edit_line[i];
-    for(uint16_t i=t->edit_cursor;i<t->edit_length;++i){s[n++]=0x1b;s[n++]='[';s[n++]='D';}
-    size_t written=0; (void)tty_output((unsigned)(t-ttys),s,n,&written);
+/* Incremental canonical echo.  The shell prompt printed before input
+ * starts is not part of edit_line, so a full-line redraw ("\r ESC[2K" +
+ * buffer) wipes the prompt on every keystroke.  Echo only the cells that
+ * changed instead; plain end-of-line typing therefore echoes exactly the
+ * typed bytes. */
+static void tty_echo_left(rix_tty_t *t, uint16_t count) {
+    if (!count) return;
+    char seq[8]; size_t n = 0;
+    seq[n++] = 0x1b; seq[n++] = '[';
+    char digits[6]; size_t nd = 0; uint16_t v = count;
+    while (v) { digits[nd++] = (char)('0' + v % 10u); v /= 10u; }
+    while (nd) seq[n++] = digits[--nd];
+    seq[n++] = 'D';
+    size_t written = 0;
+    (void)tty_output((unsigned)(t - ttys), seq, n, &written);
+}
+static void tty_edit_echo_insert(rix_tty_t *t, uint16_t from) {
+    /* Re-emit edit_line[from..length) (new byte plus shifted tail), then
+     * step back over the tail so the cursor stays after the new byte. */
+    size_t written = 0;
+    if (from < t->edit_length)
+        (void)tty_output((unsigned)(t - ttys), t->edit_line + from,
+                         (size_t)(t->edit_length - from), &written);
+    tty_echo_left(t, (uint16_t)(t->edit_length - t->edit_cursor));
+}
+static void tty_edit_echo_erase(rix_tty_t *t, uint16_t from) {
+    /* Cell `from` was deleted: back up onto it, re-emit the shifted tail
+     * plus one clearing space, then step back into place. */
+    static const uint8_t back = 8u, space = ' ';
+    size_t written = 0;
+    (void)tty_output((unsigned)(t - ttys), &back, 1u, &written);
+    if (from < t->edit_length)
+        (void)tty_output((unsigned)(t - ttys), t->edit_line + from,
+                         (size_t)(t->edit_length - from), &written);
+    (void)tty_output((unsigned)(t - ttys), &space, 1u, &written);
+    tty_echo_left(t, (uint16_t)(t->edit_length - t->edit_cursor + 1u));
 }
 static void tty_edit_history_save(rix_tty_t *t) {
     if(!t->edit_length)return;
@@ -478,9 +534,19 @@ static void tty_edit_history_save(rix_tty_t *t) {
 }
 static void tty_edit_load(rix_tty_t *t,uint8_t direction) {
     if(!t->history_count)return;
+    uint16_t old_cursor=t->edit_cursor;
     if(direction==RIX_TTY_KEY_UP){if(t->history_cursor)--t->history_cursor;}else if(t->history_cursor<t->history_count)++t->history_cursor;
     if(t->history_cursor==t->history_count)t->edit_length=0;else{uint16_t i=0;while(i+1u<RIX_TTY_LINE_MAX&&t->history[t->history_cursor][i]){t->edit_line[i]=t->history[t->history_cursor][i];++i;}t->edit_length=i;}
-    t->edit_cursor=t->edit_length;tty_edit_redraw(t);
+    t->edit_cursor=t->edit_length;
+    if (!t->echo) return;
+    /* Step back over the old input, erase to end-of-line (the prompt left
+     * of the cursor survives), then write the recalled buffer. */
+    tty_echo_left(t, old_cursor);
+    {static const uint8_t el[] = {0x1b, '[', 'K'}; size_t written = 0;
+     (void)tty_output((unsigned)(t - ttys), el, sizeof(el), &written);}
+    if (t->edit_length) {size_t written = 0;
+        (void)tty_output((unsigned)(t - ttys), t->edit_line,
+                         t->edit_length, &written);}
 }
 
 int tty_input(unsigned id, uint8_t ch) {
@@ -490,7 +556,12 @@ int tty_input(unsigned id, uint8_t ch) {
         return tty_control_signal(t, ch);
     }
     if (ch >= RIX_TTY_KEY_UP && ch <= RIX_TTY_KEY_RIGHT) {
-        if (t->canonical) { if(ch==RIX_TTY_KEY_UP||ch==RIX_TTY_KEY_DOWN)tty_edit_load(t,ch);else if(ch==RIX_TTY_KEY_LEFT&&t->edit_cursor){--t->edit_cursor;tty_edit_redraw(t);}else if(ch==RIX_TTY_KEY_RIGHT&&t->edit_cursor<t->edit_length){++t->edit_cursor;tty_edit_redraw(t);} return 0; }
+        if (t->canonical) {
+            if(ch==RIX_TTY_KEY_UP||ch==RIX_TTY_KEY_DOWN)tty_edit_load(t,ch);
+            else if(ch==RIX_TTY_KEY_LEFT&&t->edit_cursor){--t->edit_cursor;if(t->echo){static const uint8_t left[]={0x1b,'[','D'};size_t written=0;(void)tty_output(id,left,sizeof(left),&written);}}
+            else if(ch==RIX_TTY_KEY_RIGHT&&t->edit_cursor<t->edit_length){++t->edit_cursor;if(t->echo){static const uint8_t right[]={0x1b,'[','C'};size_t written=0;(void)tty_output(id,right,sizeof(right),&written);}}
+            return 0;
+        }
         if (t->count == RIX_TTY_INPUT) return -2;
         t->input[t->tail] = ch;
         t->tail = (t->tail + 1u) % RIX_TTY_INPUT;
@@ -498,16 +569,16 @@ int tty_input(unsigned id, uint8_t ch) {
         return 0;
     }
     if (t->canonical && (ch == 8u || ch == 127u)) {
-        if(t->edit_cursor){for(uint16_t i=t->edit_cursor;i<t->edit_length;++i)t->edit_line[i-1u]=t->edit_line[i];--t->edit_cursor;--t->edit_length;t->line_chars=t->edit_length;if(t->echo)tty_edit_redraw(t);}
+        if(t->edit_cursor){uint16_t from=(uint16_t)(t->edit_cursor-1u);for(uint16_t i=t->edit_cursor;i<t->edit_length;++i)t->edit_line[i-1u]=t->edit_line[i];--t->edit_cursor;--t->edit_length;t->line_chars=t->edit_length;if(t->echo)tty_edit_echo_erase(t,from);}
         return 0;
     }
     if(t->canonical&&(ch=='\n'||ch=='\r')){
         if((size_t)t->count+t->edit_length+1u>RIX_TTY_INPUT)return -2;
         for(uint16_t i=0;i<t->edit_length;++i){t->input[t->tail]= (uint8_t)t->edit_line[i];t->tail=(t->tail+1u)%RIX_TTY_INPUT;++t->count;}
         t->input[t->tail]='\n';t->tail=(t->tail+1u)%RIX_TTY_INPUT;++t->count;++t->canonical_ready;tty_edit_history_save(t);t->edit_length=t->edit_cursor=t->line_chars=0;
-        if(t->echo){static const uint8_t crlf[]={'\r','\n'};return echo_bytes(t,crlf,2u);}return 0;
+        if(t->echo){if(ch=='\r'){static const uint8_t crlf[]={'\r','\n'};return echo_bytes(t,crlf,2u);}return echo_bytes(t,&ch,1u);}return 0;
     }
-    if(t->canonical){if(ch<0x20u||ch==0x7fu||t->edit_length+1u>=RIX_TTY_LINE_MAX)return 0;for(uint16_t i=t->edit_length;i>t->edit_cursor;--i)t->edit_line[i]=t->edit_line[i-1u];t->edit_line[t->edit_cursor++]=(char)ch;++t->edit_length;t->line_chars=t->edit_length;if(t->echo)tty_edit_redraw(t);return 0;}
+    if(t->canonical){if(ch<0x20u||ch==0x7fu||t->edit_length+1u>=RIX_TTY_LINE_MAX)return 0;uint16_t from=t->edit_cursor;for(uint16_t i=t->edit_length;i>t->edit_cursor;--i)t->edit_line[i]=t->edit_line[i-1u];t->edit_line[t->edit_cursor++]=(char)ch;++t->edit_length;t->line_chars=t->edit_length;if(t->echo)tty_edit_echo_insert(t,from);return 0;}
     if (t->count == RIX_TTY_INPUT) return -2;
     t->input[t->tail] = ch;
     t->tail = (t->tail + 1u) % RIX_TTY_INPUT;

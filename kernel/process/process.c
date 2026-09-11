@@ -317,7 +317,7 @@ int process_activate(pid_t pid){if(pid==0){uint64_t kb=vmm_kernel_pml4();cr3trac
  * level. Diagnostic only; never ship enabled. */
 #define RIX_DEBUG_CR3_RELOAD_SELF 0
 #define RIX_DEFER_USER_CR3_TO_ENTRY 1
-{uint64_t target=p->address_space.pml4_phys;cr3trace_push(1,(uint64_t)pid,target,read_cr3_hw());if(vmm_validate_pml4(target)!=0){kernel_log("DEBUG: process_activate REFUSED invalid target CR3\r\n");serial_drain();return -1;}int sc=address_space_sync_kernel(&p->address_space);{static unsigned n=0;if(n<2||sc>0){kernel_log("DEBUG: kernel sync slots=");if(sc<0){kernel_log("-1");}else{kernel_log_dec((uint64_t)sc);}kernel_log("\r\n");serial_drain();if(n<2){n++;}}}
+ {uint64_t target=p->address_space.pml4_phys;cr3trace_push(1,(uint64_t)pid,target,read_cr3_hw());int pre_vr=vmm_validate_pml4(target);if(pre_vr!=0){kernel_log("DEBUG: process_activate REFUSED invalid target CR3 pid=");kernel_log_dec((uint64_t)pid);kernel_log(" tgt=");kernel_log_hex(target);kernel_log(" reason=");if(pre_vr<0)kernel_log("-");kernel_log_dec((uint64_t)(pre_vr<0?-pre_vr:pre_vr));kernel_log("\r\n");serial_drain();return -1;}int sc=address_space_sync_kernel(&p->address_space);{static unsigned n=0;if(n<2||sc>0){kernel_log("DEBUG: kernel sync slots=");if(sc<0){kernel_log("-1");}else{kernel_log_dec((uint64_t)sc);}kernel_log("\r\n");serial_drain();if(n<2){n++;}}}
  /* Volatile snapshot: every later use re-reads the same stack slot, so no
   * spill/reload, ordering, or stale-register theory can survive review.
   * Cost is a few stack accesses on a proven stack. */

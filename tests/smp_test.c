@@ -201,7 +201,10 @@ int main(void) {
     assert(map_calls == 3 && map_va == 0xA000ULL && map_pa == 0xA000ULL);
     assert((map_flags & RIXURI_PTE_PRESENT) != 0);
     assert((map_flags & RIXURI_PTE_WRITE) != 0);
-    assert((map_flags & RIXURI_PTE_NX) != 0);
+    /* The trampoline executes from this identity page (real mode has no NX;
+     * NX here would fault the long-mode fallback). Production smp.c maps it
+     * PRESENT|WRITE on purpose; the harness pins that contract. */
+    assert((map_flags & RIXURI_PTE_NX) == 0);
     assert((map_flags & RIXURI_PTE_USER) == 0);
     assert(smp_online_count() == 1);
     assert(smp_cpu(1)->state == SMP_CPU_PRESENT && smp_cpu(2)->state == SMP_CPU_PRESENT);

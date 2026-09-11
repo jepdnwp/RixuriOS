@@ -27,9 +27,9 @@ static int table_base(const rix_pci_device_t*d,uint8_t bir,uint32_t off,uint64_t
     if(pci_bar_size(d,bir,&size,&b,&io)!=0||io||!size)return -2;
     if((uint64_t)off>=size||size-(uint64_t)off<MSIX_ENTRY_SIZE)return -3;
     uint64_t page=(b+(uint64_t)off)&~0xfffULL;
-    if(vmm_map_page(page,page,RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE|RIXURI_PTE_NX|
-                    RIXURI_PTE_PWT|RIXURI_PTE_PCD)!=0)return -4;
-    *base=page+(b+(uint64_t)off-page);
+    uint64_t vpage=vmm_map_mmio(page,0x1000ULL);
+    if(!vpage)return -4;
+    *base=vpage+(b+(uint64_t)off-page);
     return 0;
 }
 int pci_msix_set_entry(const rix_pci_device_t*d,unsigned vector,uint64_t address,uint32_t data,int masked){

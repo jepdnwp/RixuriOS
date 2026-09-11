@@ -8,12 +8,9 @@ static rix_e1000_t controller;
 static volatile uint32_t *map_regs(uint64_t base, uint64_t size) {
     if (!base || size < 0x6000u || size > 0x1000000ULL ||
         base > UINT64_MAX - (size - 1u)) return 0;
-    uint64_t mapped = ((base & 0xfffULL) + size + 0xfffu) & ~0xfffULL;
-    for (uint64_t offset = 0; offset < mapped; offset += 0x1000u)
-        if (vmm_map_page((base & ~0xfffULL) + offset, (base & ~0xfffULL) + offset,
-                         RIXURI_PTE_PRESENT | RIXURI_PTE_WRITE | RIXURI_PTE_NX |
-                         RIXURI_PTE_PWT | RIXURI_PTE_PCD) != 0) return 0;
-    return (volatile uint32_t *)(uintptr_t)(base & ~0xfffULL);
+    uint64_t va = vmm_map_mmio(base, size);
+    if (!va) return 0;
+    return (volatile uint32_t *)(uintptr_t)va;
 }
 
 static uint64_t dma_page(void) {
@@ -49,8 +46,8 @@ int rix_e1000_init_rings(rix_e1000_t *driver) {
 }
 
 int rix_e1000_configure(rix_e1000_t *driver) {
-    if (!driver || !driver->present || !driver->mmio_base) return -1;
-    volatile uint32_t *regs = (volatile uint32_t *)(uintptr_t)driver->mmio_base;
+    if (!driver || !driver->present || !driver->mmio) return -1;
+    volatile uint32_t *regs = driver->mmio;
     regs[RIX_E1000_REG_CTRL / 4] = 0x04000000u;
     for (volatile unsigned wait = 0; wait < 100000u; ++wait) {
         if (!(regs[RIX_E1000_REG_CTRL / 4] & 0x04000000u)) break;
@@ -142,6 +139,7 @@ int rix_e1000_init(void) {
         controller.pci = device;
         controller.mmio_base = base;
         controller.mmio_size = size;
+        controller.mmio = regs;
         controller.present = 1;
         if (rix_e1000_init_rings(&controller) != 0 ||
             rix_e1000_configure(&controller) != 0) {
@@ -172,7 +170,7 @@ int rix_e1000_poll_tx(rix_e1000_t *driver) {
     if (!driver || !driver->present || !driver->tx_ring_phys) return -1;
     volatile rix_e1000_descriptor_t *descriptors =
         (volatile rix_e1000_descriptor_t *)(uintptr_t)driver->tx_ring_phys;
-    volatile uint32_t *regs = (volatile uint32_t *)(uintptr_t)driver->mmio_base;
+    volatile uint32_t *regs = driver->mmio;
     uint16_t hardware_head = (uint16_t)regs[RIX_E1000_REG_TDH / 4];
     int completed = 0;
     while (driver->tx_head != hardware_head) {
@@ -204,7 +202,7 @@ int rix_e1000_transmit(rix_e1000_t *driver, const void *data, size_t length) {
         .address = driver->tx_buffers[slot], .length = (uint16_t)length,
         .command = descriptors[slot].command, .status = 0
     };
-    volatile uint32_t *regs = (volatile uint32_t *)(uintptr_t)driver->mmio_base;
+    volatile uint32_t *regs = driver->mmio;
     driver->tx_tail = (uint16_t)((slot + 1u) % RIX_E1000_RING_SIZE);
     regs[RIX_E1000_REG_TDT / 4] = driver->tx_tail;
     return (int)length;
@@ -239,7 +237,7 @@ int rix_e1000_receive(rix_e1000_t *driver, void *data, size_t capacity, size_t *
     driver->rx_ring[slot].status = 0;
     driver->rx_ring[slot].length = RIX_E1000_RX_BUFFER_SIZE;
     driver->rx_head = (uint16_t)((slot + 1u) % RIX_E1000_RING_SIZE);
-    volatile uint32_t *regs = (volatile uint32_t *)(uintptr_t)driver->mmio_base;
+    volatile uint32_t *regs = driver->mmio;
     regs[RIX_E1000_REG_RDT / 4] = slot;
     *length = received;
     return 1;

@@ -55,6 +55,7 @@ typedef struct {
     const rix_pci_device_t *pci;
     uint64_t mmio_base;
     uint64_t mmio_size;
+    volatile uint32_t *mmio;
     uint8_t mac[6];
     uint8_t present;
     uint8_t link_up;

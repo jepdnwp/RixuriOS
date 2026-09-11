@@ -1,4 +1,5 @@
 #include "idt.h"
+#include "tss.h"
 #include "kernel.h"
 #include "../../serial.h"
 #include "../../mm/ptmap.h"
@@ -53,15 +54,57 @@ static void page_fault_diagnostics(const struct interrupt_frame *frame){
     fault_entry("  PML4E=",pml4e);fault_entry("  PDPTE=",pdpte);fault_entry("  PDE=",pde);fault_entry("  PTE=",pte);
     kernel_log("  physical_page=");kernel_log_hex((pte?pte:pde?pde:pdpte?pdpte:pml4e)&~0xfffULL);kernel_log("\r\n");
 }
-void x86_exception_dispatch(const struct interrupt_frame *frame){static volatile unsigned in_fault=0;if(in_fault){cli();for(;;)__asm__ volatile("hlt");}in_fault=1;if(frame){if(frame->vector==14)page_fault_diagnostics(frame);else{kernel_log("CPU exception vector=");kernel_log_dec(frame->vector);kernel_log(" error=");kernel_log_hex(frame->error);kernel_log(" rip=");kernel_log_hex(frame->rip);kernel_log("\r\n");}kernel_log(" cs=");kernel_log_hex(frame->cs);kernel_log(" rflags=");kernel_log_hex(frame->rflags);kernel_log(" rsp=");kernel_log_hex(frame->rsp);kernel_log(" ss=");kernel_log_hex(frame->ss);kernel_log(" cr3hw=");kernel_log_hex(read_cr3_hw());kernel_log(" cr3sw=");kernel_log_hex(vmm_current_pml4());kernel_log("\r\n");cr3trace_dump();}serial_drain();cli();for(;;)__asm__ volatile("hlt");}
+void scheduler_dump_states(void);
+/* HW fault forensics: runs on the IST#1 stack, so it stays usable even when
+ * the faulting stack pointer itself is corrupt.  Every probe is a plain
+ * read; a probe of an unmapped address raises a nested fault which the
+ * in_fault guard turns into a halt (earlier lines are preserved).  Order is
+ * deliberate: safe .bss reads first, fault-RSP stack second, fault-RIP
+ * bytes last. */
+static void fault_hex_byte(uint8_t v){static const char d[]="0123456789abcdef";char c[2];c[0]=d[(v>>4)&0xFu];c[1]=d[v&0xFu];kernel_log_n(c,2);}
+static void fault_forensics(const struct interrupt_frame *frame){
+    const x86_tss_t *tss=tss_current();
+    kernel_log("FAULT: rsp0=");kernel_log_hex(tss?tss->rsp0:0);kernel_log("\r\n");
+    scheduler_dump_states();
+    /* At ISR entry RSP = fault_RSP - 16 (synthetic vector+error) - 120
+     * (saved regs); the dispatch frame sits at RSP+120.  With IST the CPU
+     * always pushes SS:RSP, so frame->rsp is meaningful for kernel faults
+     * too (the pre-fault kernel RSP).  For user faults the interesting
+     * kernel stack is the RSP0 trap stack, not the IST area: dump that.
+     * A wild base is only ever READ; an unmapped read nested-faults into
+     * the in_fault halt with earlier lines preserved. */
+    uint64_t fault_rsp;
+    if(frame->cs==0x1bu&&tss&&tss->rsp0)fault_rsp=tss->rsp0>256u?tss->rsp0-256u:0;
+    else if(frame->cs!=0x1bu&&frame->rsp>64u)fault_rsp=frame->rsp-64u;
+    else fault_rsp=(uint64_t)(uintptr_t)frame+16u;
+    kernel_log("FAULT: dump base=");kernel_log_hex(fault_rsp);kernel_log("\r\n");
+    for(unsigned i=0;fault_rsp&&i<24u;i++){
+        uint64_t addr=fault_rsp+(uint64_t)i*8u;
+        /* Stay inside the low-half canonical range; anything else would
+         * nested-fault before printing a single row. */
+        if(addr>=(1ULL<<47))break;
+        kernel_log("STK+");fault_hex_byte((uint8_t)(i*8u));kernel_log("=");
+        kernel_log_hex(*(volatile uint64_t*)(uintptr_t)addr);kernel_log("\r\n");
+    }
+    uint64_t rip=frame?frame->rip:0;
+    if(rip&&rip<(1ULL<<47)){
+        kernel_log("FAULT: bytes@rip=");
+        for(unsigned i=0;i<16u;i++)fault_hex_byte(((volatile uint8_t*)(uintptr_t)rip)[i]);
+        kernel_log("\r\n");
+    }
+}
+void x86_exception_dispatch(const struct interrupt_frame *frame){static volatile unsigned in_fault=0;__asm__ volatile("outb %0,%1"::"a"((uint8_t)(frame?frame->vector:0xFFu)),"Nd"((uint16_t)0x80u));if(in_fault){cli();for(;;)__asm__ volatile("hlt");}in_fault=1;if(frame){if(frame->vector==14)page_fault_diagnostics(frame);else{kernel_log("CPU exception vector=");kernel_log_dec(frame->vector);kernel_log(" error=");kernel_log_hex(frame->error);kernel_log(" rip=");kernel_log_hex(frame->rip);kernel_log("\r\n");}kernel_log(" cs=");kernel_log_hex(frame->cs);kernel_log(" rflags=");kernel_log_hex(frame->rflags);kernel_log(" rsp=");kernel_log_hex(frame->rsp);kernel_log(" ss=");kernel_log_hex(frame->ss);kernel_log(" cr3hw=");kernel_log_hex(read_cr3_hw());kernel_log(" cr3sw=");kernel_log_hex(vmm_current_pml4());kernel_log("\r\n");fault_forensics(frame);cr3trace_dump();}serial_drain();cli();for(;;)__asm__ volatile("hlt");}
 void idt_init(void){
     for(unsigned i=0;i<256;i++)set_gate(i,isr_default,0,0x8E);
     void (*exceptions[32])(void)={isr0,isr1,isr2,isr3,isr4,isr5,isr6,isr7,isr8,isr9,isr10,isr11,isr12,isr13,isr14,isr15,isr16,isr17,isr18,isr19,isr20,isr21,isr22,isr23,isr24,isr25,isr26,isr27,isr28,isr29,isr30,isr31};
     void (*irqs[16])(void)={isr32,isr33,isr34,isr35,isr36,isr37,isr38,isr39,isr40,isr41,isr42,isr43,isr44,isr45,isr46,isr47};
     for(unsigned i=0;i<32;i++)set_gate(i,exceptions[i],0,0x8E);
-    /* Use IST#1 for faults involved in CPL3 entry as well as #DF.  A bad
-     * user instruction fetch or TSS.RSP0 transition must be diagnosable on
-     * physical hardware instead of cascading into a silent triple fault. */
+    /* Route every CPU exception through IST#1 (the double-fault stack).
+     * A fault with a corrupt RSP (wild context switch, smashed kernel
+     * stack) must still print diagnostics on physical hardware instead of
+     * double-faulting on the broken stack into a silent triple fault.
+     * IRQs and int 0x80 keep IST=0: they arrive on sane stacks by design. */
+    for(unsigned i=0;i<32;i++)set_gate(i,exceptions[i],1,0x8E);
     set_gate(8,isr8,1,0x8E);
     set_gate(10,isr10,1,0x8E);
     set_gate(11,isr11,1,0x8E);

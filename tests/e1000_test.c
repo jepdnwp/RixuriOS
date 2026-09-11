@@ -22,6 +22,9 @@ int pci_config_write32(uint8_t bus, uint8_t device, uint8_t function,
 int vmm_map_page(uint64_t virtual_address, uint64_t physical_address, uint64_t flags) {
     (void)virtual_address; (void)physical_address; (void)flags; return 0;
 }
+uint64_t vmm_map_mmio(uint64_t physical_address, uint64_t size) {
+    (void)physical_address; (void)size; return 0;
+}
 void serial_write(const char *text) { (void)text; }
 void serial_write_dec(uint64_t value) { (void)value; }
 void serial_write_hex(uint64_t value) { (void)value; }
@@ -53,6 +56,7 @@ int main(void) {
 
     volatile uint32_t mmio[0x6000 / 4] = {0};
     driver.mmio_base = (uint64_t)(uintptr_t)mmio;
+    driver.mmio = mmio;
     mmio[RIX_E1000_REG_STATUS / 4] = 2u;
     dma_page_index = 0;
     assert(rix_e1000_configure(&driver) == 0);
