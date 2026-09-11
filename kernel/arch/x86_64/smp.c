@@ -117,6 +117,17 @@ smp_cpu_state_t smp_cpu_state(size_t index) {
     return *(volatile smp_cpu_state_t *)&smp_map.cpu[index].state;
 }
 
+/* Phase C1: map the calling CPU to its smp_map index via LAPIC ID.
+ * O(n), n<=64: fine for boot/diagnostics; the scheduler fast path will
+ * use a per-CPU register slot in a later phase. -1 when the LAPIC ID is
+ * not in the map (called too early, or firmware topology changed). */
+int smp_cpu_id(void) {
+    uint32_t id = lapic_id();
+    for (size_t i = 0; i < smp_map.count && i < SMP_MAX_CPUS; ++i)
+        if (smp_map.cpu[i].apic_id == id) return (int)i;
+    return -1;
+}
+
 static void gdt_store(uint8_t *g, uint32_t base, uint32_t limit,
                       uint8_t access, uint8_t flags) {
     g[0] = (uint8_t)(limit & 0xFFu);
@@ -175,7 +186,11 @@ int smp_setup_trampoline(uint8_t *page, uint64_t page_phys, uint64_t cr3,
     if (!page || !page_phys || page_phys >= 0x100000ULL || !entry ||
         !size || size > SMP_TRAMP_TEMPLATE_MAX) return -1;
     if (cr3 >= 0x100000000ULL) return -2;
-    if (stack_top <= page_phys || stack_top > page_phys + SMP_TRAMP_STACK_TOP_OFF) return -1;
+    /* Phase C1: stack_top is a per-CPU kernel stack top (see
+     * smp_start_aps), not necessarily inside the trampoline page, so the
+     * contract is nonzero + 8-aligned with the historical -8 bias (jump
+     * entry: AP pushes rbx, then call keeps SysV 16-alignment). */
+    if (!stack_top || (stack_top & 0x7ULL)) return -1;
     const uint8_t *src = (const uint8_t *)smp_trampoline_start;
     for (size_t i = 0; i < size; ++i) page[i] = src[i];
     page[SMP_TRAMP_CRUMB_OFF] = 0;
@@ -312,12 +327,29 @@ int smp_start_aps(void) {
             }
             kernel_log("SMP: AP identity mapped\r\n");
         }
+#define SMP_CPU_STACK_PAGES 4u
         uint8_t *buffer = vmm_phys_ptr(page);
         if (!buffer) {
             kernel_log("SMP: trampoline page not addressable\r\n");
             continue;
         }
-        uint64_t stack_top = page + SMP_TRAMP_STACK_TOP_OFF - 8u;
+        /* Phase C1: dedicated per-CPU kernel stack. The AP previously ran
+         * its C entry on the 4 KiB trampoline page itself; any deep call
+         * chain there risked executing or smashing trampoline bytes. The
+         * stack is supervisor, zeroed, identity-mapped under the kernel
+         * root the AP loads. Failed-AP stacks stay recorded and are never
+         * freed (same policy as trampoline pages). No guard pages yet:
+         * follow-up with the per-CPU scheduler (Phase C/E). */
+        uint64_t cpu_stack = pmm_alloc_pages(SMP_CPU_STACK_PAGES);
+        if (!cpu_stack) {
+            kernel_log("SMP: AP stack alloc failed\r\n");
+            continue;
+        }
+        for (size_t z = 0; z < SMP_CPU_STACK_PAGES * RIXURI_PAGE_SIZE; ++z)
+            ((volatile uint8_t *)(uintptr_t)cpu_stack)[z] = 0;
+        cpu->stack_phys = cpu_stack;
+        uint64_t stack_top =
+            cpu_stack + (uint64_t)SMP_CPU_STACK_PAGES * RIXURI_PAGE_SIZE - 8u;
         if (smp_setup_trampoline(buffer, page, ap_pml4, stack_top,
                                  (uint64_t)(uintptr_t)ap_entry) != 0) {
             kernel_log("SMP: trampoline setup failed\r\n");

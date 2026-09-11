@@ -84,6 +84,8 @@ int smp_start_aps(void);
 void ap_entry(void);
 /* Volatile state read for the BSP poll loop. */
 smp_cpu_state_t smp_cpu_state(size_t index);
+/* Phase C1: calling CPU's smp_map index, or -1 when unknown. */
+int smp_cpu_id(void);
 /* GDT/GDTR builder over a caller buffer (host-testable). */
 int smp_build_gdt(uint8_t *page, uint64_t page_phys);
 /* Assembled template size in bytes. */

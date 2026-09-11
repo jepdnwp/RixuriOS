@@ -736,3 +736,14 @@ Implementation (`kernel/arch/x86_64/smp_trampoline.S`): prot32 sets CR4=MCE|PAE|
 Evidence: `make test` RC=0 (host suite incl. `smp_test`, which adapts via symbols), `make image` RC=0, QEMU `-smp 4` reaches `SMP: online=4`, `KERNEL_READY`, `USER_ENTER`, `SHELL READY` with 0 exceptions, and QEMU-monitor register dumps on a parked AP show `IDT=0x405ba50` (exactly the kernel `idt[]` VMA), `EFER=0xD00` (LME+LMA+NXE), parked in the `ap_entry` hlt loop with IF=0. QEMU `-smp 1` unchanged (SHELL READY, 0 exceptions). CR4 reads did not surface in this QEMU monitor format; the mask executes on the proven R/P/L path (straight-line, pre-paging, cannot fault), and QEMU firmware CR4 (0x20) maps to exactly the BSP value (0x660) under it.
 
 Not claimed: per-CPU TSS/IST (Phase C), IPI ping/pong + shootdown (Phase D), preemptive scheduler (P1), hardware PASS.
+
+
+## 2026-09-11 — P0 Phase C1: per-CPU kernel stacks + smp_cpu_id
+
+Spec: APs ran their whole C entry on the 4 KiB trampoline page itself; `smp_cpu_t.stack_phys` existed but was never populated; no CPU-to-index accessor. Scheduler and trampoline asm deliberately untouched.
+
+Implementation (`kernel/arch/x86_64/smp.{c,h}`): `smp_start_aps` allocates + zeroes 4 pages per AP via `pmm_alloc_pages`, records the base in `stack_phys`, passes `base + 16 KiB - 8` as `stack_top`; alloc failure skips the AP (DEGRADED, never panic). `smp_setup_trampoline` now requires nonzero + 8-aligned `stack_top` instead of confinement to the page. New `smp_cpu_id()` (LAPIC-ID scan, `-1` unknown). Host tests updated to the new contract (stack arena stub, distinctness asserts, cpu_id cases incl. unknown-ID negative) with no production-logic weakening.
+
+Evidence: `make test` RC=0, `make image` RC=0, QEMU `-smp 4` reaches `SMP: online=4`, `SHELL READY` with 0 exceptions, and GDB register reads prove each parked AP's RSP inside its recorded 16 KiB range with `state=ONLINE` (BSP keeps its own stack). QEMU `-smp 1` unchanged (SHELL READY, 0 exceptions).
+
+Not claimed: stack guard pages (follow-up with per-CPU scheduler), per-CPU runqueues/TSS (Phase C/E), IPI/shootdown (Phase D), HW PASS.

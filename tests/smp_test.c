@@ -65,6 +65,15 @@ void *vmm_phys_ptr(uint64_t pa) {
     }
     return 0;
 }
+/* Backing store for the per-CPU stacks smp_start_aps allocates. */
+static uint8_t cpu_stack_arena[16][4096] __attribute__((aligned(4096)));
+static size_t cpu_stack_next;
+uint64_t pmm_alloc_pages(size_t count) {
+    if (count != 4 || cpu_stack_next + 4 > 16) return 0;
+    uint64_t base = (uint64_t)(uintptr_t)&cpu_stack_arena[cpu_stack_next];
+    cpu_stack_next += 4;
+    return base;
+}
 static uint64_t reserved_pages[8];
 static size_t reserved_count;
 int pmm_region_info(uint64_t pa, uint64_t *base, uint64_t *end,
@@ -183,7 +192,12 @@ int main(void) {
     assert(smp_setup_trampoline(0, 0x8000ULL, 0x100000ULL, stack_top, 0x400000ULL) != 0);
     assert(smp_setup_trampoline(page, 0x100000ULL, 0x100000ULL, stack_top, 0x400000ULL) != 0);
     assert(smp_setup_trampoline(page, 0x8000ULL, 0x100000000ULL, stack_top, 0x400000ULL) == -2);
-    assert(smp_setup_trampoline(page, 0x8000ULL, 0x100000ULL, 0x7000ULL, 0x400000ULL) != 0);
+    /* Phase C1 contract: stack_top is a per-CPU kernel stack top, only
+     * nonzero + 8-aligned is required (no longer confined to the page). */
+    assert(smp_setup_trampoline(page, 0x8000ULL, 0x100000ULL, 0, 0x400000ULL) != 0);
+    assert(smp_setup_trampoline(page, 0x8000ULL, 0x100000ULL, 0x7001ULL, 0x400000ULL) != 0);
+    assert(smp_setup_trampoline(page, 0x8000ULL, 0x100000ULL, 0x1C0000ULL - 8u, 0x400000ULL) == 0);
+    assert(smp_setup_trampoline(page, 0x8000ULL, 0x100000ULL, 0x7000ULL, 0) != 0);
     assert(smp_setup_trampoline(page, 0x8000ULL, 0x100000ULL, stack_top, 0) != 0);
 
     stub_cpus[0] = entry(0, 1, 0);
@@ -197,6 +211,14 @@ int main(void) {
     walk_result = 1;
     map_calls = 0;
     assert(smp_discover() == 0 && smp_cpu_count() == 4);
+    /* Phase C1: LAPIC-ID to map-index lookup over the discovered map. */
+    stub_lapic = 0;
+    assert(smp_cpu_id() == 0);
+    stub_lapic = 2;
+    assert(smp_cpu_id() == 2);
+    stub_lapic = 9;
+    assert(smp_cpu_id() == -1);
+    stub_lapic = 0;
     assert(smp_start_aps() == 1);
     assert(map_calls == 3 && map_va == 0xA000ULL && map_pa == 0xA000ULL);
     assert((map_flags & RIXURI_PTE_PRESENT) != 0);
@@ -211,6 +233,10 @@ int main(void) {
     assert(smp_cpu(1)->trampoline_phys == 0x8000ULL);
     assert(smp_cpu(2)->trampoline_phys == 0x9000ULL);
     assert(smp_cpu(3)->trampoline_phys == 0xA000ULL);
+    /* Phase C1: each started AP owns a recorded 16 KiB stack. */
+    assert(smp_cpu(1)->stack_phys != 0);
+    assert(smp_cpu(2)->stack_phys != 0 && smp_cpu(2)->stack_phys != smp_cpu(1)->stack_phys);
+    assert(smp_cpu(3)->stack_phys != 0 && smp_cpu(3)->stack_phys != smp_cpu(2)->stack_phys);
     for (size_t ap = 0; ap < 3; ++ap) {
         uint64_t phys = 0x8000ULL + ap * 0x1000ULL;
         uint8_t *written = vmm_phys_ptr(phys);

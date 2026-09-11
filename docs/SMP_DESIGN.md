@@ -75,6 +75,25 @@ smp_map_t: cpu[64], count, online, bsp_apic, bsp_index
 - D: IPI ping/pong + shootdown counter test, cross-CPU atomic counter.
 - E: 10+ processes across CPUs, no starvation, `preemption_test`.
 
+## Phase C1 (done 2026-09-11): per-CPU stacks + cpu_id
+
+- `smp_start_aps` allocates a zeroed 16 KiB PMM stack per started AP,
+  records the base in `smp_cpu_t.stack_phys` (previously reserved but
+  never populated) and passes `base + 16 KiB - 8` as the trampoline
+  `stack_top`. The AP no longer runs C code on the 4 KiB trampoline page.
+  Alloc failure skips that AP (stays PRESENT, DEGRADED); failed-AP stacks
+  stay recorded and are never freed. No guard pages yet (follow-up with
+  the per-CPU scheduler).
+- `smp_setup_trampoline` stack contract changed accordingly: nonzero +
+  8-aligned is required (no longer confined to the trampoline page).
+- New `smp_cpu_id()`: LAPIC-ID to map-index scan (`-1` when unknown);
+  O(n) is fine for boot/diagnostics, scheduler fast path comes later.
+- Scheduler untouched by design: no runqueues, no behavior change on UP.
+- Acceptance: `-smp 4` reaches `online=4` + shell with 0 exceptions, and
+  GDB shows every parked AP's RSP inside its recorded range
+  (cpu1 `0x107ff0` in `[0x104000,0x108000)`, cpu2 `0x10bff0`,
+  cpu3 `0x10fff0`, all `state=ONLINE`); `-smp 1` unchanged.
+
 ## Non-goals / failure policy
 
 - No CPU hot-unplug until Phase E is stable (OFFLINE is a parked state).
