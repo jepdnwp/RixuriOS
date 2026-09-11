@@ -62,9 +62,9 @@ static rix_usb_interface_info_t xhci_interfaces[RIX_USB_MAX_INTERFACES];
 static rix_usb_endpoint_info_t xhci_endpoints[RIX_USB_MAX_ENDPOINTS];
 
 #define RIX_MAX_KEYBOARDS 4u
-typedef struct { uint8_t used; size_t controller; uint8_t slot; uint8_t endpoint; } keyboard_info_t;
+typedef struct { uint8_t used; size_t controller; uint8_t slot; uint8_t endpoint; uint8_t report_id; uint8_t iface; } keyboard_info_t;
 static keyboard_info_t known_keyboards[RIX_MAX_KEYBOARDS];
-static uint8_t kbd_report_buf[RIX_HID_BOOT_KEYBOARD_REPORT];
+static uint8_t kbd_report_buf[64];
 static int xhci_enumerate_and_configure(size_t controller, const rix_xhci_device_t *device){
  rix_usb_device_descriptor_t usb_device;rix_usb_configuration_info_t configuration;
  size_t interface_count=0,endpoint_count=0;
@@ -94,22 +94,35 @@ static int xhci_enumerate_and_configure(size_t controller, const rix_xhci_device
   rix_hid_report_info_t report_info;
   if(hid_parse_report_descriptor(xhci_hid_report,actual_report,&report_info)!=0)continue;
   if(!report_info.has_keyboard && !report_info.has_mouse)continue;
+  /* HID 1.11 Set_Protocol: 0=boot, 1=report. Prefer report (caller asked 1
+   * before); fall back to boot. Some firmwares stall both — never detach a
+   * working keyboard over this, log and poll anyway. */
   rc=xhci_hid_set_protocol(controller,device->slot_id,interface->number,1u);
-  if(rc!=0)return -9;
+  if(rc!=0)rc=xhci_hid_set_protocol(controller,device->slot_id,interface->number,0u);
+  if(rc!=0){
+   serial_write("xHCI: set-protocol failed slot=");serial_write_dec(device->slot_id);
+   serial_write(" iface=");serial_write_dec(interface->number);serial_write("\r\n");
+  }
   rc=xhci_hid_set_idle(controller,device->slot_id,interface->number,report_info.report_id,0u);
-  if(rc!=0)return -10;
+  if(rc!=0){
+   serial_write("xHCI: set-idle failed slot=");serial_write_dec(device->slot_id);
+   serial_write(" iface=");serial_write_dec(interface->number);serial_write("\r\n");
+  }
   if(report_info.has_keyboard){
    for(size_t k=0;k<RIX_MAX_KEYBOARDS;k++){
     if(!known_keyboards[k].used){
      known_keyboards[k].used=1;known_keyboards[k].controller=controller;
      known_keyboards[k].slot=device->slot_id;
+     known_keyboards[k].report_id=report_info.report_id;
+     known_keyboards[k].iface=interface->number;
      for(size_t e=0;e<endpoint_count;e++){
       if((xhci_endpoints[e].attributes&RIX_USB_EP_TRANSFER_MASK)==RIX_USB_EP_INTERRUPT){
        known_keyboards[k].endpoint=xhci_endpoints[e].address;break;
       }
      }
      serial_write("xHCI: keyboard registered slot=");serial_write_dec(device->slot_id);
-     serial_write(" ep=0x");serial_write_hex(known_keyboards[k].endpoint);serial_write("\r\n");
+     serial_write(" ep=0x");serial_write_hex(known_keyboards[k].endpoint);
+     serial_write(" report-id=");serial_write_dec(report_info.report_id);serial_write("\r\n");
      break;
     }
    }
@@ -184,18 +197,18 @@ static void serial_tty_worker(void *arg){
 }
 static void keyboard_poll_worker(void *arg){
  (void)arg;
- for(;;){
-  ps2_keyboard_poll();
-  for(size_t k=0;k<RIX_MAX_KEYBOARDS;k++){
-   if(!known_keyboards[k].used)continue;
-   uint16_t actual=0;
-   int rc=hid_xhci_keyboard_poll(known_keyboards[k].controller,
-    known_keyboards[k].slot,known_keyboards[k].endpoint,
-    0,kbd_report_buf,sizeof(kbd_report_buf),&actual);
-   (void)rc;
+  for(;;){
+   ps2_keyboard_poll();
+   for(size_t k=0;k<RIX_MAX_KEYBOARDS;k++){
+    if(!known_keyboards[k].used)continue;
+    uint16_t actual=0;
+    int rc=hid_xhci_keyboard_poll_protocol(known_keyboards[k].controller,
+     known_keyboards[k].slot,known_keyboards[k].endpoint,
+     0,known_keyboards[k].report_id,kbd_report_buf,sizeof(kbd_report_buf),&actual);
+    (void)rc;
+   }
+   scheduler_yield();
   }
-  scheduler_yield();
- }
 }
 static void network_poll_worker(void *arg){
  (void)arg;
@@ -279,6 +292,7 @@ void kernel_main(const rixuri_boot_info_t *boot){
   klog_write("BOOT: xHCI begin\r\n");
   if(xhci_init()!=0)panic("xHCI initialization failed");
   klog_write("xHCI: controllers=");klog_write_dec(xhci_controller_count());klog_write("\r\n");
+  xhci_dump_ports();
   klog_write("BOOT: xHCI done\r\n");
  if(pit_init(100)!=0)panic("PIT initialization failed");
  if(rtc_init()!=0)klog_write("RTC: unavailable or non-24-hour mode\r\n");

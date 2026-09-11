@@ -3,6 +3,7 @@
 #include "../mm/vmm.h"
 #include "../mm/pmm.h"
 #include "../serial.h"
+#include "kernel.h"
 #include <stddef.h>
 
 #define XHCI_MAX 4
@@ -654,6 +655,43 @@ static void xhci_clear_port_change(volatile uint32_t *reg) {
     *reg = v;
 }
 
+/* One-time boot inventory: one line per controller plus one line per
+ * connected port with raw PORTSC. kernel_log renders on the framebuffer
+ * console (not just COM1), so this is visible on real hardware without a
+ * serial capture. Compact on purpose: the physical console repaints lines. */
+void xhci_dump_ports(void) {
+    for (size_t ci = 0; ci < count; ++ci) {
+        const rix_xhci_controller_t *c = &controllers[ci];
+        kernel_log("xHCI: ctl=");
+        kernel_log_dec(ci);
+        kernel_log(" ports=");
+        kernel_log_dec(c->max_ports);
+        kernel_log(" slots=");
+        kernel_log_dec(c->max_slots);
+        kernel_log("\r\n");
+        for (uint8_t port = 1; port <= c->max_ports; ++port) {
+            volatile uint8_t *base = (volatile uint8_t *)(uintptr_t)c->mmio_va;
+            volatile uint32_t *reg = (volatile uint32_t *)(base + c->cap_length +
+                XHCI_PORTSC_BASE + (uint32_t)(port - 1u) * XHCI_PORT_STRIDE);
+            uint32_t v = *reg;
+            if ((v & XHCI_PORT_CCS) == 0u) continue;
+            kernel_log("xHCI: ctl=");
+            kernel_log_dec(ci);
+            kernel_log(" port=");
+            kernel_log_dec(port);
+            kernel_log(" PED=");
+            kernel_log_dec((uint64_t)((v & XHCI_PORT_PED) != 0u));
+            kernel_log(" speed=");
+            kernel_log_dec((uint64_t)((v & XHCI_PORT_SPEED_MASK) >> XHCI_PORT_SPEED_SHIFT));
+            kernel_log(" PLS=");
+            kernel_log_dec((uint64_t)((v & XHCI_PORT_PLS_MASK) >> 5));
+            kernel_log(" PORTSC=");
+            kernel_log_hex(v);
+            kernel_log("\r\n");
+        }
+    }
+}
+
 /* USB3 (SuperSpeed) ports must NOT get a Hot Reset (PR) while the link is
  * still training: PR sticks at 1 forever (PORTSC=0x331: CCS=1 PED=0 PR=1
  * PP=1 speed=0 PLS=9 Hot Reset) and the attach times out as error=4.
@@ -957,10 +995,6 @@ int xhci_service_hotplug(size_t controller, rix_xhci_device_t *device, uint8_t *
             if (port_attach_failed[controller][candidate]) continue;
             rix_xhci_port_status_t status;
             if (xhci_port_status(controller, candidate, &status) != 0 || !status.connected) continue;
-            /* Ghost/training link: CCS=1 but no PED and no speed (PORTSC
-             * 0x331 family). No device to address yet; stay quiet and let
-             * training finish instead of erroring every sweep. */
-            if (!status.enabled && status.speed == 0u) continue;
             int occupied = 0;
             for (uint16_t slot_id = 1; slot_id <= c->max_slots; ++slot_id)
                 if (runtimes[controller].slots[slot_id].allocated &&
@@ -971,23 +1005,12 @@ int xhci_service_hotplug(size_t controller, rix_xhci_device_t *device, uint8_t *
         if (!is_connected) {
             /* Physical disconnect: allow a future reconnect to retry. */
             port_attach_failed[controller][port] = 0;
-        } else {
-            rix_xhci_port_status_t st2;
-            if (xhci_port_status(controller, port, &st2) == 0 && st2.connected &&
-                !st2.enabled && st2.speed == 0u) {
-                /* Connect event arrived before the link trained (or ghost
-                 * CCS). Acked already; wait quietly for PED/speed. */
-                volatile uint32_t *preg = port_reg(&controllers[controller], port);
-                if (preg) xhci_clear_port_change(preg);
-                return 0;
-            }
-            if (port_attach_failed[controller][port]) {
-                /* Duplicate connect event for an already-failed port without
-                 * an intervening disconnect: acked already, nothing to do. */
-                volatile uint32_t *preg = port_reg(&controllers[controller], port);
-                if (preg) xhci_clear_port_change(preg);
-                return 0;
-            }
+        } else if (port_attach_failed[controller][port]) {
+            /* Duplicate connect event for an already-failed port without an
+             * intervening disconnect: acked already, nothing to do. */
+            volatile uint32_t *preg = port_reg(&controllers[controller], port);
+            if (preg) xhci_clear_port_change(preg);
+            return 0;
         }
     }
     if (rc <= 0) return rc;

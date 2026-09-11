@@ -33,6 +33,7 @@ size_t xhci_controller_count(void);
 const rix_xhci_controller_t *xhci_controller(size_t index);
 int xhci_port_status(size_t controller, uint8_t port, rix_xhci_port_status_t *out);
 int xhci_reset_port(size_t controller, uint8_t port);
+void xhci_dump_ports(void);
 /* Returns 1 when a port-status-change event was consumed, 0 when none is ready. */
 int xhci_poll_port_status_change(size_t controller, uint8_t *port, uint8_t *connected);
 /* Services one port event: attach/reset/address on connect, disable on disconnect. */
