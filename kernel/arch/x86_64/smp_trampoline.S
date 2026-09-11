@@ -64,6 +64,12 @@ smp_trampoline_prot32:
     movl $0xC0000080,%ecx
     rdmsr
     orl $0x100,%eax
+    /* NXE: firmware leaves EFER.NXE clear on APs while every kernel leaf
+     * carries NX. Without this bit the AP's first NX-marked touch (LAPIC
+     * MMIO in ap_entry) raises #PF(RSVD); the AP still runs on the BIOS
+     * IDT there, so it triple-faults and resets with zero output. The BSP
+     * sets the same bit in vmm_early_init. */
+    orl $0x800,%eax
     wrmsr
     movl %cr0,%eax
     orl $0x80000000,%eax

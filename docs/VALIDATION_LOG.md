@@ -714,3 +714,14 @@ Baseline with the canonical flags (`CROSS=x86_64-linux-gnu- HOST_CC=gcc`):
 - Re-verified against code (not docs): cooperative scheduler only (voluntary yields, `irq.c`), `kfree` is an explicit no-op (`heap.c`), no MMAP path in `syscall.c` (default `-ENOSYS`), static ELF only (no INTERP/DYN in `kernel/elf`), no TLS/FSMSR usage, no futex primitive, signals are mask/pending/take only (`signal.c`, no delivery/frame), TCP has no kernel retransmission timer or window (caller-paced per comments), no DNS resolver, no `fstat`/`lstat` numbers, no CI configuration, no hardware PASS evidence.
 
 Next: diagnose the `-smp 4` post-DEASSERT stall before any further P0 work.
+
+
+## 2026-09-11 — P0 Phase B: AP triple-fault loop root-caused (missing EFER.NXE) and fixed
+
+QEMU `-smp 4` never reached the shell: without `-no-reboot` the machine ran a deterministic reset loop (29 loader runs in 170 s), each cycle printing trampoline crumbs `RPL` right after the first SIPI and then resetting. `qemu -d int,cpu_reset` gave the full chain with zero code changes: the AP raises `#PF e=0008` (RSVD) at `lapic_id`'s LAPIC MMIO read (`CR2=0xFFFF8000FEE00000`, `RIP=lapic_id+12`), because AP `EFER=0x500` (LME+LMA, **NXE clear**) while every kernel leaf carries NX. The AP still runs on the BIOS IDT there (the trampoline never loads IDTR), so the fault cascades `#PF → #GP → #DF → #GP` into a triple fault and system reset — no diagnostic output possible. The BSP, spinning in its bounded ONLINE poll, is killed by the reset; GDB snapshots that showed the AP "stuck" at the MMIO read were the frozen triple-fault state, not a hang.
+
+Fix (`kernel/arch/x86_64/smp_trampoline.S`, 5 bytes): set EFER.NXE (`orl $0x800,%eax`) next to the existing LME setup, mirroring the BSP's `vmm_early_init`. Template grows to 318 bytes, still under `SMP_TRAMP_TEMPLATE_MAX` (0x200); the host test compares template bytes via symbols and adapts with no changes.
+
+Evidence: `make test` RC=0, `make image` RC=0, QEMU `-smp 4` now prints `SMP: cpus=4 online=1` then `AP 1/2/3 online`, `SMP: online=4`, `RIXURI:KERNEL_READY`, `RIXURI:USER_ENTER`, `SHELL READY` with 0 exceptions; QEMU `-smp 1` unchanged (SHELL READY, no exceptions).
+
+Explicitly NOT claimed: APs still run on firmware CR4 (no SMEP/SMAP/PKE normalization — follow-up) and on the BIOS IDT (any future AP fault still triple-faults silently — follow-up with Phase C per-CPU state/IDT). No hardware PASS; nested-TCG AP bring-up is slow (pause calibration), which is expected, not a gate.
