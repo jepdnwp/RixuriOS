@@ -128,6 +128,12 @@ static int xhci_enumerate_and_configure(size_t controller, const rix_xhci_device
 static int terminal_signal_group(uint32_t process_group,unsigned signal){return process_signal_group((pid_t)process_group,signal);}
 static void xhci_hotplug_worker(void *arg){
  (void)arg;
+ /* Per-controller error throttle: parked ports already suppress repeats in
+  * xhci_service_hotplug, but transient errors must not repaint the
+  * framebuffer at scheduler rate. Log on change or every ~2s. */
+ static int last_err[4];
+ static uint64_t last_err_ns[4];
+ static uint8_t last_err_valid[4];
  for(;;){
   for(size_t controller=0;controller<xhci_controller_count();controller++){
    rix_xhci_device_t device;uint8_t connected=0;
@@ -146,8 +152,17 @@ static void xhci_hotplug_worker(void *arg){
     }
    }
    } else if(rc<0){
-   klog_write("xHCI: hotplug service error=");klog_write_dec((uint64_t)(-rc));
-   klog_write(" controller=");klog_write_dec(controller);klog_write("\r\n");
+   int log_it=1;
+   if(controller<4u){
+    uint64_t now=time_monotonic_ns();
+    if(last_err_valid[controller]&&last_err[controller]==rc&&
+       now-last_err_ns[controller]<2000000000ULL)log_it=0;
+    else{last_err[controller]=rc;last_err_ns[controller]=now;last_err_valid[controller]=1;}
+   }
+   if(log_it){
+    klog_write("xHCI: hotplug service error=");klog_write_dec((uint64_t)(-rc));
+    klog_write(" controller=");klog_write_dec(controller);klog_write("\r\n");
+   }
    }
   }
   scheduler_yield();

@@ -30,11 +30,17 @@
 #define XHCI_CAPLENGTH 0x00
 #define XHCI_HCIVERSION 0x02
 #define XHCI_HCSPARAMS1 0x04
+#define XHCI_HCSPARAMS2 0x08
 #define XHCI_HCCPARAMS1 0x10
 #define XHCI_DBOFF 0x14
 #define XHCI_RTSOFF 0x18
-#define XHCI_USBCMD 0x80
-#define XHCI_USBSTS 0x84
+/* Operational-register offsets from the operational base (base+CAPLENGTH).
+ * USBCMD=0x00/USBSTS=0x04 per xHCI 5.4; 0x80/0x84 was a reserved alias that
+ * reads zero on QEMU but wedges real silicon (run/stop never asserted). */
+#define XHCI_USBCMD 0x00
+#define XHCI_USBSTS 0x04
+#define XHCI_PAGESIZE 0x08
+#define XHCI_DNCTRL 0x14
 #define XHCI_CRCR 0x18
 #define XHCI_DCBAAP 0x30
 #define XHCI_CONFIG 0x38
@@ -42,15 +48,35 @@
 #define XHCI_PORT_STRIDE 0x10
 #define XHCI_PORT_CCS (1u << 0)
 #define XHCI_PORT_PED (1u << 1)
+#define XHCI_PORT_OCA (1u << 3)
 #define XHCI_PORT_PR (1u << 4)
+#define XHCI_PORT_PLS_MASK (0xFu << 5)
+#define XHCI_PORT_PP (1u << 9)
 #define XHCI_PORT_SPEED_SHIFT 10
 #define XHCI_PORT_SPEED_MASK (0xFu << XHCI_PORT_SPEED_SHIFT)
+#define XHCI_PORT_LWS (1u << 16)
+#define XHCI_PORT_WPR (1u << 31)
 #define XHCI_PORT_CSC (1u << 17)
+#define XHCI_PORT_PEC (1u << 18)
+#define XHCI_PORT_WRC (1u << 19)
+#define XHCI_PORT_OCC (1u << 20)
 #define XHCI_PORT_PRC (1u << 21)
+#define XHCI_PORT_PLC (1u << 22)
+#define XHCI_PORT_CEC (1u << 23)
+/* All port-change W1C bits cleared by writing 1. */
+#define XHCI_PORT_CHANGE_MASK (XHCI_PORT_CSC | XHCI_PORT_PEC | XHCI_PORT_WRC | \
+                               XHCI_PORT_OCC | XHCI_PORT_PRC | XHCI_PORT_PLC | \
+                               XHCI_PORT_CEC)
 #define XHCI_CMD_RS (1u << 0)
 #define XHCI_CMD_HCRST (1u << 1)
+#define XHCI_CMD_INTE (1u << 2)
 #define XHCI_STS_HCH (1u << 0)
 #define XHCI_STS_HSE (1u << 2)
+#define XHCI_STS_EINT (1u << 3)
+#define XHCI_STS_PCD (1u << 4)
+#define XHCI_STS_CNR (1u << 11)
+#define XHCI_STS_HCE (1u << 12)
+#define XHCI_STS_W1C_MASK (XHCI_STS_HSE | XHCI_STS_EINT | XHCI_STS_PCD)
 #define XHCI_TRB_LINK 6u
 #define XHCI_TRB_NORMAL 1u
 #define XHCI_TRB_SETUP_STAGE 2u
@@ -74,12 +100,18 @@
 #define XHCI_TRB_CYCLE (1u << 0)
 #define XHCI_COMPLETION_SUCCESS 1u
 #define XHCI_COMPLETION_CONTEXT_STATE 11u
+/* Real-silicon timing: port reset needs ~50ms (USB2 TDRST) plus link
+ * training; command/event polls must survive millisecond stalls. The raw
+ * iteration bound stays, but every poll now paces with pause + delay so the
+ * bound covers hundreds of milliseconds instead of microseconds. */
 #define XHCI_POLL_LIMIT 1000000u
+#define XHCI_RESET_POLL_LIMIT 5000000u
 #define XHCI_CMD_RING_TRBS 64u
 #define XHCI_EVENT_RING_TRBS 64u
 #define XHCI_ERDP_EHB (1ULL << 3)
 #define XHCI_HCC_AC64 (1u << 0)
 #define XHCI_HCC_CSZ (1u << 2)
+#define XHCI_HCC_PPC (1u << 3)
 #define XHCI_INPUT_ADD_SLOT (1u << 1)
 #define XHCI_INPUT_ADD_EP0 (1u << 2)
 #define XHCI_SLOT_CONTEXT_ENTRIES (1u << 27)
@@ -202,12 +234,37 @@ static uint64_t dma_page(const rix_xhci_controller_t *c) {
     return pmm_alloc_page_below(limit);
 }
 
+/* Pre-PIT busy delay: works both during xhci_init (PIT not up yet) and in
+ * the hotplug worker. ~1us per 64 pauses is a rough underestimate on modern
+ * cores, which is fine: we only need wall-time pacing, not precision. */
+static void xhci_pause_delay(uint32_t pauses) {
+    for (uint32_t i = 0; i < pauses; ++i) __asm__ volatile("pause" ::: "memory");
+}
+
+static void xhci_udelay(uint32_t us) {
+    /* ~64 pauses ~= 1us; split to keep each loop bounded. */
+    while (us--) xhci_pause_delay(64u);
+}
+
 static int wait_halted(volatile uint8_t *op, int halted) {
     volatile uint32_t *sts = (volatile uint32_t *)(op + XHCI_USBSTS);
     for (uint32_t i = 0; i < XHCI_POLL_LIMIT; ++i) {
         uint32_t s = *sts;
         int is_halted = (s & XHCI_STS_HCH) != 0u;
         if (is_halted == halted) return (s & XHCI_STS_HSE) ? -2 : 0;
+        if ((i & 0xffu) == 0u) xhci_pause_delay(64u);
+    }
+    return -1;
+}
+
+/* Wait for Controller-Not-Ready to clear after reset. Programming op/runtime
+ * regs while CNR=1 is ignored on real silicon and later surfaces as
+ * Enable-Slot timeouts (hotplug error=6). */
+static int wait_cnr_clear(volatile uint8_t *op) {
+    volatile uint32_t *sts = (volatile uint32_t *)(op + XHCI_USBSTS);
+    for (uint32_t i = 0; i < XHCI_RESET_POLL_LIMIT; ++i) {
+        if ((*sts & XHCI_STS_CNR) == 0u) return 0;
+        if ((i & 0x3ffu) == 0u) xhci_udelay(10u);
     }
     return -1;
 }
@@ -215,23 +272,45 @@ static int wait_halted(volatile uint8_t *op, int halted) {
 static int reset_controller(volatile uint8_t *op) {
     volatile uint32_t *cmd = (volatile uint32_t *)(op + XHCI_USBCMD);
     volatile uint32_t *sts = (volatile uint32_t *)(op + XHCI_USBSTS);
-    *cmd &= ~XHCI_CMD_RS;
-    if (wait_halted(op, 1) != 0) {
-        /* QEMU's xHCI model can report zero in USBSTS before its first reset
-           even though the controller is already stopped. */
-        if (*cmd != 0u || *sts != 0u) return -1;
-    }
+    uint32_t cmd_v = *cmd;
+    cmd_v &= ~(XHCI_CMD_RS | XHCI_CMD_INTE);
+    *cmd = cmd_v;
+    if (wait_halted(op, 1) != 0) return -1;
     *cmd |= XHCI_CMD_HCRST;
-    for (uint32_t i = 0; i < XHCI_POLL_LIMIT; ++i) {
+    for (uint32_t i = 0; i < XHCI_RESET_POLL_LIMIT; ++i) {
         uint32_t v = *cmd;
         uint32_t s = *sts;
         if ((s & XHCI_STS_HSE) != 0u) return -2;
-        if ((v & XHCI_CMD_HCRST) == 0u) return 0;
+        if ((v & XHCI_CMD_HCRST) == 0u) return wait_cnr_clear(op);
+        if ((i & 0x3ffu) == 0u) xhci_udelay(10u);
     }
     return -3;
 }
 
+static uint64_t scratchpad_array_phys[XHCI_MAX];
+
 static void release_runtime_pages(rix_xhci_controller_t *c) {
+    size_t idx = (size_t)(c - controllers);
+    if (idx < XHCI_MAX && scratchpad_array_phys[idx]) {
+        volatile uint64_t *arr =
+            (volatile uint64_t *)(uintptr_t)scratchpad_array_phys[idx];
+        /* Best-effort: array page holds buffer addresses; free what we can.
+         * Count is re-derived from caps when available. */
+        for (uint32_t i = 0; i < 64u; ++i) {
+            uint64_t buf = arr[i];
+            if (buf && !(buf & 0xfffu)) pmm_free_page(buf);
+            else if (buf) break;
+            if (!buf && i > 0) {
+                /* Heuristic stop: trailing zeros after first buffers. */
+                int rest_zero = 1;
+                for (uint32_t j = i + 1u; j < i + 8u && j < 64u; ++j)
+                    if (arr[j]) { rest_zero = 0; break; }
+                if (rest_zero) break;
+            }
+        }
+        pmm_free_page(scratchpad_array_phys[idx]);
+        scratchpad_array_phys[idx] = 0;
+    }
     if (c->dcbaa_phys) pmm_free_page(c->dcbaa_phys);
     if (c->cmd_ring_phys) pmm_free_page(c->cmd_ring_phys);
     if (c->event_ring_phys) pmm_free_page(c->event_ring_phys);
@@ -244,21 +323,84 @@ static void release_runtime_pages(rix_xhci_controller_t *c) {
 
 static int setup_runtime(rix_xhci_controller_t *c, volatile uint8_t *cap,
                          volatile uint8_t *op, xhci_runtime_t *rt) {
+    size_t controller_index = (size_t)(c - controllers);
+    /* PAGESIZE must advertise 4K support (bit0). Without it every DMA page
+     * we allocate is unusable on real silicon. */
+    {
+        uint32_t pagesize = *(volatile uint32_t *)(op + XHCI_PAGESIZE);
+        if ((pagesize & 1u) == 0u) {
+            serial_write("xHCI: PAGESIZE lacks 4K support\r\n");
+            return -5;
+        }
+    }
+    /* Scratchpad: HCSPARAMS2 advertises N buffers; DCBAA[0] must point at an
+     * array of N 64-bit buffer addresses. QEMU reports 0, real AMD/Intel
+     * parts need several. Missing scratchpad surfaces later as Enable-Slot
+     * timeouts (hotplug error=6). */
+    uint32_t hcs2 = *(volatile uint32_t *)(cap + XHCI_HCSPARAMS2);
+    uint32_t sp_hi = (hcs2 >> 21) & 0x1fu;
+    uint32_t sp_lo = (hcs2 >> 27) & 0x1fu;
+    uint32_t scratch_count = (sp_hi << 5) | sp_lo;
+    if (scratch_count > 512u) {
+        serial_write("xHCI: implausible scratchpad count\r\n");
+        return -6;
+    }
     uint64_t dcbaa = dma_page(c);
     uint64_t cmd_ring = dma_page(c);
     uint64_t event_ring = dma_page(c);
     uint64_t erst = dma_page(c);
-    if (!dcbaa || !cmd_ring || !event_ring || !erst) {
+    uint64_t scratch_array = 0;
+    if (!dcbaa || !cmd_ring || !event_ring || !erst ||
+        (scratch_count && !(scratch_array = dma_page(c)))) {
         if (dcbaa) pmm_free_page(dcbaa);
         if (cmd_ring) pmm_free_page(cmd_ring);
         if (event_ring) pmm_free_page(event_ring);
         if (erst) pmm_free_page(erst);
+        if (scratch_array) pmm_free_page(scratch_array);
         return -1;
     }
     zero_page(dcbaa);
     zero_page(cmd_ring);
     zero_page(event_ring);
     zero_page(erst);
+    if (scratch_array) zero_page(scratch_array);
+    /* Allocate one DMA page per scratchpad buffer (buffers are 4K). */
+    uint64_t scratch_bufs[64];
+    uint32_t scratch_allocated = 0;
+    if (scratch_count) {
+        if (scratch_count > 64u) {
+            /* Array page holds 512 entries; buffer count above 64 would
+             * need multi-page tracking this early driver does not keep.
+             * Fail closed instead of programming a partial array. */
+            serial_write("xHCI: scratchpad count exceeds early-driver limit\r\n");
+            pmm_free_page(dcbaa);
+            pmm_free_page(cmd_ring);
+            pmm_free_page(event_ring);
+            pmm_free_page(erst);
+            pmm_free_page(scratch_array);
+            return -7;
+        }
+        for (uint32_t i = 0; i < scratch_count; ++i) {
+            uint64_t buf = dma_page(c);
+            if (!buf) break;
+            zero_page(buf);
+            scratch_bufs[i] = buf;
+            scratch_allocated++;
+        }
+        if (scratch_allocated != scratch_count) {
+            for (uint32_t i = 0; i < scratch_allocated; ++i)
+                pmm_free_page(scratch_bufs[i]);
+            pmm_free_page(dcbaa);
+            pmm_free_page(cmd_ring);
+            pmm_free_page(event_ring);
+            pmm_free_page(erst);
+            pmm_free_page(scratch_array);
+            return -1;
+        }
+        volatile uint64_t *array = (volatile uint64_t *)(uintptr_t)scratch_array;
+        for (uint32_t i = 0; i < scratch_count; ++i) array[i] = scratch_bufs[i];
+        __asm__ volatile("mfence" ::: "memory");
+    }
     zero_runtime(rt);
 
     volatile xhci_trb_t *ring = (volatile xhci_trb_t *)(uintptr_t)cmd_ring;
@@ -272,12 +414,18 @@ static int setup_runtime(rix_xhci_controller_t *c, volatile uint8_t *cap,
     entry[0].ring_segment_size = XHCI_EVENT_RING_TRBS;
 
     volatile uint64_t *dcbaa_ptr = (volatile uint64_t *)(uintptr_t)dcbaa;
-    dcbaa_ptr[0] = 0;
+    dcbaa_ptr[0] = scratch_array;
 
     volatile uint64_t *dcbaap = (volatile uint64_t *)(op + XHCI_DCBAAP);
     volatile uint64_t *crcr = (volatile uint64_t *)(op + XHCI_CRCR);
     *dcbaap = dcbaa;
     *crcr = cmd_ring | XHCI_TRB_CYCLE;
+
+    /* Clear stale status (W1C) and disable device notifications: polling
+     * driver, no notification handler. */
+    *(volatile uint32_t *)(op + XHCI_USBSTS) = XHCI_STS_W1C_MASK;
+    *(volatile uint32_t *)(op + XHCI_DNCTRL) = 0u;
+    __asm__ volatile("mfence" ::: "memory");
 
     /* DBOFF and RTSOFF are capability-register offsets; CRCR/DCBAAP and
      * CONFIG above are operational-register offsets. */
@@ -288,6 +436,12 @@ static int setup_runtime(rix_xhci_controller_t *c, volatile uint8_t *cap,
         pmm_free_page(cmd_ring);
         pmm_free_page(event_ring);
         pmm_free_page(erst);
+        if (scratch_array) {
+            volatile uint64_t *arr = (volatile uint64_t *)(uintptr_t)scratch_array;
+            for (uint32_t i = 0; i < scratch_count; ++i)
+                if (arr[i]) pmm_free_page(arr[i]);
+            pmm_free_page(scratch_array);
+        }
         return -2;
     }
     volatile uint8_t *runtime = cap + rt_off;
@@ -295,11 +449,23 @@ static int setup_runtime(rix_xhci_controller_t *c, volatile uint8_t *cap,
     volatile uint32_t *erstsz = (volatile uint32_t *)(runtime + 0x28);
     volatile uint64_t *erstba = (volatile uint64_t *)(runtime + 0x30);
     volatile uint64_t *erdp = (volatile uint64_t *)(runtime + 0x38);
-    *iman &= ~1u;
+    /* Polling mode: clear any pending IP (W1C) and keep IE disabled. There
+     * is no xHCI IRQ handler routed, so IE=1 would leave Event-Interrupt
+     * pending on real silicon. */
+    {
+        uint32_t iman_v = *iman;
+        iman_v &= ~(1u << 1);
+        iman_v |= (1u << 0);
+        *iman = iman_v;
+    }
     *erstsz = 1u;
     *erstba = erst;
     *erdp = event_ring | XHCI_ERDP_EHB;
-    *iman |= 1u;
+    {
+        uint32_t iman_v = *iman;
+        iman_v &= ~(1u << 1);
+        *iman = iman_v;
+    }
 
     volatile uint32_t *config = (volatile uint32_t *)(op + XHCI_CONFIG);
     *config = c->max_slots;
@@ -310,8 +476,30 @@ static int setup_runtime(rix_xhci_controller_t *c, volatile uint8_t *cap,
     c->cmd_ring_phys = cmd_ring;
     c->event_ring_phys = event_ring;
     c->erst_phys = erst;
+    scratchpad_array_phys[controller_index] = scratch_array;
     c->running = 0;
     return 0;
+}
+
+/* Ensure every port is powered (PP=1). After HCRST real-silicon ports come
+ * up unpowered when HCC PPC=1; CCS never asserts and port reset fails
+ * (hotplug error=4). QEMU ignores PP, which is why this only bites on
+ * hardware. Safe when PPC=0 (write ignored / already 1). */
+static void xhci_power_all_ports(const rix_xhci_controller_t *c) {
+    if (!c || !c->mmio_va || !c->max_ports) return;
+    volatile uint8_t *base = (volatile uint8_t *)(uintptr_t)c->mmio_va;
+    for (uint8_t port = 1; port <= c->max_ports; ++port) {
+        volatile uint32_t *reg = (volatile uint32_t *)(base + c->cap_length +
+            XHCI_PORTSC_BASE + (uint32_t)(port - 1u) * XHCI_PORT_STRIDE);
+        uint32_t v = *reg;
+        if (v & XHCI_PORT_PP) continue;
+        /* Set PP, keep PED/PLS untouched (LWS=0, PR=0), clear stale W1C. */
+        v = (v & ~(XHCI_PORT_PR | XHCI_PORT_LWS)) |
+            XHCI_PORT_PP | XHCI_PORT_CHANGE_MASK;
+        *reg = v;
+    }
+    /* USB 2.0 power-stable delay (TPPWR ~20ms). */
+    xhci_udelay(20000u);
 }
 
 int xhci_init(void) {
@@ -406,12 +594,16 @@ int xhci_init(void) {
                         serial_write("\r\n");
                         continue;
                     }
+                    xhci_power_all_ports(c);
                     *(volatile uint32_t *)(op + XHCI_USBCMD) |= XHCI_CMD_RS;
-                    if (wait_halted(op, 0) != 0) {
+                    if (wait_halted(op, 0) != 0 || wait_cnr_clear(op) != 0) {
                         release_runtime_pages(c);
                         serial_write("xHCI: candidate run failed\r\n");
                         continue;
                     }
+                    /* Power may have been lost across RS on some parts;
+                     * enforce PP again now that the controller runs. */
+                    xhci_power_all_ports(c);
                     c->usbcmd = *(volatile uint32_t *)(op + XHCI_USBCMD);
                     c->usbsts = *(volatile uint32_t *)(op + XHCI_USBSTS);
                     c->running = 1;
@@ -453,23 +645,138 @@ int xhci_port_status(size_t controller, uint8_t port, rix_xhci_port_status_t *ou
     return 0;
 }
 
+static void xhci_clear_port_change(volatile uint32_t *reg) {
+    uint32_t v = *reg;
+    /* Preserve RW bits, force PR=0/WPR=0/LWS=0, write 1 to all W1C to clear. */
+    v = (v & ~(XHCI_PORT_PR | XHCI_PORT_WPR | XHCI_PORT_LWS)) | XHCI_PORT_CHANGE_MASK;
+    /* Never clear PP here. */
+    v |= (*reg & XHCI_PORT_PP);
+    *reg = v;
+}
+
+/* USB3 (SuperSpeed) ports must NOT get a Hot Reset (PR) while the link is
+ * still training: PR sticks at 1 forever (PORTSC=0x331: CCS=1 PED=0 PR=1
+ * PP=1 speed=0 PLS=9 Hot Reset) and the attach times out as error=4.
+ * USB3 links train on connect on their own; software only waits for PED,
+ * and uses Warm Reset (WPR) when training stalls. USB2 ports always need
+ * the PR sequence. Speed>=4 means SuperSpeed; speed==0 means the link has
+ * not reported yet (early USB3 training or pre-reset USB2). */
+static int xhci_wait_usb3_trained(volatile uint32_t *reg) {
+    for (uint32_t i = 0; i < XHCI_RESET_POLL_LIMIT; ++i) {
+        uint32_t s = *reg;
+        if ((s & XHCI_PORT_CCS) == 0u) return -3;
+        if ((s & XHCI_PORT_PED) != 0u) {
+            uint32_t speed = (s & XHCI_PORT_SPEED_MASK) >> XHCI_PORT_SPEED_SHIFT;
+            if (speed != 0u) {
+                xhci_clear_port_change(reg);
+                return 0;
+            }
+        }
+        if ((i & 0x3ffu) == 0u) xhci_udelay(50u);
+    }
+    return -5;
+}
+
+static int xhci_warm_reset_port(volatile uint32_t *reg) {
+    uint32_t v = (*reg & ~(XHCI_PORT_PR | XHCI_PORT_LWS)) |
+        XHCI_PORT_PP | XHCI_PORT_CHANGE_MASK | XHCI_PORT_WPR;
+    *reg = v;
+    for (uint32_t i = 0; i < XHCI_RESET_POLL_LIMIT; ++i) {
+        uint32_t s = *reg;
+        if ((s & XHCI_PORT_CCS) == 0u) return -3;
+        if (((s & XHCI_PORT_WPR) == 0u) || (s & XHCI_PORT_WRC) != 0u) {
+            xhci_clear_port_change(reg);
+            return xhci_wait_usb3_trained(reg);
+        }
+        if ((i & 0x3ffu) == 0u) xhci_udelay(50u);
+    }
+    v = *reg;
+    v &= ~XHCI_PORT_WPR;
+    v = (v & ~XHCI_PORT_LWS) | XHCI_PORT_CHANGE_MASK | (*reg & XHCI_PORT_PP);
+    *reg = v;
+    return -5;
+}
+
 int xhci_reset_port(size_t controller, uint8_t port) {
     const rix_xhci_controller_t *c = xhci_controller(controller);
     volatile uint32_t *reg = port_reg(c, port);
     if (!reg) return -1;
     uint32_t v = *reg;
+    /* Real silicon: unpowered ports report CCS=0 forever. Power first. */
+    if ((v & XHCI_PORT_PP) == 0u) {
+        v = (v & ~(XHCI_PORT_PR | XHCI_PORT_LWS)) |
+            XHCI_PORT_PP | XHCI_PORT_CHANGE_MASK;
+        *reg = v;
+        xhci_udelay(20000u);
+        v = *reg;
+    }
     if ((v & XHCI_PORT_CCS) == 0u) return -2;
-    /* CSC and PRC are write-one-to-clear bits; zeroing them in the write does not clear them. */
-    v |= XHCI_PORT_CSC | XHCI_PORT_PRC | XHCI_PORT_PR;
-    *reg = v;
-    for (uint32_t i = 0; i < XHCI_POLL_LIMIT; ++i) {
-        uint32_t s = *reg;
-        if ((s & XHCI_PORT_PR) == 0u) {
-            if ((s & XHCI_PORT_PRC) != 0u) return 0;
-            if ((s & XHCI_PORT_CCS) == 0u) return -3;
-            return -4;
+    /* Already enabled (trained USB3 in U0, or enabled USB2): no reset. */
+    {
+        uint32_t ped = v & XHCI_PORT_PED;
+        uint32_t speed = (v & XHCI_PORT_SPEED_MASK) >> XHCI_PORT_SPEED_SHIFT;
+        if (ped && speed) {
+            xhci_clear_port_change(reg);
+            return 0;
+        }
+        /* SuperSpeed: never Hot-Reset a training link. Wait for PED, else
+         * Warm-Reset. This is the 0x331 hang (PR stuck, speed 0). */
+        if (speed >= 4u) {
+            int wrc = xhci_wait_usb3_trained(reg);
+            if (wrc == 0) return 0;
+            return xhci_warm_reset_port(reg);
+        }
+        if (speed == 0u) {
+            /* Ambiguous: USB3 in RxDetect/Polling (needs hundreds of ms to
+             * train, PR would wedge it to 0x331), or ghost CCS with no
+             * device. Give training a real window before any PR. */
+            for (uint32_t i = 0; i < XHCI_RESET_POLL_LIMIT; ++i) {
+                uint32_t s = *reg;
+                if ((s & XHCI_PORT_CCS) == 0u) return -2;
+                if ((s & XHCI_PORT_PED) != 0u) break;
+                uint32_t s2 = (s & XHCI_PORT_SPEED_MASK) >> XHCI_PORT_SPEED_SHIFT;
+                if (s2 != 0u) break;
+                if ((i & 0x3ffu) == 0u) xhci_udelay(50u);
+            }
+            v = *reg;
+            uint32_t now_speed = (v & XHCI_PORT_SPEED_MASK) >> XHCI_PORT_SPEED_SHIFT;
+            if (now_speed >= 4u || (v & XHCI_PORT_PED) != 0u) {
+                int wrc = xhci_wait_usb3_trained(reg);
+                if (wrc == 0) return 0;
+                return xhci_warm_reset_port(reg);
+            }
         }
     }
+    /* USB2 path: clear stale change bits, then assert PR while keeping PP. */
+    v = (*reg & ~(XHCI_PORT_PR | XHCI_PORT_WPR | XHCI_PORT_LWS)) |
+        XHCI_PORT_PP | XHCI_PORT_CHANGE_MASK | XHCI_PORT_PR;
+    *reg = v;
+    for (uint32_t i = 0; i < XHCI_RESET_POLL_LIMIT; ++i) {
+        uint32_t s = *reg;
+        if ((s & XHCI_STS_HSE) != 0u) { (void)s; }
+        if ((s & XHCI_PORT_PR) == 0u) {
+            if ((s & XHCI_PORT_PRC) != 0u) {
+                xhci_clear_port_change(reg);
+                /* Post-reset: device must still be present with a speed. */
+                uint32_t after = *reg;
+                if ((after & XHCI_PORT_CCS) == 0u) return -3;
+                return 0;
+            }
+            if ((s & XHCI_PORT_CCS) == 0u) return -3;
+            /* PR cleared without PRC: USB3 link may still be training;
+             * give it a little more time before failing. */
+            xhci_udelay(1000u);
+            uint32_t retry = *reg;
+            if (retry & XHCI_PORT_PRC) {
+                xhci_clear_port_change(reg);
+                return 0;
+            }
+            return -4;
+        }
+        if ((i & 0x3ffu) == 0u) xhci_udelay(50u);
+    }
+    /* Timeout with PR still asserted: deassert to leave the port sane. */
+    xhci_clear_port_change(reg);
     return -5;
 }
 
@@ -477,6 +784,45 @@ static volatile uint8_t *runtime_base(const rix_xhci_controller_t *c) {
     volatile uint8_t *base = (volatile uint8_t *)(uintptr_t)c->mmio_va;
     uint32_t rt_off = *(volatile uint32_t *)(base + XHCI_RTSOFF) & ~0x1Fu;
     return base + rt_off;
+}
+
+/* Stashed port-change events observed by command/transfer waiters. The event
+ * ring is shared; a waiter must consume the head to reach its completion,
+ * so port events seen mid-wait are queued here for the hotplug poller. */
+#define XHCI_PENDING_PORTS 16u
+static uint8_t pending_port[XHCI_MAX][XHCI_PENDING_PORTS];
+static uint8_t pending_conn[XHCI_MAX][XHCI_PENDING_PORTS];
+static uint8_t pending_head[XHCI_MAX];
+static uint8_t pending_tail[XHCI_MAX];
+static uint8_t pending_count[XHCI_MAX];
+
+static void xhci_pending_port_push(size_t controller, uint8_t port, uint8_t connected) {
+    if (controller >= XHCI_MAX || port == 0u) return;
+    /* Coalesce duplicates for the same port. */
+    for (uint8_t i = 0, idx = pending_head[controller]; i < pending_count[controller]; ++i) {
+        if (pending_port[controller][idx] == port) {
+            pending_conn[controller][idx] = connected;
+            return;
+        }
+        idx = (uint8_t)((idx + 1u) % XHCI_PENDING_PORTS);
+    }
+    if (pending_count[controller] >= XHCI_PENDING_PORTS) return;
+    pending_port[controller][pending_tail[controller]] = port;
+    pending_conn[controller][pending_tail[controller]] = connected;
+    pending_tail[controller] = (uint8_t)((pending_tail[controller] + 1u) % XHCI_PENDING_PORTS);
+    pending_count[controller]++;
+}
+
+int xhci_pending_port_pop(size_t controller, uint8_t *port, uint8_t *connected) {
+    if (controller >= XHCI_MAX || !port || !connected) return -1;
+    if (controller >= count) return -1;
+    if (!pending_count[controller]) return 0;
+    *port = pending_port[controller][pending_head[controller]];
+    *connected = pending_conn[controller][pending_head[controller]];
+    pending_head[controller] =
+        (uint8_t)((pending_head[controller] + 1u) % XHCI_PENDING_PORTS);
+    pending_count[controller]--;
+    return 1;
 }
 
 static void acknowledge_event(const rix_xhci_controller_t *c, xhci_runtime_t *rt) {
@@ -543,6 +889,20 @@ int xhci_poll_port_status_change(size_t controller, uint8_t *port, uint8_t *conn
     const rix_xhci_controller_t *c = &controllers[controller];
     xhci_runtime_t *rt = &runtimes[controller];
     if (!c->running || !c->event_ring_phys) return -2;
+    /* Drain stashed port events saved by wait_command/wait_transfer while
+     * they were scanning for completions. Without this, port changes that
+     * arrive mid-transfer are swallowed and only the fallback scan sees
+     * them (or misses disconnects). */
+    {
+        uint8_t p = 0, conn = 0;
+        if (xhci_pending_port_pop(controller, &p, &conn) == 1) {
+            rix_xhci_port_status_t status;
+            if (xhci_port_status(controller, p, &status) != 0) return -4;
+            *port = p;
+            *connected = status.connected;
+            return 1;
+        }
+    }
     volatile xhci_trb_t *event = &((volatile xhci_trb_t *)(uintptr_t)c->event_ring_phys)
         [rt->event_dequeue];
     if ((event->control & XHCI_TRB_CYCLE) != rt->event_cycle) return 0;
@@ -550,6 +910,13 @@ int xhci_poll_port_status_change(size_t controller, uint8_t *port, uint8_t *conn
     if (type != XHCI_TRB_PORT_STATUS_CHANGE) return 0;
     uint8_t event_port = (uint8_t)(event->parameter_lo >> 24);
     acknowledge_event(c, rt);
+    /* Clear Port-Change-Detect so USBSTS does not stick on real silicon. */
+    {
+        volatile uint8_t *base = (volatile uint8_t *)(uintptr_t)c->mmio_va;
+        volatile uint8_t *op = base + c->cap_length;
+        *(volatile uint32_t *)(op + XHCI_USBSTS) =
+            (XHCI_STS_PCD | XHCI_STS_EINT);
+    }
     if (event_port == 0u || event_port > c->max_ports) return -3;
     rix_xhci_port_status_t status;
     if (xhci_port_status(controller, event_port, &status) != 0) return -4;
@@ -557,6 +924,12 @@ int xhci_poll_port_status_change(size_t controller, uint8_t *port, uint8_t *conn
     *connected = status.connected;
     return 1;
 }
+
+/* Ports whose last attach attempt failed. The fallback scan must not retry
+ * them every poll (that is the log flood in the photo: error=4/6 forever).
+ * A failed port is retried only after a physical disconnect/reconnect
+ * (CCS=0 clears the flag) or after a successful detach. */
+static uint8_t port_attach_failed[XHCI_MAX][256];
 
 int xhci_service_hotplug(size_t controller, rix_xhci_device_t *device, uint8_t *connected) {
     if (controller >= count || !device || !connected) return -1;
@@ -569,16 +942,52 @@ int xhci_service_hotplug(size_t controller, rix_xhci_device_t *device, uint8_t *
     int rc = xhci_poll_port_status_change(controller, &port, &is_connected);
     if (rc == 0) {
         /* A device already present before the controller starts may not
-           generate a port-status event. Scan connected ports once per poll. */
+           generate a port-status event. Scan connected ports once per poll,
+           but never retry a port whose last attach already failed: that is
+           the error=4/6 flood. Failed ports retry only after disconnect. */
         const rix_xhci_controller_t *c = &controllers[controller];
+        /* Reap failed flags for ports that are now physically gone. */
+        for (uint8_t p = 1; p <= c->max_ports; ++p) {
+            if (!port_attach_failed[controller][p]) continue;
+            rix_xhci_port_status_t st;
+            if (xhci_port_status(controller, p, &st) != 0 || !st.connected)
+                port_attach_failed[controller][p] = 0;
+        }
         for (uint8_t candidate = 1; candidate <= c->max_ports; ++candidate) {
+            if (port_attach_failed[controller][candidate]) continue;
             rix_xhci_port_status_t status;
             if (xhci_port_status(controller, candidate, &status) != 0 || !status.connected) continue;
+            /* Ghost/training link: CCS=1 but no PED and no speed (PORTSC
+             * 0x331 family). No device to address yet; stay quiet and let
+             * training finish instead of erroring every sweep. */
+            if (!status.enabled && status.speed == 0u) continue;
             int occupied = 0;
             for (uint16_t slot_id = 1; slot_id <= c->max_slots; ++slot_id)
                 if (runtimes[controller].slots[slot_id].allocated &&
                     runtimes[controller].slots[slot_id].port == candidate) { occupied = 1; break; }
             if (!occupied) { port = candidate; is_connected = 1; rc = 1; break; }
+        }
+    } else if (rc == 1 && port != 0u) {
+        if (!is_connected) {
+            /* Physical disconnect: allow a future reconnect to retry. */
+            port_attach_failed[controller][port] = 0;
+        } else {
+            rix_xhci_port_status_t st2;
+            if (xhci_port_status(controller, port, &st2) == 0 && st2.connected &&
+                !st2.enabled && st2.speed == 0u) {
+                /* Connect event arrived before the link trained (or ghost
+                 * CCS). Acked already; wait quietly for PED/speed. */
+                volatile uint32_t *preg = port_reg(&controllers[controller], port);
+                if (preg) xhci_clear_port_change(preg);
+                return 0;
+            }
+            if (port_attach_failed[controller][port]) {
+                /* Duplicate connect event for an already-failed port without
+                 * an intervening disconnect: acked already, nothing to do. */
+                volatile uint32_t *preg = port_reg(&controllers[controller], port);
+                if (preg) xhci_clear_port_change(preg);
+                return 0;
+            }
         }
     }
     if (rc <= 0) return rc;
@@ -588,6 +997,25 @@ int xhci_service_hotplug(size_t controller, rix_xhci_device_t *device, uint8_t *
         if (attach_rc != 0) {
             device->port = port;
             device->state = RIX_XHCI_DEVICE_ERROR;
+            /* First failure: detailed diagnostics + park the port. Repeats
+             * are suppressed until disconnect. */
+            if (!port_attach_failed[controller][port]) {
+                volatile uint32_t *preg = port_reg(&controllers[controller], port);
+                uint32_t portsc = preg ? *preg : 0u;
+                serial_write("xHCI: attach failed controller=");
+                serial_write_dec(controller);
+                serial_write(" port=");
+                serial_write_dec(port);
+                serial_write(" rc=");
+                serial_write_dec((uint64_t)(attach_rc < 0 ? -attach_rc : attach_rc));
+                serial_write(" PORTSC=");
+                serial_write_hex(portsc);
+                serial_write("\r\n");
+                if (preg) xhci_clear_port_change(preg);
+            }
+            port_attach_failed[controller][port] = 1;
+        } else {
+            port_attach_failed[controller][port] = 0;
         }
         return attach_rc;
     }
@@ -599,6 +1027,7 @@ int xhci_service_hotplug(size_t controller, rix_xhci_device_t *device, uint8_t *
             device->speed = slot->speed;
             int detach_rc = xhci_device_detach(controller, (uint8_t)slot_id);
             device->state = detach_rc == 0 ? RIX_XHCI_DEVICE_DETACHED : RIX_XHCI_DEVICE_ERROR;
+            if (detach_rc == 0 && port != 0u) port_attach_failed[controller][port] = 0;
             return detach_rc;
         }
     }
@@ -606,21 +1035,45 @@ int xhci_service_hotplug(size_t controller, rix_xhci_device_t *device, uint8_t *
     device->port = port;
     device->speed = 0;
         device->state = RIX_XHCI_DEVICE_DETACHED;
+    if (port != 0u) port_attach_failed[controller][port] = 0;
     return 0;
 }
 static int wait_command(const rix_xhci_controller_t *c, xhci_runtime_t *rt,
                         uint64_t command_phys, uint8_t *out_slot) {
+    size_t controller_index = (size_t)(c - controllers);
     volatile xhci_trb_t *events = (volatile xhci_trb_t *)(uintptr_t)c->event_ring_phys;
     for (uint32_t i = 0; i < XHCI_POLL_LIMIT; ++i) {
         volatile xhci_trb_t *event = &events[rt->event_dequeue];
         uint32_t control = event->control;
-        if ((control & XHCI_TRB_CYCLE) != rt->event_cycle) continue;
+        if ((control & XHCI_TRB_CYCLE) != rt->event_cycle) {
+            if ((i & 0xffu) == 0u) xhci_pause_delay(64u);
+            continue;
+        }
         uint32_t type = (control >> XHCI_TRB_TYPE_SHIFT) & 0x3fu;
         uint64_t parameter = ((uint64_t)event->parameter_hi << 32) | event->parameter_lo;
         uint8_t slot = (uint8_t)(control >> XHCI_TRB_SLOT_SHIFT);
         uint8_t completion = (uint8_t)(event->status >> 24);
         uint64_t event_phys = c->event_ring_phys +
                               (uint64_t)rt->event_dequeue * sizeof(xhci_trb_t);
+        /* Stash port changes instead of dropping them: the hotplug poller
+         * owns them. */
+        if (type == XHCI_TRB_PORT_STATUS_CHANGE) {
+            uint8_t p = (uint8_t)(event->parameter_lo >> 24);
+            rix_xhci_port_status_t st = {0, 0, 0, 0};
+            /* Best-effort connected bit; poller re-reads PORTSC anyway. */
+            xhci_pending_port_push(controller_index, p, 1u);
+            (void)st;
+            trace_context_state_error(c, rt, event_phys, parameter, control, event->status,
+                                      slot, 0u);
+            acknowledge_event(c, rt);
+            {
+                volatile uint8_t *base = (volatile uint8_t *)(uintptr_t)c->mmio_va;
+                volatile uint8_t *op = base + c->cap_length;
+                *(volatile uint32_t *)(op + XHCI_USBSTS) =
+                    (XHCI_STS_PCD | XHCI_STS_EINT);
+            }
+            continue;
+        }
         trace_context_state_error(c, rt, event_phys, parameter, control, event->status,
                                   slot, 0u);
         acknowledge_event(c, rt);
@@ -831,11 +1284,15 @@ static int wait_transfer(const rix_xhci_controller_t *c, xhci_runtime_t *rt,
                          uint64_t last_trb, uint8_t slot_id, uint8_t expected_endpoint,
                          uint16_t requested,
                          uint16_t *actual) {
+    size_t controller_index = (size_t)(c - controllers);
     volatile xhci_trb_t *events = (volatile xhci_trb_t *)(uintptr_t)c->event_ring_phys;
     for (uint32_t i = 0; i < XHCI_POLL_LIMIT; ++i) {
         volatile xhci_trb_t *event = &events[rt->event_dequeue];
         uint32_t control = event->control;
-        if ((control & XHCI_TRB_CYCLE) != rt->event_cycle) continue;
+        if ((control & XHCI_TRB_CYCLE) != rt->event_cycle) {
+            if ((i & 0xffu) == 0u) xhci_pause_delay(64u);
+            continue;
+        }
         uint64_t parameter = ((uint64_t)event->parameter_hi << 32) | event->parameter_lo;
         uint32_t type = (control >> XHCI_TRB_TYPE_SHIFT) & 0x3fu;
         uint8_t event_slot = (uint8_t)(control >> XHCI_TRB_SLOT_SHIFT);
@@ -844,6 +1301,20 @@ static int wait_transfer(const rix_xhci_controller_t *c, xhci_runtime_t *rt,
         uint32_t residual = event->status & 0x00ffffffu;
         uint64_t event_phys = c->event_ring_phys +
                               (uint64_t)rt->event_dequeue * sizeof(xhci_trb_t);
+        if (type == XHCI_TRB_PORT_STATUS_CHANGE) {
+            uint8_t p = (uint8_t)(event->parameter_lo >> 24);
+            xhci_pending_port_push(controller_index, p, 1u);
+            trace_context_state_error(c, rt, event_phys, parameter, control, event->status,
+                                      event_slot, endpoint);
+            acknowledge_event(c, rt);
+            {
+                volatile uint8_t *base = (volatile uint8_t *)(uintptr_t)c->mmio_va;
+                volatile uint8_t *op = base + c->cap_length;
+                *(volatile uint32_t *)(op + XHCI_USBSTS) =
+                    (XHCI_STS_PCD | XHCI_STS_EINT);
+            }
+            continue;
+        }
         trace_context_state_error(c, rt, event_phys, parameter, control, event->status,
                                   event_slot, endpoint);
         acknowledge_event(c, rt);
