@@ -56,9 +56,19 @@ smp_trampoline_prot32:
     movb %ah,%al
     outb %al,%dx
     movb $SMP_TRAMP_CRUMB_PROT32,%fs:SMP_TRAMP_CRUMB_OFF
+    /* Mirror the BSP's vmm_early_init CPU normalization while paging is
+     * still off (every CR4/CR0 change here is safe): MCE+PAE + FPU/SSE on,
+     * LA57/PCIDE/SMEP/SMAP/PKE/PGE off, EM/TS off, WP on. Firmware AP
+     * state (e.g. CD/NW, x2APIC-enumerated extras) is otherwise preserved.
+     * EFER.NXE is set next to LME below for the same reason. */
     movl %cr4,%eax
-    orl $0x20,%eax
+    orl $0x660,%eax
+    andl $~0x731080,%eax
     movl %eax,%cr4
+    movl %cr0,%eax
+    andl $~0xC,%eax
+    orl $0x10001,%eax
+    movl %eax,%cr0
     movl %fs:SMP_TRAMP_DATA_CR3,%eax
     movl %eax,%cr3
     movl $0xC0000080,%ecx
@@ -105,6 +115,12 @@ smp_trampoline_longmode:
     movw %ax,%ss
     /* RSP first: the hex printer below uses call/ret. */
     movq SMP_TRAMP_DATA_STACK(%r10),%rsp
+    /* Load the BSP's live IDTR snapshot (the kernel IDT, captured by
+     * smp_capture_descriptor_tables just before SIPI): from here an AP
+     * fault reaches the kernel handlers on IST#1 with full diagnostics
+     * instead of triple-faulting off the BIOS IDT with zero output.
+     * GDT stays the trampoline's (flat and sufficient for parking). */
+    lidt SMP_TRAMP_DATA_IDTR(%r10)
     /* The trampoline GDT is already flat and valid in long mode. Do not load
      * firmware/BSP descriptor snapshots here: a malformed or incompatible
      * firmware GDT can fault before the AP publishes its state. APs keep IF

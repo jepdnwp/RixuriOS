@@ -57,12 +57,21 @@ smp_map_t: cpu[64], count, online, bsp_apic, bsp_index
 - A: `-smp 4` boots to `SHELL READY`; log shows `SMP: cpus=4 online=1
   bsp_apic=0`; `-smp 1` and default runs unchanged. DONE (commit 0d6e282).
 - B: `SMP: online=4` with per-AP `AP <id> online` lines; no UP
-  regression on single-CPU. IN PROGRESS (2026-09-10): INIT-SIPI-SIPI
-  sequence, trampoline (real -> prot32 -> long mode) and BSP-side table
-  setup implemented with reset-proof serial breadcrumbs (R/P/L/D/G/T)
-  and host unit tests. Observed: AP prints R/P/L/D, reads CR3 slot and
-  entry slot; entry transfer still under diagnosis (no `online=4` yet,
-  no UP regression). No PASS claimed until `online=4` is observed.
+  regression on single-CPU. DONE 2026-09-11 (QEMU evidence, commit 3e59e75):
+  root cause of the reset loop was AP `EFER=0x500` (NXE clear) vs NX-marked
+  kernel leaves (`#PF` RSVD in `ap_entry` + BIOS IDT = silent triple fault).
+  Trampoline now sets NXE next to LME. No PASS claimed for hardware.
+- B1 (AP CPU normalization, this change): the trampoline additionally
+  mirrors the BSP `vmm_early_init` policy while paging is off — CR4 gets
+  PAE|OSFXSR|OSXMMEXCPT with LA57/PCIDE/SMEP/SMAP/PKE/PGE cleared, CR0 gets
+  PE|WP with EM/TS cleared — and long mode loads the snapshotted kernel
+  IDTR, so any AP fault reaches the IST#1 handlers with diagnostics instead
+  of triple-faulting off the BIOS IDT. GDT intentionally stays the
+  trampoline's (flat, sufficient for parked APs). Acceptance: `-smp 4`
+  still reaches `online=4` + shell, plus QEMU-monitor proof that an AP
+  runs with kernel IDT base, BSP-policy CR4 and NXE set. Shared IST#1
+  between BSP/APs is accepted for parked Phase-B APs only (documented
+  limitation until per-CPU TSS in Phase C).
 - D: IPI ping/pong + shootdown counter test, cross-CPU atomic counter.
 - E: 10+ processes across CPUs, no starvation, `preemption_test`.
 

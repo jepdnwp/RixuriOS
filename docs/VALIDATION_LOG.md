@@ -725,3 +725,14 @@ Fix (`kernel/arch/x86_64/smp_trampoline.S`, 5 bytes): set EFER.NXE (`orl $0x800,
 Evidence: `make test` RC=0, `make image` RC=0, QEMU `-smp 4` now prints `SMP: cpus=4 online=1` then `AP 1/2/3 online`, `SMP: online=4`, `RIXURI:KERNEL_READY`, `RIXURI:USER_ENTER`, `SHELL READY` with 0 exceptions; QEMU `-smp 1` unchanged (SHELL READY, no exceptions).
 
 Explicitly NOT claimed: APs still run on firmware CR4 (no SMEP/SMAP/PKE normalization — follow-up) and on the BIOS IDT (any future AP fault still triple-faults silently — follow-up with Phase C per-CPU state/IDT). No hardware PASS; nested-TCG AP bring-up is slow (pause calibration), which is expected, not a gate.
+
+
+## 2026-09-11 — P0 Phase B1: AP CPU normalization (CR4/CR0 mirror + kernel IDT)
+
+Spec: APs booted with raw firmware control state (SeaBIOS CR4=0x20, EFER without NXE, BIOS IDT). This change mirrors the BSP `vmm_early_init` policy in the trampoline while paging is off and loads the snapshotted kernel IDTR in long mode. No ABI change, no new trampoline data slots, GDT intentionally unchanged.
+
+Implementation (`kernel/arch/x86_64/smp_trampoline.S`): prot32 sets CR4=MCE|PAE|OSFXSR|OSXMMEXCPT with LA57/PCIDE/SMEP/SMAP/PKE/PGE cleared and CR0=PE|WP with EM/TS cleared; long mode executes `lidt` on `SMP_TRAMP_DATA_IDTR` (the live kernel IDT captured by `smp_capture_descriptor_tables`, never firmware tables) after RSP setup and before ONLINE publish. Template now 347 bytes (< 0x200 max). Design recorded in `docs/SMP_DESIGN.md` (gate B1). Shared IST#1 between BSP/APs accepted for parked Phase-B APs only (documented limitation until per-CPU TSS).
+
+Evidence: `make test` RC=0 (host suite incl. `smp_test`, which adapts via symbols), `make image` RC=0, QEMU `-smp 4` reaches `SMP: online=4`, `KERNEL_READY`, `USER_ENTER`, `SHELL READY` with 0 exceptions, and QEMU-monitor register dumps on a parked AP show `IDT=0x405ba50` (exactly the kernel `idt[]` VMA), `EFER=0xD00` (LME+LMA+NXE), parked in the `ap_entry` hlt loop with IF=0. QEMU `-smp 1` unchanged (SHELL READY, 0 exceptions). CR4 reads did not surface in this QEMU monitor format; the mask executes on the proven R/P/L path (straight-line, pre-paging, cannot fault), and QEMU firmware CR4 (0x20) maps to exactly the BSP value (0x660) under it.
+
+Not claimed: per-CPU TSS/IST (Phase C), IPI ping/pong + shootdown (Phase D), preemptive scheduler (P1), hardware PASS.
