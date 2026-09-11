@@ -738,6 +738,45 @@ Evidence: `make test` RC=0 (host suite incl. `smp_test`, which adapts via symbol
 Not claimed: per-CPU TSS/IST (Phase C), IPI ping/pong + shootdown (Phase D), preemptive scheduler (P1), hardware PASS.
 
 
+## 2026-09-11 — P0 Phase D1b: AP kernel-GDT switch (first-IPI triple fault)
+
+QEMU `-d int,cpu_reset` evidence on the D1 tree: the first ping IPI
+(INT 0xE0) arrives at a parked AP and the CPU raises `#GP e=0x0008`
+(segment index 1) at the park `jmp`, cascading `#GP → #GP → #DF → #GP`
+into a triple fault and system reset. Gates, IDT base, handler address,
+CR3 and RSP were all verified correct; the fault is the CS load during
+interrupt vectoring: kernel IDT gates target kernel CS (0x08, 64-bit),
+but APs still ran on the trampoline GDT whose 0x08 is a 32-bit segment.
+Pre-D1 builds never took AP interrupts (IF=0 forever), so this was
+latent until APs began accepting IPIs. (An earlier `-d int` series on a
+previous tree showed a different signature, `#GP e=0x0` with a corrupt
+IDT base, attributed to the then-current trampoline DATA layout; the
+0x2C0 move plus layout static-asserts closed that class.)
+
+Fix (`kernel/arch/x86_64/smp_trampoline.S`, template still < 0x200):
+after RSP/IDT setup the AP loads the snapshotted kernel GDTR, far-returns
+into 0x08, reloads DS/ES/SS (0x10), nulls FS and loads the kernel TSS
+(selector 0x28; LTR on a busy descriptor does not fault, and RSP0 is
+unused without CPL changes). IF stays clear throughout; shared TSS/IST
+remains accepted for parked APs until per-CPU TSS (Phase C).
+
+Evidence: `make test` RC=0, `make image`/`make iso` RC=0, ESP kernel
+disassembly confirms the switch sequence, QEMU `-smp 1` SHELL READY
+clean. QEMU `-smp 4` ping/shootdown verdicts were still pending at
+write time: nested/ hosted hypervisors (WSL2-TCG and WHPX alike) make
+`pause`-calibrated polls cost seconds per round here, so verdicts need
+a long window; a `-d int` capture run was left going to decide between
+"fixed, just slow" (verdict lines appear) and "new fault chain"
+(triple event in the int log). No hardware PASS claimed either way.
+
+Environment note (no code impact): under WSL2-nested TCG and WHPX alike,
+guest `pause` spins cost orders of magnitude more wall time than on
+silicon (observed ~1% guest CPU on idle hosts, vCPU threads parked in
+futex waits). UP boots (no long polls) are unaffected. GDB attaches to a
+live multi-vCPU guest correlated with frozen snapshots afterwards;
+serial-file polling is non-intrusive and preferred for verdict runs.
+
+
 ## 2026-09-11 — P0 Phase C1: per-CPU kernel stacks + smp_cpu_id
 
 Spec: APs ran their whole C entry on the 4 KiB trampoline page itself; `smp_cpu_t.stack_phys` existed but was never populated; no CPU-to-index accessor. Scheduler and trampoline asm deliberately untouched.

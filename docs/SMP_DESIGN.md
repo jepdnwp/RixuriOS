@@ -61,17 +61,24 @@ smp_map_t: cpu[64], count, online, bsp_apic, bsp_index
   root cause of the reset loop was AP `EFER=0x500` (NXE clear) vs NX-marked
   kernel leaves (`#PF` RSVD in `ap_entry` + BIOS IDT = silent triple fault).
   Trampoline now sets NXE next to LME. No PASS claimed for hardware.
-- B1 (AP CPU normalization, this change): the trampoline additionally
-  mirrors the BSP `vmm_early_init` policy while paging is off — CR4 gets
-  PAE|OSFXSR|OSXMMEXCPT with LA57/PCIDE/SMEP/SMAP/PKE/PGE cleared, CR0 gets
-  PE|WP with EM/TS cleared — and long mode loads the snapshotted kernel
-  IDTR, so any AP fault reaches the IST#1 handlers with diagnostics instead
-  of triple-faulting off the BIOS IDT. GDT intentionally stays the
-  trampoline's (flat, sufficient for parked APs). Acceptance: `-smp 4`
+- B1 (AP CPU normalization): the trampoline additionally mirrors the BSP
+  `vmm_early_init` policy while paging is off — CR4 gets
+  MCE|PAE|OSFXSR|OSXMMEXCPT with LA57/PCIDE/SMEP/SMAP/PKE/PGE cleared,
+  CR0 gets PE|WP with EM/TS cleared — and long mode loads the snapshotted
+  kernel IDTR, so any AP fault reaches the IST#1 handlers with diagnostics
+  instead of triple-faulting off the BIOS IDT. Acceptance: `-smp 4`
   still reaches `online=4` + shell, plus QEMU-monitor proof that an AP
   runs with kernel IDT base, BSP-policy CR4 and NXE set. Shared IST#1
   between BSP/APs is accepted for parked Phase-B APs only (documented
   limitation until per-CPU TSS in Phase C).
+- B2 (AP descriptor switch): the AP additionally loads the snapshotted
+  kernel GDTR, far-returns into kernel CS (0x08), reloads DS/ES/SS,
+  nulls FS and loads the kernel TSS. Required because kernel IDT gates
+  target kernel CS while the trampoline GDT's 0x08 is a 32-bit segment —
+  the first AP interrupt triple-faulted on the CS load with #GP(0x8)
+  (`qemu -d int` evidence: `v=0d e=0008` at the park loop during INT 0xE0
+  servicing, all gates/IDT/CR3/RSP verified correct). Template stays
+  under 0x200; IF stays clear through the whole switch.
 - D: IPI ping/pong + shootdown counter test, cross-CPU atomic counter.
 - E: 10+ processes across CPUs, no starvation, `preemption_test`.
 
