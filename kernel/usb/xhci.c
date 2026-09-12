@@ -1,4 +1,5 @@
 #include "xhci.h"
+#include "xhci_caps.h"
 #include "../pci/pci.h"
 #include "../mm/vmm.h"
 #include "../mm/pmm.h"
@@ -181,6 +182,68 @@ static int is_xhci_device(const rix_pci_device_t *d) {
            d->prog_if == PCI_PROGIF_XHCI;
 }
 
+/* Phase H4: known-silicon table (WMI-confirmed on the ASUS PRIME
+ * B650M-R test box). Names only — no behavioral quirks without
+ * per-ID evidence. */
+typedef struct { uint16_t vendor, device; const char *name; uint32_t quirks; } xhci_quirk_entry_t;
+static const xhci_quirk_entry_t xhci_quirks[] = {
+    {0x1022u, 0x15b7u, "AMD Raphael USB3", XHCI_QUIRK_NONE},
+    {0x1022u, 0x15b6u, "AMD Raphael USB3", XHCI_QUIRK_NONE},
+    {0x1022u, 0x43f7u, "ASMedia ASM3xxx USB3", XHCI_QUIRK_NONE},
+    {0x1022u, 0x15b8u, "AMD Raphael USB2-only", XHCI_QUIRK_NONE},
+};
+static const char *xhci_quirk_name(uint16_t vendor, uint16_t device, uint32_t *quirks) {
+    for (size_t i = 0; i < sizeof(xhci_quirks) / sizeof(xhci_quirks[0]); ++i)
+        if (xhci_quirks[i].vendor == vendor && xhci_quirks[i].device == device) {
+            if (quirks) *quirks = xhci_quirks[i].quirks;
+            return xhci_quirks[i].name;
+        }
+    if (quirks) *quirks = XHCI_QUIRK_NONE;
+    return "unknown";
+}
+/* Phase H4: Supported-Protocol walk over MMIO (handoff-walk pattern).
+ * Snapshots 16 bytes per entry, decodes pure. Stops at the first
+ * malformed step (never wedges init on firmware garbage). */
+static void xhci_scan_protocols(rix_xhci_controller_t *c, volatile uint8_t *base, uint64_t mmio_size) {
+    uint32_t hcc;
+    uint32_t xecp;
+    if (!c || !base || mmio_size < (uint64_t)XHCI_HCCPARAMS1 + 4u) return;
+    hcc = *(volatile uint32_t *)(base + XHCI_HCCPARAMS1);
+    xecp = ((hcc >> 16) & 0xffffu) * 4u;
+    for (uint32_t step = 0; step < XHCI_EXT_CAP_WALK_MAX; ++step) {
+        uint8_t raw[XHCI_SPC_ENTRY_SIZE];
+        uint32_t header, next;
+        xhci_proto_range_t range;
+        if (!xecp || xecp + XHCI_SPC_ENTRY_SIZE > mmio_size) return;
+        header = *(volatile uint32_t *)(base + xecp);
+        if ((header & 0xffu) != XHCI_EXT_CAP_ID_PROTOCOL) {
+            next = ((header >> 8) & 0xffu) * 4u;
+            if (!next) return;
+            xecp += next;
+            continue;
+        }
+        for (unsigned b = 0; b < XHCI_SPC_ENTRY_SIZE; ++b) raw[b] = *(volatile uint8_t *)(base + xecp + b);
+        if (xhci_spc_decode_entry(raw, &range) == 0 &&
+            c->proto_ranges < XHCI_SPC_MAX_RANGES) {
+            unsigned n = c->proto_ranges++;
+            c->proto_major[n] = range.major;
+            c->proto_start[n] = range.start;
+            c->proto_count[n] = range.count;
+        }
+        next = ((header >> 8) & 0xffu) * 4u;
+        if (!next) return;
+        xecp += next;
+    }
+}
+int xhci_port_protocol(size_t controller, uint8_t port) {
+    if (controller >= count || port == 0u) return 0;
+    const rix_xhci_controller_t *c = &controllers[controller];
+    for (unsigned i = 0; i < c->proto_ranges && i < XHCI_SPC_MAX_RANGES; ++i)
+        if (port >= c->proto_start[i] &&
+            (unsigned)port < (unsigned)c->proto_start[i] + (unsigned)c->proto_count[i])
+            return c->proto_major[i];
+    return 0;
+}
 /* Take OS ownership from firmware via the USB Legacy Support capability.
  * No-op when the controller reports no extended capabilities. Bounded:
  * at most XHCI_EXT_CAP_WALK_MAX capability steps and XHCI_POLL_LIMIT
@@ -571,6 +634,9 @@ int xhci_init(void) {
                     serial_write("xHCI: candidate reports no usable registers/slots/ports\r\n");
                     continue;
                 }
+                /* Phase H4: protocol map before handoff/runtime (MMIO
+                 * reads only; never fails init). */
+                xhci_scan_protocols(c, base, bar_size);
                 handoff = xhci_bios_handoff(base, bar_size);
                 if (handoff != 0) {
                     serial_write("xHCI: candidate BIOS handoff failed\r\n");
@@ -616,6 +682,28 @@ int xhci_init(void) {
                     serial_write(" operational="); serial_write_hex(bar_base + c->cap_length);
                     serial_write(" ports="); serial_write_dec(c->max_ports);
                     serial_write("\r\n");
+                    /* Phase H4: name the silicon + print the protocol map.
+                     * This line is the HW topology evidence (photo it). */
+                    {
+                        uint32_t quirks = XHCI_QUIRK_NONE;
+                        const char *name = xhci_quirk_name(d->vendor_id, d->device_id, &quirks);
+                        serial_write("xHCI: ctl=");
+                        serial_write_dec(count);
+                        serial_write(" ");
+                        serial_write(name);
+                        serial_write(" proto=");
+                        if (!c->proto_ranges) serial_write("unknown");
+                        for (unsigned pi = 0; pi < c->proto_ranges && pi < XHCI_SPC_MAX_RANGES; ++pi) {
+                            if (pi) serial_write(",");
+                            serial_write("U");
+                            serial_write_dec(c->proto_major[pi]);
+                            serial_write(":");
+                            serial_write_dec(c->proto_start[pi]);
+                            serial_write("-");
+                            serial_write_dec((uint64_t)c->proto_start[pi] + (uint64_t)c->proto_count[pi] - 1u);
+                        }
+                        serial_write("\r\n");
+                    }
                     ++count;
                 }
             }
@@ -827,14 +915,20 @@ int xhci_reset_port(size_t controller, uint8_t port) {
             xhci_clear_port_change(reg);
             return 0;
         }
-        /* SuperSpeed: never Hot-Reset a training link. Wait for PED, else
-         * Warm-Reset. This is the 0x331 hang (PR stuck, speed 0). */
-        if (speed >= 4u) {
+        /* Phase H4: protocol-aware branch selection. A training SS
+         * port can read speed 0/stale-USB2, which is exactly what
+         * wedged PR before — so protocol 3 forces the SS path even
+         * when the speed field disagrees, and known-USB2 ports skip
+         * the training wait (their speed is valid at connect; a
+         * persistent 0 is a ghost, failed fast by the PR attempt).
+         * Unknown protocol keeps the legacy heuristic. */
+        int proto = xhci_port_protocol(controller, port);
+        if (speed >= 4u || proto == 3) {
             int wrc = xhci_wait_usb3_trained(reg);
             if (wrc == 0) return 0;
             return xhci_warm_reset_port(reg);
         }
-        if (speed == 0u) {
+        if (speed == 0u && proto != 2) {
             /* Ambiguous: USB3 in RxDetect/Polling (needs hundreds of ms to
              * train, PR would wedge it to 0x331), or ghost CCS with no
              * device. Give training a real window before any PR: 4x the

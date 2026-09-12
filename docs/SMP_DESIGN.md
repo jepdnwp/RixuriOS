@@ -185,6 +185,36 @@
 
 ## Phase H2 (spec 2026-09-12): reset escalation (RxDetect + power cycle)
 
+## Phase H4 (spec 2026-09-12): per-controller protocol map + quirk IDs
+
+- Why: H1/H2 guess USB2-vs-SS from the PORTSC speed field (0 =
+  "ambiguous"), but an untrained SS port also reads 0/speed-stale —
+  the guess is exactly what wedges PR on training links. The xHCI
+  spec answers this deterministically: the Supported Protocol
+  Capability (ext-cap ID 2) lists each controller's USB2/USB3 port
+  ranges. Plus the 4 real IDs from WMI (15B7/15B6/43F7/15B8) go in a
+  quirk table (names only, no invented quirks — honest).
+- Changes:
+  - New `kernel/usb/xhci_caps.{c,h}`: pure SPC entry decoder
+    (`major/start/count` from 16 bytes) + buffer walker; host-tested
+    (`tests/xhci_caps_test.c`: USB2+USB3 map, malformed, truncated,
+    stray entries). No MMIO in this TU by design.
+  - `xhci.c`: volatile ext-cap walk at init (handoff-walk pattern)
+    fills a per-controller map (≤4 ranges); boot line gains the
+    quirk name + `U2:a-b,U3:c-d` map (this photo-is-dignostics: the
+    next HW boot tells us the topology for free).
+  - Reset path: protocol 3 forces the wait-train/WPR branch even
+    when the speed field reads stale-USB2 (never PR an SS port);
+    known-USB2 ports skip the training wait (speed valid at connect —
+    persistent 0 fails fast at the PR attempt); unknown keeps the
+    legacy heuristic. USB2 behavior on known-USB2 ports is otherwise
+    H2-identical.
+- Explicitly NOT in H4: behavioral quirks per ID (none evidenced —
+  all 4 controllers fail identically, i.e. common path), SS link
+  management beyond H3, HW proof (owner boot photo).
+- Acceptance: `make test` RC=0 incl. new asserts, QEMU boots
+  unchanged (no ext caps there — map stays empty, heuristic path).
+
 ## Phase H3 (spec 2026-09-12): SuperSpeed endpoint companion support
 
 - Scope note (honest): this does NOT fix the USB keyboard (USB2

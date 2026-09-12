@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "usb.h"
+#include "xhci_caps.h"
 
 typedef struct {
     uint8_t bus, device, function;
@@ -11,7 +12,21 @@ typedef struct {
     uint32_t hci_version, hcc_params1, usbcmd, usbsts;
     uint64_t dcbaa_phys, cmd_ring_phys, event_ring_phys, erst_phys;
     uint8_t running;
+    /* Phase H4: Supported-Protocol port map (USB major 2/3 per range,
+     * 1-based ports) + quirk flags. Unknown when the walk finds
+     * nothing (QEMU): reset path keeps the legacy heuristic. */
+    uint8_t proto_major[XHCI_SPC_MAX_RANGES];
+    uint8_t proto_start[XHCI_SPC_MAX_RANGES];
+    uint8_t proto_count[XHCI_SPC_MAX_RANGES];
+    uint8_t proto_ranges;
+    uint32_t quirks;
 } rix_xhci_controller_t;
+/* Phase H4 quirk flags: none set today. The table below exists so the
+ * boot log names real silicon; behavioral quirks are added only with
+ * per-ID evidence, never preemptively. */
+#define XHCI_QUIRK_NONE 0u
+/* USB protocol major for a port: 2, 3, or 0 when the map is unknown. */
+int xhci_port_protocol(size_t controller, uint8_t port);
 
 typedef struct { uint8_t connected, enabled, speed, reset_complete; } rix_xhci_port_status_t;
 typedef struct { uint8_t slot_id, port, speed, state; } rix_xhci_device_t;
