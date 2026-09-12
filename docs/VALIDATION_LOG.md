@@ -931,3 +931,21 @@ SHELL READY, 0 exceptions. Shell prompt/echo path uncorrupted.
 
 Not claimed: other workers (per-driver audits pending), per-line
 atomicity, P1, hardware PASS.
+## 2026-09-12 — P1-slice: BSP timer preemption from IRQ context
+
+100 ms quantum (`pit_irq`, every 10th tick) into
+`scheduler_preempt_tick()`: BSP-only + runnable>=2 gated, else plain
+`yield` from IRQ context. No new locks, no stack changes; safety rides
+on E1 (sched_lock never observed held) and the leaves-only console
+discipline (preempted holders always come back). Bounded `PREEMPT`
+lines at 1/64/256, then silent. Symmetric AP preemption needs a
+per-CPU timer or reschedule-IPI (later, not claimed).
+
+Evidence: `make test` RC=0, `make image`/`iso` RC=0, UP SHELL READY
+(173 = 170 + 3, PREEMPT 1/64/256 all present), WHPX `-smp 4`:
+`online=4`, ping/shootdown ok, serial worker cpu=3, probe cpu=3,
+PREEMPT 1/64/256 (one glued mid-prompt per the per-call limit),
+SHELL READY, 0 exceptions/panics/timeouts.
+
+Not claimed: AP preemption, priorities/quantums per task, worker
+migration remainder, hardware PASS.

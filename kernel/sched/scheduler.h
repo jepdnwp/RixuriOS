@@ -20,6 +20,9 @@ int scheduler_create_fork_child(uint64_t pid, uint64_t entry, uint64_t user_stac
 int scheduler_create_fork_child_context(uint64_t pid, const rix_user_context_t *context,
                                         rix_task_id_t *out_id);
 __attribute__((noreturn)) void scheduler_exit_current(void);
+/* Phase P1-slice: timer preemption entry (called from PIT IRQ, BSP
+ * only enforced inside). No-op unless BSP and runnable>=2. */
+void scheduler_preempt_tick(void);
 void scheduler_yield(void);
 rix_task_id_t scheduler_current_id(void);
 uint32_t scheduler_runnable_count(void);

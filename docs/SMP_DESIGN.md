@@ -23,6 +23,34 @@
 
 ## Phase E4 (done 2026-09-12): input lock + serial-worker migration
 
+## Phase E5 (deferred 2026-09-12): keyboard/xhci/net migration
+
+- Audit result: ps2 already has `ps2_lock`, but keyboard↔xhci share
+  the HC (event ring/TRBs, pure-poll, no IRQ handler) and the net
+  stack is fully unlocked against BSP syscall paths. All three need
+  subsystem locks first — and the rig has `xHCI: controllers=0`, so
+  HC-lock behavior would be unprovable here. Deferred with reason,
+  not forgotten: each migrates with its lock in its own phase.
+
+## Phase P1-slice (done 2026-09-12): BSP timer preemption
+
+- Quantum 10 PIT ticks (100 Hz → 100 ms) on the BSP only; APs stay
+  cooperative (documented asymmetry; symmetric preemption needs a
+  per-CPU timer or reschedule-IPI — later).
+- `scheduler_preempt_tick()` (called from `pit_irq`): no-op unless
+  calling CPU is the BSP and runnable>=2; else `yield`. IRQ posture:
+  IF=0 in handler → yield's `flags` logic skips `sti`, `iret`
+  restores; `cli` harmless; sched_lock never observed held (E1: yield
+  holds it only under `cli`, creates under irqsave). No sleep under
+  console/tty/input locks ⇒ a preempted holder is always
+  reschedulable ⇒ bounded waiter spins, no deadlock.
+- No nested-IRQ hazard (gates are IF=0); no stack pile-up (frames pop
+  via `iret` on resume; handler runs µs vs 100 ms quantum).
+- Pre-init safe: empty map/tasks ⇒ early return before touching state.
+- Proof: bounded `PREEMPT n` lines (1st/64th/256th, then silent) +
+  shell alive + verdicts. Revert bar: any IRQ-context fault or lost
+  shell.
+
 - First worker migration (one per phase for bisectability). Chosen:
   `serial_tty_worker` — its whole loop is already-locked calls after
   this phase: `serial_read_byte` (E3 console lock), `tty_input` (new

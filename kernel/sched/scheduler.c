@@ -158,6 +158,20 @@ int scheduler_init(void){
 }
 void scheduler_tick(void){ticks++;}
 uint64_t scheduler_ticks(void){return ticks;}
+/* Phase P1-slice BSP timer preemption (see SMP_DESIGN.md). IRQ-safe by
+ * construction: sched_lock is never observed held here (yield holds it
+ * only under cli, creates under irqsave), and no sleep happens under
+ * console/tty/input locks, so a preempted holder always comes back. */
+static volatile uint64_t preempt_count;
+void scheduler_preempt_tick(void){
+    if(sched_cpu()!=(uint32_t)smp_bsp_index())return;
+    if(scheduler_runnable_count()<2)return;
+    preempt_count++;
+    if(preempt_count==1||preempt_count==64||preempt_count==256){
+        kernel_log("PREEMPT ");kernel_log_dec(preempt_count);kernel_log("\r\n");
+    }
+    scheduler_yield();
+}
 rix_task_id_t scheduler_current_id(void){return tasks[cpu_current[sched_cpu()]].id;}
 uint32_t scheduler_runnable_count(void){uint32_t n=0;for(uint32_t i=0;i<RIX_MAX_TASKS;i++)if(tasks[i].state==TASK_RUNNABLE||tasks[i].state==TASK_RUNNING)n++;return n;}
 void scheduler_dump_states(void){
