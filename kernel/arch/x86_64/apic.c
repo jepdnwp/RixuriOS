@@ -64,7 +64,11 @@ int lapic_init(void) {
     return 0;
 }
 
-uint32_t lapic_id(void) { return lapic_read(APIC_REG_ID) >> 24; }
+uint32_t lapic_id(void) {
+    /* x2APIC MSR 0x802 returns the complete 32-bit ID. The MMIO LAPIC ID
+     * register stores the legacy 8-bit value in bits 31:24. */
+    return x2apic_mode ? lapic_read(APIC_REG_ID) : (lapic_read(APIC_REG_ID) >> 24);
+}
 void lapic_eoi(void) { lapic_write(APIC_REG_EOI, 0); }
 void lapic_enable_pic_extint(void) { lapic_write(APIC_REG_LVT_LINT0, 7u << 8); }
 
