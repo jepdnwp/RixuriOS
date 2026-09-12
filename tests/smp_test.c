@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include "kernel/arch/x86_64/smp.h"
 #include "kernel/arch/x86_64/acpi.h"
+#include "kernel/arch/x86_64/tss.h"
 #include "kernel/mm/vmm.h"
 
 /* HW stubs: this TU exercises the pure smp_build_map core plus the
@@ -88,25 +89,26 @@ int vmm_map_page_in_pml4(uint64_t pml4, uint64_t va, uint64_t pa, uint64_t flags
     map_va = va; map_pa = pa; map_flags = flags;
     return 0;
 }
-static uint8_t fake_pages[4][4096];
-static uint64_t fake_phys[4];
+static uint8_t fake_pages[16][4096];
+static uint64_t fake_phys[16];
 static size_t fake_count;
 void *vmm_phys_ptr(uint64_t pa) {
     for (size_t i = 0; i < fake_count; ++i)
         if (fake_phys[i] == pa) return fake_pages[i];
-    if (fake_count < 4 && pa != 0 && !(pa & 0xFFFu)) {
+    if (fake_count < 16 && pa != 0 && !(pa & 0xFFFu)) {
         fake_phys[fake_count] = pa;
         return fake_pages[fake_count++];
     }
     return 0;
 }
-/* Backing store for the per-CPU stacks smp_start_aps allocates. */
-static uint8_t cpu_stack_arena[16][4096] __attribute__((aligned(4096)));
-static size_t cpu_stack_next;
+/* Backing store for the per-CPU stacks (4 pages each) plus the Phase-C2
+ * per-AP TSS page and DF-stack page (1 each) smp_start_aps allocates. */
+static uint8_t cpu_arena[40][4096] __attribute__((aligned(4096)));
+static size_t cpu_arena_next;
 uint64_t pmm_alloc_pages(size_t count) {
-    if (count != 4 || cpu_stack_next + 4 > 16) return 0;
-    uint64_t base = (uint64_t)(uintptr_t)&cpu_stack_arena[cpu_stack_next];
-    cpu_stack_next += 4;
+    if (!count || cpu_arena_next + count > 40) return 0;
+    uint64_t base = (uint64_t)(uintptr_t)&cpu_arena[cpu_arena_next];
+    cpu_arena_next += count;
     return base;
 }
 static uint64_t reserved_pages[8];
@@ -273,6 +275,54 @@ int main(void) {
     assert(smp_cpu(1)->stack_phys != 0);
     assert(smp_cpu(2)->stack_phys != 0 && smp_cpu(2)->stack_phys != smp_cpu(1)->stack_phys);
     assert(smp_cpu(3)->stack_phys != 0 && smp_cpu(3)->stack_phys != smp_cpu(2)->stack_phys);
+    /* Phase C2: each started AP owns a recorded TSS page + DF stack. */
+    assert(smp_cpu(1)->tss_page_phys != 0);
+    assert(smp_cpu(2)->tss_page_phys != 0 && smp_cpu(2)->tss_page_phys != smp_cpu(1)->tss_page_phys);
+    assert(smp_cpu(3)->tss_page_phys != 0 && smp_cpu(3)->tss_page_phys != smp_cpu(2)->tss_page_phys);
+    assert(smp_cpu(1)->df_stack_phys != 0);
+    assert(smp_cpu(2)->df_stack_phys != 0 && smp_cpu(2)->df_stack_phys != smp_cpu(1)->df_stack_phys);
+    assert(smp_cpu(3)->df_stack_phys != 0 && smp_cpu(3)->df_stack_phys != smp_cpu(2)->df_stack_phys);
+    for (size_t ap = 1; ap <= 3; ++ap) {
+        uint8_t *tmem = vmm_phys_ptr(smp_cpu(ap)->tss_page_phys);
+        assert(tmem != 0);
+        uint64_t e1 = 0, e5lo = 0;
+        for (size_t b = 0; b < 8; ++b) {
+            e1 |= (uint64_t)tmem[8 + b] << (8 * b);
+            e5lo |= (uint64_t)tmem[5 * 8 + b] << (8 * b);
+        }
+        assert(e1 == 0x00AF9A000000FFFFULL);
+        assert(((e5lo >> 40) & 0xFFULL) == 0x89ULL);
+        /* TSS content: rsp0 = AP stack top, ist[0] = DF top, no bitmap. */
+        uint8_t *ts = tmem + GDT_CPU_TSS_OFF;
+        uint64_t rsp0 = 0, ist0 = 0;
+        for (size_t b = 0; b < 8; ++b) {
+            rsp0 |= (uint64_t)ts[4 + b] << (8 * b);
+            ist0 |= (uint64_t)ts[36 + b] << (8 * b);
+        }
+        assert(rsp0 == smp_cpu(ap)->stack_phys + 4u * 4096u - 8u);
+        /* ist[0] is a VA (physmap of the DF page), not the phys value. */
+        assert(ist0 == (uint64_t)(uintptr_t)(vmm_phys_ptr(smp_cpu(ap)->df_stack_phys) + 4096u));
+        assert(ts[102] == (uint8_t)sizeof(x86_tss_t) && ts[103] == 0);
+        /* Trampoline GDTR slot targets this AP's copy (limit 55). */
+        uint8_t *tbuf = vmm_phys_ptr(smp_cpu(ap)->trampoline_phys);
+        assert(tbuf != 0);
+        uint16_t glim = (uint16_t)tbuf[SMP_TRAMP_DATA_GDTR] |
+                        ((uint16_t)tbuf[SMP_TRAMP_DATA_GDTR + 1] << 8);
+        uint64_t gbase = 0;
+        for (size_t b = 0; b < 8; ++b)
+            gbase |= (uint64_t)tbuf[SMP_TRAMP_DATA_GDTR + 2 + b] << (8 * b);
+        assert(glim == GDT_CPU_COPY_ENTRIES * 8u - 1u);
+        assert(gbase == (uint64_t)(uintptr_t)tmem);
+    }
+    /* Routing through the strong tss_cpu_index override: an AP LAPIC ID
+     * resolves to its registered TSS, unknown IDs stay off it. */
+    stub_lapic = 1;
+    assert(tss_current() ==
+           (const x86_tss_t *)(vmm_phys_ptr(smp_cpu(1)->tss_page_phys) + GDT_CPU_TSS_OFF));
+    stub_lapic = 9;
+    assert(tss_current() !=
+           (const x86_tss_t *)(vmm_phys_ptr(smp_cpu(1)->tss_page_phys) + GDT_CPU_TSS_OFF));
+    stub_lapic = 0;
     for (size_t ap = 0; ap < 3; ++ap) {
         uint64_t phys = 0x8000ULL + ap * 0x1000ULL;
         uint8_t *written = vmm_phys_ptr(phys);

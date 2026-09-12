@@ -240,8 +240,12 @@ acpi-test: | build
 		build/acpi_test
 
 smp-test: | build
-	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. -Iinclude tests/smp_test.c kernel/arch/x86_64/smp.c kernel/arch/x86_64/smp_trampoline.S -o build/smp_test
+	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. -Iinclude tests/smp_test.c kernel/arch/x86_64/smp.c kernel/arch/x86_64/gdt.c kernel/arch/x86_64/smp_trampoline.S -o build/smp_test
 		build/smp_test
+
+gdt-test: | build
+	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/gdt_test.c kernel/arch/x86_64/gdt.c -o build/gdt_test
+		build/gdt_test
 
 rixfs-mount-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/rixfs_mount_test.c kernel/fs/rixfs.c -o build/rixfs_mount_test
@@ -259,7 +263,7 @@ e1000-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/e1000_test.c kernel/net/e1000.c -o build/e1000_test
 		build/e1000_test
 
-test: check usb-test hid-test tty-test shell-test pipe-test net-test libc-test hosts-test rtl-test e1000-test acpi-test smp-test rixfs-mount-test symlink-test
+test: check usb-test hid-test tty-test shell-test pipe-test net-test libc-test hosts-test rtl-test e1000-test acpi-test smp-test gdt-test rixfs-mount-test symlink-test
 	@echo 'Static kernel build checks completed.'
 
 sysroot:

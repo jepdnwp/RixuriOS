@@ -809,3 +809,34 @@ Build hygiene note: `make` printed `Clock skew detected` (WSL↔Windows FS
 clocks disagree) — dependency staleness is a real risk here; when in
 doubt use `make clean` and verify artifact freshness by disassembly +
 mtime cascade, not by trust.
+## 2026-09-12 — P0 Phase D1 verdicts close (WHPX -smp 4) + Phase C2 done
+
+D1 verdicts (pending since Phase D1, two frozen/starved WHPX runs with
+31-line truncated logs and no verdict lines — nested-virtualization
+slowness plus an overnight host sleep, never a guest fault): on the C2
+tree, WHPX `-smp 4` prints `SMP: ping 1 ok`, `ping 2 ok`, `ping 3 ok`
+and `SMP: shootdown ok`, then `SMP: online=4`, `USER_ENTER`,
+`SHELL READY` with 0 exceptions/panics/timeouts over 203 serial lines.
+The D1b GDT-switch fix is therefore proven on real virtualization, not
+just WSL2-TCG.
+
+C2 implementation (`kernel/arch/x86_64/gdt.c`, `tss.h`, `smp.{c,h}`):
+per-AP GDT copy (identical 7-entry layout, TSS stays 0x28 — zero
+trampoline asm change) + TSS (`rsp0` = AP stack top, `ist[0]` = private
+DF top, no bitmap) on one PMM page, private 4 KiB DF stack on a second;
+trampoline DATA GDTR slot carries the per-AP copy (IDTR still the live
+snapshot); `tss_set_rsp0`/`tss_current` route via `tss_cpu_index()`
+(weak -1 in gdt.c, strong `smp_cpu_id()` in smp.c — the established
+weak-stub pattern, no new include edges); BSP keeps its static TSS and
+never registers. Skip-AP-on-alloc-failure (DEGRADED) and >8-CPU
+deferral unchanged. Log proof: `SMP: AP 1 tss=0x108000 df=0x109000`,
+`AP 2 tss=0x10e000 df=0x10f000`, `AP 3 tss=0x114000 df=0x115000`.
+
+Evidence: `make test` RC=0 (new `gdt-test` for the pure builder +
+registry negatives; `smp_test` extended with TSS/DF record, GDT-desc,
+GDTR-slot and routing asserts — one harness bug caught en route: the
+first `ist0` expectation compared a VA against a phys value), `make
+image`/`iso` RC=0, `-smp 1` SHELL READY clean, `-smp 4` as above.
+
+Not claimed: per-CPU scheduler/runqueues (Phase E), preemptive
+scheduler (P1), hardware PASS.

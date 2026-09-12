@@ -1,12 +1,20 @@
 #include "smp.h"
 #include "apic.h"
+#include "tss.h"
 #include "../../mm/pmm.h"
 #include "../../mm/vmm.h"
 #include "kernel.h"
 #include <stddef.h>
 #include <stdint.h>
 
+_Static_assert(SMP_MAX_CPUS <= TSS_MAX_CPUS,
+               "per-CPU TSS registry smaller than SMP map");
+
 static smp_map_t smp_map;
+
+/* Phase C2: strong TSS-routing override (weak default -1 lives in gdt.c):
+ * the calling CPU's map index, -1 when unknown. */
+int tss_cpu_index(void) { return smp_cpu_id(); }
 
 /* Phase B spin calibration: PAUSE loops with deliberate overshoot. Exact
  * timing is unknowable without a TSC rate, so every constant errs on the
@@ -48,6 +56,8 @@ int smp_build_map(const acpi_cpu_info_t *entries, size_t n,
         out->cpu[i].state = SMP_CPU_ABSENT;
         out->cpu[i].stack_phys = 0;
         out->cpu[i].trampoline_phys = 0;
+        out->cpu[i].tss_page_phys = 0;
+        out->cpu[i].df_stack_phys = 0;
     }
     out->count = 0;
     out->online = 0;
@@ -262,14 +272,20 @@ struct smp_descriptor_ptr {
     uint64_t base;
 } __attribute__((packed));
 
-static void smp_capture_descriptor_tables(uint8_t *page) {
-    struct smp_descriptor_ptr gdtr, idtr;
-    __asm__ volatile("sgdt %0" : "=m"(gdtr) :: "memory");
+static void smp_capture_idt(uint8_t *page) {
+    struct smp_descriptor_ptr idtr;
     __asm__ volatile("sidt %0" : "=m"(idtr) :: "memory");
-    for (size_t i = 0; i < sizeof(gdtr); ++i)
-        page[SMP_TRAMP_DATA_GDTR + i] = ((const uint8_t *)&gdtr)[i];
     for (size_t i = 0; i < sizeof(idtr); ++i)
         page[SMP_TRAMP_DATA_IDTR + i] = ((const uint8_t *)&idtr)[i];
+}
+
+/* Phase C2: per-AP GDTR for the trampoline DATA slot (limit + 64-bit
+ * base, same 10-byte wire format the snapshot used). Host-testable. */
+static void smp_write_gdtr(uint8_t *page, uint16_t limit, uint64_t base) {
+    page[SMP_TRAMP_DATA_GDTR + 0] = (uint8_t)(limit & 0xFFu);
+    page[SMP_TRAMP_DATA_GDTR + 1] = (uint8_t)((limit >> 8) & 0xFFu);
+    for (size_t i = 0; i < 8; ++i)
+        page[SMP_TRAMP_DATA_GDTR + 2 + i] = (uint8_t)((base >> (8 * i)) & 0xFFu);
 }
 
 /* Phase D2: additive checksum over the trampoline DATA area the AP
@@ -472,12 +488,57 @@ int smp_start_aps(void) {
         cpu->stack_phys = cpu_stack;
         uint64_t stack_top =
             cpu_stack + (uint64_t)SMP_CPU_STACK_PAGES * RIXURI_PAGE_SIZE - 8u;
+        /* Phase C2: per-CPU TSS + GDT copy + double-fault stack. Page A
+         * carries the 7-entry GDT copy at +0 (selector map identical to
+         * the BSP: TSS stays 0x28, so the trampoline needs no change)
+         * and the TSS at GDT_CPU_TSS_OFF; page B is the zeroed DF stack.
+         * Descriptors use physmap VAs: the AP dereferences them in long
+         * mode on these same tables. Any failure skips the AP
+         * (DEGRADED, same policy as the C1 stack above). */
+        uint64_t tss_page = pmm_alloc_pages(1);
+        uint64_t df_stack = pmm_alloc_pages(1);
+        uint8_t *tss_mem = tss_page ? vmm_phys_ptr(tss_page) : 0;
+        uint8_t *df_mem = df_stack ? vmm_phys_ptr(df_stack) : 0;
+        if (!tss_page || !df_stack || !tss_mem || !df_mem) {
+            kernel_log("SMP: AP TSS alloc failed\r\n");
+            continue;
+        }
+        for (size_t z = 0; z < RIXURI_PAGE_SIZE; ++z) {
+            tss_mem[z] = 0;
+            df_mem[z] = 0;
+        }
+        x86_tss_t *cpu_tss_ptr = (x86_tss_t *)(tss_mem + GDT_CPU_TSS_OFF);
+        cpu_tss_ptr->rsp0 = stack_top;
+        cpu_tss_ptr->ist[0] =
+            (uint64_t)(uintptr_t)(df_mem + RIXURI_PAGE_SIZE);
+        cpu_tss_ptr->iomap_base = (uint16_t)sizeof(x86_tss_t);
+        if (gdt_build_cpu_copy((uint64_t *)tss_mem,
+                               (uint64_t)(uintptr_t)cpu_tss_ptr,
+                               (uint32_t)(sizeof(x86_tss_t) - 1)) != 0) {
+            kernel_log("SMP: AP GDT copy failed\r\n");
+            continue;
+        }
+        cpu->tss_page_phys = tss_page;
+        cpu->df_stack_phys = df_stack;
+        tss_register_cpu((int)i, cpu_tss_ptr);
+        kernel_log("SMP: AP ");
+        kernel_log_dec(cpu->apic_id);
+        kernel_log(" tss=");
+        kernel_log_hex(tss_page);
+        kernel_log(" df=");
+        kernel_log_hex(df_stack);
+        kernel_log("\r\n");
         if (smp_setup_trampoline(buffer, page, ap_pml4, stack_top,
                                  (uint64_t)(uintptr_t)ap_entry) != 0) {
             kernel_log("SMP: trampoline setup failed\r\n");
             continue;
         }
-        smp_capture_descriptor_tables(buffer);
+        /* IDTR still snapshotted live (shared kernel IDT); the GDTR slot
+         * takes this AP's private copy instead of the BSP snapshot. */
+        smp_capture_idt(buffer);
+        smp_write_gdtr(buffer,
+                       (uint16_t)(GDT_CPU_COPY_ENTRIES * 8u - 1u),
+                       (uint64_t)(uintptr_t)tss_mem);
         uint64_t online_ptr = (uint64_t)(uintptr_t)&cpu->state;
         for (size_t b = 0; b < sizeof(online_ptr); ++b)
             buffer[SMP_TRAMP_DATA_ONLINE + b] = (uint8_t)(online_ptr >> (8 * b));

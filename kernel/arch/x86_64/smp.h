@@ -75,6 +75,11 @@ typedef struct {
     smp_cpu_state_t state;
     uint64_t stack_phys;
     uint64_t trampoline_phys;
+    /* Phase C2: per-CPU TSS page (GDT copy at +0, x86_tss_t at
+     * GDT_CPU_TSS_OFF) and per-CPU double-fault stack page. Zero when
+     * the AP was never started / allocation failed (DEGRADED). */
+    uint64_t tss_page_phys;
+    uint64_t df_stack_phys;
 } smp_cpu_t;
 
 typedef struct {
@@ -123,8 +128,8 @@ int smp_ping(size_t index);
 /* invlpg(va) on this CPU plus every other ONLINE AP, bounded single-flight
  * (only the BSP calls it; APs only ack). 0 complete, -1 timeout/send
  * failure, -2 bad address (zero or non-canonical). On a UP/single-online
- * topology only the local flush runs (no IPI). VMM integration (unmap
- * hook) is Phase D2. */
+ * topology only the local flush runs (no IPI). VMM unmap hook wired in
+ * Phase D2. */
 int smp_shootdown(uint64_t va);
 /* GDT/GDTR builder over a caller buffer (host-testable). */
 int smp_build_gdt(uint8_t *page, uint64_t page_phys);

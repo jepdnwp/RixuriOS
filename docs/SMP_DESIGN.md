@@ -102,6 +102,45 @@ smp_map_t: cpu[64], count, online, bsp_apic, bsp_index
 - `vmm_unmap_page_in_pml4` keeps its local-only flush with a comment
   stating the SMP rule; no in-tree caller unmaps shared kernel pages.
 
+## Phase C2 (done 2026-09-12): per-CPU TSS
+
+- Problem: one shared `tss` + one shared 4 KiB double-fault stack; every
+  AP `ltr`s selector 0x28 onto it (D1b). Parked APs never touch RSP0, but
+  any AP fault already switches to the SHARED IST[0] stack, and
+  `tss_set_rsp0` (per-task, `process_activate`) writes the shared TSS —
+  one concurrent BSP/AP fault or the first AP task corrupts state.
+- Design: per-AP GDT COPY (same 7-entry layout, selector map unchanged —
+  no trampoline asm change, `ltr $0x28` keeps working). Per started AP
+  the BSP allocates 2 PMM pages: page A holds the GDT copy at +0 and the
+  `x86_tss_t` at +64; page B is the zeroed 4 KiB DF stack. TSS init
+  mirrors the BSP (`rsp0` = AP stack top, `ist[0]` = DF top,
+  `iomap_base` = sizeof, rest zero). The trampoline DATA GDTR slot gets
+  the per-AP GDTR (limit 55, base = physmap VA of the copy) INSTEAD of
+  the kernel snapshot; IDTR snapshot is unchanged. Descriptors use
+  physmap VAs (valid when the AP runs long-mode on the shared tables).
+- Routing: `tss_set_rsp0`/`tss_current` resolve the current CPU via
+  `tss_cpu_index()` — weak default -1 in `gdt.c`, strong override in
+  `smp.c` returning `smp_cpu_id()` (established weak-stub pattern, no new
+  include edges). Index valid + registered → per-CPU TSS, else the BSP
+  static TSS (early boot, unknown CPU, >8-CPU deferred path all keep
+  today's behavior). Registration: `tss_register_cpu(i, tss_va)` at
+  bringup; BSP never registers (static TSS untouched — "BSP boots
+  exactly as before").
+- Failure policy: any per-AP alloc/build failure skips that AP
+  (DEGRADED, same as C1 stacks). `>8`-CPU topologies allocate nothing.
+- Host tests: new pure builder `gdt_build_cpu_copy()` (constants shared
+  with `gdt_init`, TSS desc via the same helper) + `tests/gdt_test.c`;
+  `smp_test.c` harness enlarged (any-count PMM arena, wider physmap
+  fake) with asserts for recorded `tss_page_phys`/`df_stack_phys`,
+  distinctness, and GDTR-slot content. No production-logic weakening.
+- Acceptance: `make test` RC=0, `-smp 1` SHELL READY clean, `-smp 4`
+  reaches `online=4` + shell with 0 exceptions (a bad per-AP GDTR/TSS
+  desc triple-faults at the first IPI/park exactly like the D1b class,
+  so clean boot is the proof), plus distinct per-AP `tss=`/`df=` phys
+  lines in the boot log. QEMU cannot distinguish the switch by selector
+  (still 0x28) — noted, not claimed. DONE 2026-09-12 (WHPX `-smp 4`:
+  distinct TSS/DF pages per AP, `online=4`, shell, 0 exceptions).
+
 ## Phase C1 (done 2026-09-11): per-CPU stacks + cpu_id
 
 - `smp_start_aps` allocates a zeroed 16 KiB PMM stack per started AP,
