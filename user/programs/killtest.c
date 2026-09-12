@@ -1,4 +1,5 @@
 #include <unistd.h>
+#include <errno.h>
 
 #define RIX_EACCES 13
 #define RIX_EINTR 4
@@ -44,7 +45,7 @@ static int allowed_cross_uid_case(void) {
         if (setuid(2000u) != 0 ||
             write(ready[1], "R", 1) != 1) _exit(2);
         rix_ssize_t result = read(gate[0], &marker, 1);
-        _exit(result == -RIX_EINTR ? 0 : 3);
+        _exit(result < 0 && errno == RIX_EINTR ? 0 : 3);
     }
     (void)close(ready[1]);
     (void)close(gate[0]);
@@ -79,7 +80,7 @@ static int denied_cross_uid_case(void) {
     (void)close(ready[1]);
     (void)close(gate[0]);
     if (wait_for_ready(ready[0]) != 0 ||
-        kill(child, RIX_SIGUSR1) != -RIX_EACCES ||
+        kill(child, RIX_SIGUSR1) == 0 || errno != RIX_EACCES ||
         release_child(gate[1]) != 0) {
         (void)release_child(gate[1]);
         (void)wait_success(child);

@@ -1010,3 +1010,43 @@ track — explicitly out of scope, not a regression from any E-phase.
 The `26/26 PASS` of 09-09 predates the drift (Sep-11 program/image
 churn + external xhci work).
 Not attempted: userland archaeology (own track), HW PASS.
+## 2026-09-12 — U1: user-reported rixtest #PF fixed (libc nanosleep)
+
+Report: `rixtest` in QEMU died with `#PF CR2=0x1 e=0x5` at
+`RIP=0x80000006a5`, pid 6. Forensics (IST#1, task dump, stack dump,
+RIP bytes, cr3trace) worked exactly as designed. Disassembly of the
+smoke ELFs pins RIP to `abi-negative`'s libc `nanosleep` wrapper
+(`cmpq $0,(%rdi)`): the wrapper NULL-checked but then dereferenced
+`request->tv_sec` for the `(void*)1` probe, faulting in ring3 before
+the kernel could return EFAULT.
+Fix: NULL-only wrapper (kernel validates all: EFAULT/EINVAL, layouts
+match per `time.h`). `make test` RC=0, rixtest smoke 4/6 PASS with 0
+faults. Remaining `killtest` + `capdelegatetest` FAILs (status=1,
+clean, no crash) reproduce identically on the 12340ac baseline —
+pre-existing signal/capability bugs, filed as follow-ups.
+## 2026-09-12 — S1+F1+U1+U2: suite failures fixed (NVMe wedge, extents, CRLF, errno)
+
+Six of eight suite failures root-caused and fixed (auth re-verified
+13/13 PASS; cp_mv/file_utils/stat/touch/curl green):
+- S1 NVMe flush-timeout wedge (`nvme.c`): silent `io_ready=0` killed
+  all storage after one slow virtualized flush. No wedge anymore
+  (one-time marker), `pause` in poll loops. Host-disk forensics
+  (pristine-vs-bad image sector diff: only journal scratch) proved
+  the disk was always clean.
+- CRLF poisoning: Windows checkout gave `etc/*` CRLF (no
+  .gitattributes rule); the trailing `\r` broke shadow hash parsing
+  (65-char field vs 64). Fixed with `etc/** text eol=lf` + LF
+  working files + CRLF-tolerant `next_field` in authcheck.
+- U1 libc `nanosleep` dereferenced non-NULL garbage before the kernel
+  could EFAULT (rixtest #PF at 0x80000006a5, user-reported); NULL-only
+  wrapper now, kernel validates all.
+- F1 extent exhaustion: 4 direct extents + scattering allocator wedged
+  any growing dir after ~5 sectors (`mv: cannot create` with healthy
+  disk, staged returns proving `append_extent`). Adjacency-preferring
+  `alloc_sec_near` + backwards coalescing, format untouched.
+- U2 errno convention: libc returns -1+errno but authcheck/killtest/
+  capdelegatetest/metatest/renametest compared raw negatives. All
+  flipped to `result<0 && errno==` (+ includes). Internal -1/-2 codes
+  (ping echo_rounds, uniq read_line) verified correct, untouched.
+Pending re-verification: cred, phase20-test, killtest/capdelegatetest/
+renametest direct runs, full-suite re-run, UP/SMP4 sanity on this tree.

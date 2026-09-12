@@ -1,5 +1,6 @@
 #include "unistd.h"
 #include "auth_crypto.h"
+#include <errno.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -58,11 +59,15 @@ static int next_field(const char **cursor, char *field, size_t capacity) {
     size_t length = 0;
     if (!cursor || !*cursor || !field || capacity == 0) return -1;
     start = *cursor;
-    while (start[length] && start[length] != ':' && start[length] != '\n') ++length;
+    /* Stop at ':' / '\n' / NUL; a trailing '\r' (CRLF checkout of the
+     * database) is stripped so the length checks below see the field,
+     * not the line ending. */
+    while (start[length] && start[length] != ':' && start[length] != '\n' && start[length] != '\r') ++length;
     if (length + 1u > capacity) return -1;
     for (size_t index = 0; index < length; ++index) field[index] = start[index];
     field[length] = 0;
     if (start[length] == ':') *cursor = start + length + 1u;
+    else if (start[length] == '\r') *cursor = start + length + 1u;
     else *cursor = start + length;
     return (int)length;
 }
@@ -225,12 +230,14 @@ int program_main(int argc, char **argv, char **envp) {
     if (argc == 2 && text_equal(argv[1], "protected")) {
         int fd;
         if (setuid(1000u) != 0) return 1;
+        /* NOTE: libc wrappers return -1 with errno (rix_int_result), not
+         * raw negatives — compare errno, never the return value. */
         fd = openat(RIX_VFS_AT_FDCWD, "/etc/shadow", RIX_VFS_O_RDONLY, 0u);
         if (fd >= 0) {
             (void)close(fd);
             return 1;
         }
-        if (fd != -RIX_EACCES) return 1;
+        if (errno != RIX_EACCES) return 1;
         out("shadow-protected=PASS\n");
         return 0;
     }

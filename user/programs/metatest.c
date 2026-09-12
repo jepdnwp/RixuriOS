@@ -1,4 +1,5 @@
 #include "unistd.h"
+#include <errno.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -62,14 +63,15 @@ static int check_chown_policy(void) {
     rix_pid_t child = fork();
     if (child == (rix_pid_t)-1) return -1;
     if (child == 0) {
-        if (setuid(1000u) == 0 && chown("/usr/meta-policy", 1000u, 1000u) == -RIX_EACCES)
+        /* libc wrappers return -1 with errno, not raw negatives. */
+        if (setuid(1000u) == 0 && chown("/usr/meta-policy", 1000u, 1000u) < 0 && errno == RIX_EACCES)
             _exit(0);
         _exit(1);
     }
     uint64_t status = 0;
     if (wait(child, &status) != child || status != 0) return -1;
     if (drop_capabilities(RIX_CAP_DAC_OVERRIDE) != 0 ||
-        chown("/usr/meta-policy", 1000u, 1000u) != -RIX_EACCES)
+        (chown("/usr/meta-policy", 1000u, 1000u) == 0 || errno != RIX_EACCES))
         return -1;
     return emit("chown-policy=PASS\n");
 }
@@ -82,7 +84,7 @@ static int check_copy(const char *path, const char *marker, int require_source_a
         acl.user != 1000u || acl.user_perm != 4u || acl.group != 2000u ||
         acl.group_perm != 6u || acl.mask != 6u)
         return -1;
-    if (require_source_absent && stat("/usr/meta-source", &st) != -RIX_EINVAL)
+    if (require_source_absent && (stat("/usr/meta-source", &st) == 0 || errno != RIX_EINVAL))
         return -1;
     if (emit(marker) != 0 || emit("\n") != 0) return -1;
     return 0;

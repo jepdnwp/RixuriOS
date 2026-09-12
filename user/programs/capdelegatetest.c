@@ -1,4 +1,5 @@
 #include <unistd.h>
+#include <errno.h>
 
 #define RIX_EINVAL 22
 
@@ -14,7 +15,9 @@ static int emit(const char *text) {
 }
 
 static int expect_error(int result, int error) {
-    return result == -error ? 0 : -1;
+    /* libc wrappers return -1 with errno (rix_int_result), not raw
+     * negatives — compare errno, never the return value. */
+    return result < 0 && errno == error ? 0 : -1;
 }
 
 int program_main(int argc, char **argv, char **envp) {

@@ -6,3 +6,6 @@
 *.h text eol=lf
 *.ld text eol=lf
 *.md text eol=lf
+# Extensionless guest data files are packed into the RixFS image byte-raw;
+# CRLF checkouts poison line-oriented parsers (auth shadow phash field).
+etc/** text eol=lf

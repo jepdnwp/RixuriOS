@@ -47,7 +47,10 @@ rix_pid_t waitpid(rix_pid_t child,uint64_t*status,uint32_t options){return rix_p
  * ABI unchanged. */
 _Static_assert(sizeof(struct timespec) == 16, "timespec ABI width");
 _Static_assert(sizeof(rix_timespec_t) == sizeof(struct timespec), "rix/POSIX timespec match");
-int nanosleep(const struct timespec *request,struct timespec *remaining){if(!request||request->tv_sec<0||request->tv_nsec<0||request->tv_nsec>=1000000000L){errno=RIX_EINVAL;return -1;}return(int)rix_int_result(rix_sys(35,(long)request,(long)remaining,0));}
+int nanosleep(const struct timespec *request,struct timespec *remaining){/* Validate NULL only and pass the pointer through: any other
+ * dereference here would fault in ring3 before the kernel can return
+ * EFAULT (abi-negative probes exactly this with (void*)1). The kernel
+ * validates ranges itself (EINVAL) after copy_from_user (EFAULT). */if(!request){errno=RIX_EINVAL;return -1;}return(int)rix_int_result(rix_sys(35,(long)request,(long)remaining,0));}
 unsigned sleep(unsigned seconds){struct timespec request={seconds,0},remaining={0,0};if(nanosleep(&request,&remaining)==0)return 0;return(unsigned)remaining.tv_sec+(remaining.tv_nsec!=0);}
 int usleep(unsigned usec){if(usec>=1000000u){errno=RIX_EINVAL;return -1;}struct timespec request={0,(long)usec*1000L};return nanosleep(&request,0);}
 /* The kernel exposes one realtime source; MONOTONIC is accepted and

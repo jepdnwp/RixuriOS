@@ -164,6 +164,86 @@
 
 ## Phase P1 (reverted 2026-09-12): timer preemption is premature
 
+## Phase U1 (done 2026-09-12): libc nanosleep NULL-deref fix (rixtest #PF)
+
+- User-reported `rixtest` crash in QEMU: `#PF CR2=0x1 e=5` in ring3
+  pid 6 at `abi-negative`'s `nanosleep((void*)1)` probe. Disassembly
+  pins it to libc's wrapper (`cmpq $0,(%rdi)` = the `tv_sec<0`
+  pre-check): it validated NULL but dereferenced every other pointer
+  before the kernel could return EFAULT — exactly what the ABI test
+  probes. Sibling wrappers (`openat`, `getdents`, `clock_gettime`)
+  pass pointers through untouched.
+- Fix (`user/libc/src/unistd.c` only): NULL-check only, pass through.
+  Safe because the kernel handler validates everything itself
+  (`copy_from_user` → EFAULT; nsec/overflow → EINVAL, including
+  negative-valued signed longs seen as huge u64) and the layouts
+  match (16-byte sec+nsec words, documented in `time.h`).
+- rixtest smoke after fix: 4/6 PASS (`negative_abi`, capdelegatecheck,
+  sessiontest, sessionlisttest), 0 faults. `killtest` +
+  `capdelegatetest` fail cleanly (status=1, no crash) — A/B-proven
+  pre-existing on the 12340ac baseline (signal/capability paths),
+  filed, not attempted here.
+
+## Phase S1 (spec 2026-09-12): NVMe flush-timeout wedge (suite failures)
+
+- Symptom: 6/28 suite steps fail (`command not found` after the first
+  journaled write; permanent for the boot; silent; nondeterministic;
+  disk verified byte-clean except journal scratch).
+- Root cause (`kernel/storage/nvme.c:nvme_flush`): on completion
+  timeout it sets `c->io_ready=0` with NO diagnostic and returns -6.
+  Every later IO then fails fast (-2) forever: one slow virtualized
+  flush (QEMU fsync to a Windows file can stall 100 ms+) kills all
+  storage for the rest of the boot. The IO path already treats
+  timeouts as transient (one-time print, controller stays alive);
+  flush did the opposite. A/B-proven pre-existing (fails identically
+  on the 12340ac baseline, which never had SMP changes).
+- Fix (minimal): flush timeout no longer wedges (`io_ready` kept,
+  one-time `NVMe: IO completion timeout` marker like the IO path,
+  error still returned so callers fail cleanly with journal semantics
+  intact). `pause` every 256 poll iterations in the IO + flush loops
+  so a descheduled vCPU/QEMU IO thread progresses instead of burning
+  quanta spinning (fewer false timeouts, no other behavior change).
+  Limits unchanged. Dead-controller boots now error slowly per-op
+  instead of fast-failing — documented, accepted (correctness over
+  dead-HW speed).
+- Acceptance: full auth sequence green twice in a row + the six
+  failing steps re-run green + UP/SMP4 unchanged.
+
+## Phase F1 (done 2026-09-12): extent-exhaustion (adjacency allocator)
+
+- Symptom (surfaced validating S1): `mv` to a fresh name fails with
+  `cannot create` although disk/bitmap/inodes are healthy; host dump
+  shows the destination dir at all 4 direct extents.
+- Root cause: 4 direct extents per inode + first-fit allocator that
+  interleaves dir and file-data sectors → a few cumulative single-
+  sector growths exhaust a dir's extents on a nearly-empty disk, and
+  every later growth (`dir_append`, rename-new-sector, file `grow`)
+  fails permanently. Instrumented to `append_extent` via staged
+  returns (no guest forensics needed beyond serial markers).
+- Fix (format-compatible, no layout change): `append_extent` also
+  coalesces backwards; new `alloc_sec_near` tries the file's own
+  extent ends/starts first and falls back to the old scan;
+  `grow`/`dir_append`/rename-new-sector pass their extents.
+  Fragmentation collapses in the common case; the 4-extent ceiling
+  remains (documented limitation, not a silent wedge).
+- Acceptance: the bisect sequence (init/renametest/cp/mv) green +
+  full cp_mv suite green + powerloss matrix re-run (allocator layout
+  changed) + UP/SMP4 unchanged.
+
+## Phase U2 (done 2026-09-12): errno-convention family (test programs)
+
+- libc wrappers return -1 with errno (`rix_int_result`); a family of
+  test programs compared raw negatives instead: authcheck
+  `protected` (`fd != -EACCES`), killtest (`read == -EINTR`,
+  `kill != -EACCES`), capdelegatetest `expect_error`
+  (`result == -error`), metatest chown/stat (`==/-EACCES/EINVAL`),
+  renametest stat/rename (`!=-EINVAL/EEXIST`). All flipped to
+  `result<0 && errno==` form (+ `<errno.h>` includes). Internal
+  -1/-2 conventions (ping `echo_rounds`, uniq `read_line`) verified
+  correct and untouched.
+- Acceptance: auth 13/13 markers, killtest/renametest/capdelegatetest
+  markers, full suite re-run.
+
 - Attempted (slice: BSP quantum; full: RESCHED-IPI 227 + hog proof):
   green TWICE on UP/SMP4 — then a silent UP hang on the third boot.
 - Root cause (two layers, both real): (1) never-yielding tasks inherit
