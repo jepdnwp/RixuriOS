@@ -183,6 +183,8 @@ static void xhci_hotplug_worker(void *arg){
 }
 static void serial_tty_worker(void *arg){
  (void)arg;
+ /* Phase E4: first migrated worker (input lock audited). Placement proof. */
+ {static unsigned n=0;if(n<1){int c=smp_cpu_id();klog_write("SMP: serial worker on cpu=");klog_write_dec((uint64_t)(c<0?99:c));klog_write("\r\n");n++;}}
  for(;;){
   uint8_t byte;
   while(serial_read_byte(&byte)==0){
@@ -326,6 +328,9 @@ void kernel_main(const rixuri_boot_info_t *boot){
  if(scheduler_create_kernel_thread(xhci_hotplug_worker,0,&xhci_worker_task)!=0)panic("failed to create xHCI hotplug worker");
  rix_task_id_t serial_worker_task=0;
  if(scheduler_create_kernel_thread(serial_tty_worker,0,&serial_worker_task)!=0)panic("failed to create serial TTY worker");
+ /* Phase E4: serial worker migrates (input-lock audited, loop is
+  * locked calls + yield). xhci/kbd/net workers stay BSP-pinned. */
+ if(scheduler_task_allow_ap(serial_worker_task)!=0)panic("failed to flag serial worker AP-runnable");
  rix_task_id_t kbd_poll_task=0;
  if(scheduler_create_kernel_thread(keyboard_poll_worker,0,&kbd_poll_task)!=0)panic("failed to create keyboard poll worker");
  rix_task_id_t network_poll_task=0;

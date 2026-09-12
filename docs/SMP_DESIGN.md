@@ -21,6 +21,25 @@
 
 ## Phase E3 (done 2026-09-12): console serialization
 
+## Phase E4 (done 2026-09-12): input lock + serial-worker migration
+
+- First worker migration (one per phase for bisectability). Chosen:
+  `serial_tty_worker` — its whole loop is already-locked calls after
+  this phase: `serial_read_byte` (E3 console lock), `tty_input` (new
+  input lock), echo-back `serial_write_com1_n` (E3), `yield`.
+- New `tty_input_lock` (global, irqsave — `tty_input` already runs in
+  ps2-IRQ context today). Wraps whole `tty_input` + `tty_read` bodies.
+  Audit: input graph is leaves-only (edit buffers, echo via
+  `tty_output`, `signal_hook` which is already IRQ-safe); `tty_read`
+  never sleeps inside (callers yield outside). Nesting order is always
+  input→output, never reversed (output path is FB/ring only) — stated,
+  not enforced.
+- Worker logs its CPU once (probe pattern) for placement proof; input
+  itself can't be injected through the file-backed serial rig.
+- Acceptance: UP identical; SMP4 verdicts + shell + worker-cpu line +
+  0 exceptions. Revert bar: any input/echo corruption (compare shell
+  prompt behavior) or missing shell.
+
 - Why: true concurrency made serial output byte-interleave (E2 tore a
   proof line across two writers). Every future phase's evidence depends
   on clean logs.

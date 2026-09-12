@@ -65,6 +65,10 @@ void tty_set_framebuffer(uint64_t base, uint32_t size, uint32_t width,
 rix_tty_t *tty_get(unsigned id);
 int tty_input(unsigned id, uint8_t ch);
 int tty_read(unsigned id, void *buf, size_t n, size_t *out);
+/* Phase E4: unlocked bodies (input lock already held nowhere internally;
+ * reserved for future same-lock callers). External callers use the above. */
+int tty_input_nolock(unsigned id, uint8_t ch);
+int tty_read_nolock(unsigned id, void *buf, size_t n, size_t *out);
 int tty_output(unsigned id, const void *buf, size_t n, size_t *written);
 /* Phase E3: unlocked body for serial.c's console mirror (console lock
  * already held there). All other callers use tty_output. */

@@ -914,3 +914,20 @@ dropped 208 -> 205 lines.
 
 Not claimed: per-line atomicity (needs single-call printf refactor —
 explicitly deferred), worker migration, P1, hardware PASS.
+## 2026-09-12 — P0 Phase E4: input lock + first worker on AP
+
+New irqsave `tty_input_lock` (`tty.c`) over whole `tty_input` /
+`tty_read` (split into `_nolock` bodies + wrappers, output-split
+pattern). Audit: input graph is leaves-only (edit buffers, echo via
+`tty_output`, already-IRQ-safe `signal_hook`); `tty_read` never sleeps
+inside; nesting is always input->output, never reversed. Serial worker
+flipped to `ap_ok` with a one-time cpu log; xhci/kbd/net stay pinned.
+
+Evidence: `make test` RC=0, `make image`/`iso` RC=0, UP SHELL READY
+(170 = 169 + 1, worker cpu=0), WHPX `-smp 4`: `online=4`,
+ping/shootdown ok, `SMP: serial worker on cpu=3` (AP placement proven;
+glued with a `pid=1` fragment per the per-call limit), probe cpu=3,
+SHELL READY, 0 exceptions. Shell prompt/echo path uncorrupted.
+
+Not claimed: other workers (per-driver audits pending), per-line
+atomicity, P1, hardware PASS.

@@ -15,6 +15,11 @@ static rix_tty_t ttys[RIX_TTY_COUNT];
  * Same discipline as serial.c's console_lock; serial.c never calls the
  * locking wrapper while holding its lock (nolock body instead). */
 static rix_spinlock_t tty_output_lock;
+/* Phase E4 input lock (irqsave: tty_input already runs in ps2-IRQ
+ * context). Wraps whole tty_input/tty_read bodies. Nesting order is
+ * always input->output (echo), never reversed: the output path is
+ * ring/FB only and never calls back into input. */
+static rix_spinlock_t tty_input_lock;
 static struct { volatile uint32_t *pixels; uint32_t size, width, height, pitch, format; uint16_t columns, rows; } framebuffer;
 static uint8_t psf_ascii[128];
 static const rix_psf2_header_t *psf;
@@ -566,7 +571,7 @@ static void tty_edit_load(rix_tty_t *t,uint8_t direction) {
                          t->edit_length, &written);}
 }
 
-int tty_input(unsigned id, uint8_t ch) {
+int tty_input_nolock(unsigned id, uint8_t ch) {
     rix_tty_t *t = tty_valid(id);
     if (!t) return -1;
     if (t->canonical && t->isig && (ch == 0x03u || ch == 0x1au || ch == 0x1cu)) {
@@ -613,7 +618,7 @@ int tty_input(unsigned id, uint8_t ch) {
     return 0;
 }
 
-int tty_read(unsigned id, void *buf, size_t n, size_t *out) {
+int tty_read_nolock(unsigned id, void *buf, size_t n, size_t *out) {
     if (out) *out = 0;
     rix_tty_t *t = tty_valid(id);
     if (!t || (!buf && n)) return -1;
@@ -633,6 +638,21 @@ int tty_read(unsigned id, void *buf, size_t n, size_t *out) {
     }
     if (out) *out = done;
     return done ? 0 : -3;
+}
+
+/* Phase E4 locking wrappers (input lock; see declaration). Whole-call
+ * atomicity for the input ring + edit state. */
+int tty_input(unsigned id, uint8_t ch) {
+    uint64_t f;rix_spin_lock_irqsave(&tty_input_lock,&f);
+    int rc=tty_input_nolock(id,ch);
+    rix_spin_unlock_irqrestore(&tty_input_lock,f);
+    return rc;
+}
+int tty_read(unsigned id, void *buf, size_t n, size_t *out) {
+    uint64_t f;rix_spin_lock_irqsave(&tty_input_lock,&f);
+    int rc=tty_read_nolock(id,buf,n,out);
+    rix_spin_unlock_irqrestore(&tty_input_lock,f);
+    return rc;
 }
 
 int tty_set_canonical(unsigned id, int enabled) {
