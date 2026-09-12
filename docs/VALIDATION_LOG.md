@@ -991,3 +991,22 @@ keypresses in the rig, so this is a no-regression proof — HW keypress
 proof needs fingers.
 
 Not claimed: worker remainder, P1 (reverted, own project), HW PASS.
+## 2026-09-12 — Full suite: 20/28, 8 failures triaged as pre-existing
+
+`scripts/run-all-tests.sh` on the E6 tree: 20 PASS (host suite, ISO,
+UEFI boot, powerloss matrix, ring3, session, signal, pipe, posix,
+smp_boot, xhci probe, env/net/ping/utils-family...), 8 FAIL:
+phase20-test, auth, cp_mv_edge, curl, file_utils, phase20_cred, stat,
+touch. Signature family: `command not found: /bin/...` (first-byte
+echo loss is cosmetic — the shell receives the full line) and missing
+PASS markers; stat+touch pass on retry (flakes), the other six fail
+consistently.
+Attribution (decisive A/B): the auth test fails IDENTICALLY on a
+clean worktree of 12340ac (pre-D2/C2/E1/E2/E3/E4/E6/P1 baseline:
+same command, same `expected auth-pass` error). The image is proven
+good (packer verified byte-correct; `ls/rm/authcheck` present as
+dirents). Conclusion: userland/VFS/packaging drift predating the SMP
+track — explicitly out of scope, not a regression from any E-phase.
+The `26/26 PASS` of 09-09 predates the drift (Sep-11 program/image
+churn + external xhci work).
+Not attempted: userland archaeology (own track), HW PASS.
