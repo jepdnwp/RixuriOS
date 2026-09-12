@@ -220,6 +220,20 @@ static void network_poll_worker(void *arg){
   scheduler_yield();
  }
 }
+/* Phase E2 proof worker: the only ap_ok task in the tree. Whichever CPU
+ * runs it (BSP or AP) is printed; AP pickup proves AP scheduling, the
+ * exit exercises the AP idle-return path. Bounded logs, then exit. The
+ * cpu is ALSO recorded for a tear-free BSP-side report: concurrent
+ * serial writers can byte-interleave lines, so the probe's own print
+ * may garble while the recorded value stays exact. */
+static volatile int e2_probe_cpu=-1;
+static void smp_e2_probe_worker(void *arg){
+ (void)arg;
+ {int c=smp_cpu_id();e2_probe_cpu=c;static unsigned n=0;if(n<1){klog_write("SMP: E2 probe on cpu=");klog_write_dec((uint64_t)(c<0?99:c));klog_write("\r\n");n++;}}
+ scheduler_yield();
+ scheduler_yield();
+ {static unsigned n=0;if(n<1){klog_write("SMP: E2 probe done\r\n");n++;}}
+}
 static const char *vfs_mount_rc_string(int rc){switch(rc){case 0:return "ok";case -1:return "bad device";case -2:return "no memory";case -3:return "superblock read IO error";case -4:return "superblock too small";case -5:return "not a RixFS superblock";case -6:return "superblock geometry inconsistent";case -7:return "inode table overflow";case -8:return "superblock layout overlap";case -9:return "journal replay failed";default:return "unknown";}}
 static void try_mount_root(void){const char *names[]={"nvme0n1","nvme0n1p1","nvme1n1","nvme1n1p1"};for(size_t b=0;b<block_device_count();b++){const rix_block_device_t*bd=block_device_at(b);if(!bd)continue;klog_write("BLOCK: ");klog_write(bd->name);klog_write(" sectors=");klog_write_dec(bd->sector_count);klog_write(" sector_size=");klog_write_dec(bd->sector_size);klog_write("\r\n");}for(size_t c=0;c<nvme_controller_count();c++){const rix_nvme_controller_t*nc=nvme_controller(c);if(!nc)continue;for(uint32_t ns=0;ns<32u;ns++){if(!nc->namespaces[ns].used)continue;klog_write("NVMe: ctrl=");klog_write_dec(c);klog_write(" ns=");klog_write_dec(nc->namespaces[ns].nsid);klog_write(" sectors=");klog_write_dec(nc->namespaces[ns].size_lba);klog_write(" sector_size=");klog_write_dec(nc->namespaces[ns].lba_size);klog_write("\r\n");}}int last_rc=0,tried=0;for(size_t i=0;i<sizeof(names)/sizeof(names[0]);i++){rix_block_device_t*d=block_find(names[i]);if(!d)continue;tried=1;int rc=vfs_mount_root(d);last_rc=rc;klog_write("VFS: mount ");klog_write(names[i]);klog_write(" rc=");klog_write_dec((uint64_t)(rc<0?-rc:rc));klog_write("\r\n");if(rc==0)return;}if(!tried)klog_write("VFS: no candidate block devices present (embedded init continues)\r\n");else if(last_rc!=0){klog_write("VFS: disk root unavailable (");klog_write(vfs_mount_rc_string(last_rc));klog_write("); using embedded init\r\n");}}
 
@@ -316,6 +330,9 @@ void kernel_main(const rixuri_boot_info_t *boot){
  if(scheduler_create_kernel_thread(keyboard_poll_worker,0,&kbd_poll_task)!=0)panic("failed to create keyboard poll worker");
  rix_task_id_t network_poll_task=0;
  if(scheduler_create_kernel_thread(network_poll_worker,0,&network_poll_task)!=0)panic("failed to create network poll worker");
+ rix_task_id_t e2_probe_task=0;
+ if(scheduler_create_kernel_thread(smp_e2_probe_worker,0,&e2_probe_task)!=0)panic("failed to create E2 probe worker");
+ if(scheduler_task_allow_ap(e2_probe_task)!=0)panic("failed to flag E2 probe AP-runnable");
 	 klog_write("USER: embedded init prepared, pid=");klog_write_dec(user_pid);klog_write(" task=");klog_write_dec(user_task);klog_write("\r\n");
 	 klog_write("BOOT: ps2 init begin\r\n");
 	 ps2_keyboard_init();
@@ -327,5 +344,5 @@ void kernel_main(const rixuri_boot_info_t *boot){
  else if(pic_init()==0){lapic_enable_pic_extint();idt_enable();klog_write("IRQ: IOAPIC unavailable; LAPIC ExtINT/PIC fallback enabled\r\n");}
  else klog_write("IRQ: no usable interrupt controller; interrupts remain disabled\r\n");
          klog_write("xHCI: hotplug worker task=");klog_write_dec(xhci_worker_task);klog_write(" serial TTY worker task=");klog_write_dec(serial_worker_task);klog_write(" kbd poll task=");klog_write_dec(kbd_poll_task);klog_write(" net poll task=");klog_write_dec(network_poll_task);klog_write("\r\n");
-  klog_write("Core services: timer/scheduler/process/syscall/PCI/NVMe/xHCI/HID/block/VFS/time initialized\r\n");klog_write("BUILD: ");klog_write(RIXURI_BUILD_ID);klog_write("\r\n");klog_write("LAPIC: initialized, id=");klog_write_dec(lapic_id());klog_write("\r\n");klog_write("RIXURI:KERNEL_READY\r\n");for(;;)scheduler_yield();
+  klog_write("Core services: timer/scheduler/process/syscall/PCI/NVMe/xHCI/HID/block/VFS/time initialized\r\n");klog_write("BUILD: ");klog_write(RIXURI_BUILD_ID);klog_write("\r\n");klog_write("LAPIC: initialized, id=");klog_write_dec(lapic_id());klog_write("\r\n");klog_write("RIXURI:KERNEL_READY\r\n");{int pc=e2_probe_cpu;klog_write("SMP: E2 probe cpu=");klog_write_dec((uint64_t)(pc<0?99:pc));klog_write("\r\n");}for(;;)scheduler_yield();
 }

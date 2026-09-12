@@ -858,3 +858,35 @@ SHELL READY (166 serial lines, same count as C2), WHPX `-smp 4`
 `online=4` + ping 1/2/3 ok + shootdown ok + SHELL READY (203 lines,
 same count as C2) with 0 exceptions/panics/timeouts. Identical
 line counts are the behavior-preservation proof.
+## 2026-09-12 — P0 Phase E2: APs run kernel threads (first true SMP work)
+
+APs graduate from `sti;hlt` parking to `scheduler_ap_idle()`:
+per-CPU idle slot (re-published every iteration — APs park before
+`scheduler_init` zeroes the table, so it self-heals), shared
+`sched_select_locked` (BSP keeps any-RUNNABLE; APs take only RUNNABLE
++ kernel-thread + `ap_ok` + index!=0), `yield` returns DEAD-current
+APs to their idle stack via a per-CPU scratch save slot (never the
+dead task's slot — recyclable after unlock), and `SMP_IPI_WAKEUP 226`
+(EOI-only `isr226`) + `smp_wakeup[_aps]` broadcast from create paths
+after unlock (no-op at online<=1). Per-task `ap_ok` defaults 0: user
+tasks, tasks[0] and all four production workers stay BSP-pinned —
+drivers are NOT audited for true concurrency, and migrate one by one
+later. Only the bounded E2 probe kthread is `ap_ok`.
+
+Two real bugs caught by the first SMP run (kept, fixed, re-run):
+(1) init-order race above (AP-spun instead of hlt, caught by torn
+serial); (2) yield-to-idle writing the dead slot post-unlock
+(statik review catch before it could corrupt a recycled slot).
+Serial garbling under true concurrency is environmental (concurrent
+writers interleave bytes) — hence the probe ALSO records its cpu in
+memory for a tear-free BSP-side report.
+
+Evidence: `make test` RC=0 (`smp_test` covers wakeup
+negatives/send-fail/success+EOI and the UP broadcast no-op; pick/idle
+have no scheduler harness — documented), `make image`/`iso` RC=0, UP
+SHELL READY (168 = 166 + 2 probe lines, probe cpu=0), WHPX `-smp 4`
+twice: `online=4`, ping 1/2/3 ok, shootdown ok, `SMP: E2 probe cpu=3`
+(AP pickup proven), SHELL READY, 0 exceptions/panics/timeouts.
+
+Not claimed: worker migration (per-driver audits), user tasks on APs,
+runqueues, preemption (P1), hardware PASS.

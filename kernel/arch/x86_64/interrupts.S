@@ -145,5 +145,6 @@ IRQ 46
 IRQ 47
 IPI 224
 IPI 225
+IPI 226
 
 .section .note.GNU-stack,"",@progbits

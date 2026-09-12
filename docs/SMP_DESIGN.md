@@ -17,6 +17,49 @@
 
 ## Phase E1 (done 2026-09-12): SMP-safe scheduler core, no behavior change
 
+## Phase E2 (done 2026-09-12): AP kernel-thread execution + wakeup IPI
+
+- Why not all tasks: the 4 production workers (xhci/serial/kbd/net)
+  were written for BSP-only cooperative scheduling; their driver paths
+  are NOT audited for true concurrency. E2 therefore adds a per-task
+  `ap_ok` affinity (default 0 = BSP-only, exactly today's placement)
+  and APs run only `ap_ok` kernel threads. Workers migrate one by one
+  in follow-ups with per-driver audits — never silently.
+- AP rule (shared `sched_select_locked`, lock held by callers): BSP
+  keeps today's any-RUNNABLE selection; non-BSP CPUs take only
+  RUNNABLE + `process_pid==0` + `ap_ok` + index!=0 (tasks[0] is BSP
+  boot context, never migrates).
+- Idle: per-CPU `cpu_idle_rsp/valid`, re-published at the top of every
+  `scheduler_ap_idle()` iteration (not once: APs park before
+  `scheduler_init` zeroes the table, so the slot self-heals). Loop:
+  sti → pick under lock → none: hlt → else publish RUNNING and
+  `rix_context_switch` from the idle slot. `yield`'s next==old branch:
+  RUNNING current → legacy return; DEAD current → AP with valid idle
+  switches back to its idle stack (unlock first), BSP keeps legacy
+  spin. No stack variables live across switches (globals only).
+- Wakeup: `SMP_IPI_WAKEUP 226` (IST=0 DPL0 gate + `isr226`, EOI-only
+  handler — hlt wakes on any interrupt). `smp_wakeup(idx)` single
+  (0/-1/-2, no ack wait) + `smp_wakeup_aps()` broadcast, called from
+  the create paths AFTER unlock (never holding sched_lock across IPI
+  send). Skipped when online<=1: UP boot byte-identical. APs parked
+  before scheduler exists wake on the first create after boot.
+- Lock audit: no IRQ/IPI handler takes sched_lock (wakeup handler is
+  EOI-only); lock covers selection+publish only, never the switch.
+  The yield-to-idle switch saves into a per-CPU scratch slot, never
+  the dead task's slot (another CPU may already recycle it).
+  `cr3trace_push` moves inside the lock (debug-ring coherence under
+  real concurrency).
+- Proof thread: `main.c` creates one `ap_ok` probe kthread post-workers
+  (bounded logs: cpu id, done, exit). Any-CPU execution proves
+  scheduling; AP pickup proves E2. Production workers stay BSP-pinned
+  until audited.
+- Host tests: `smp_wakeup` negatives/send-fail/success+EOI in
+  `smp_test` (ping mirror). Pick/idle paths have no scheduler harness
+  (documented) — QEMU is the proof.
+- Acceptance: UP identical (166 lines); SMP4 `online=4`, pings/
+  shootdown ok, shell, 0 exceptions, probe lines present. Revert bar:
+  any fault in driver workers (they must NOT move) or missing shell.
+
 - Motivation: `tasks[32]` + single `current_index` are touched lockless;
   any AP scheduling (E2) or IPI-wakeup would race the BSP today.
 - Change (mechanical, `kernel/sched/scheduler.c` only):

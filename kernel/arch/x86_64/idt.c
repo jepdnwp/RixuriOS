@@ -21,6 +21,7 @@ DECL(32) DECL(33) DECL(34) DECL(35) DECL(36) DECL(37) DECL(38) DECL(39) DECL(40)
 #undef DECL
 extern void isr224(void);
 extern void isr225(void);
+extern void isr226(void);
 
 static struct idt_gate idt[256] __attribute__((aligned(16)));
 static void set_gate(unsigned vector,void (*handler)(void),uint8_t ist,uint8_t attr){uint64_t address=(uint64_t)(uintptr_t)handler;idt[vector].offset_low=(uint16_t)address;idt[vector].selector=0x08;idt[vector].ist=ist&7u;idt[vector].type_attr=attr;idt[vector].offset_mid=(uint16_t)(address>>16);idt[vector].offset_high=(uint32_t)(address>>32);idt[vector].reserved=0;}
@@ -119,6 +120,7 @@ void idt_init(void){
      * sane by design (per-CPU kernel stacks, CPL0 park). */
     set_gate(224,isr224,0,0x8E);
     set_gate(225,isr225,0,0x8E);
+    set_gate(226,isr226,0,0x8E);
     set_gate(0x80,isr128,0,0xEE);
     struct idt_ptr ptr={(uint16_t)(sizeof(idt)-1U),(uint64_t)(uintptr_t)idt};lidt(&ptr);
 }

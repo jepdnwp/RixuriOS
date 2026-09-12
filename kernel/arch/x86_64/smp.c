@@ -1,6 +1,7 @@
 #include "smp.h"
 #include "apic.h"
 #include "tss.h"
+#include "../../sched/scheduler.h"
 #include "../../mm/pmm.h"
 #include "../../mm/vmm.h"
 #include "kernel.h"
@@ -168,18 +169,20 @@ __attribute__((weak)) void smp_flush_one(uint64_t va) {
 void x86_ipi_dispatch(const void *raw) {
     const struct smp_intr_frame *frame = (const struct smp_intr_frame *)raw;
     unsigned vec = frame ? (unsigned)frame->vector : 0xFFu;
-    if (vec == SMP_IPI_PING || vec == SMP_IPI_SHOOTDOWN) {
+    if (vec == SMP_IPI_PING || vec == SMP_IPI_SHOOTDOWN ||
+        vec == SMP_IPI_WAKEUP) {
         int me = smp_cpu_id();
         if (me >= 0) {
             if (vec == SMP_IPI_PING) {
                 ipi_ping_ack[me]++;
-            } else {
+            } else if (vec == SMP_IPI_SHOOTDOWN) {
                 uint64_t s = shootdown_seq;
                 uint64_t v = shootdown_va;
                 __asm__ volatile("" ::: "memory");
                 smp_flush_one(v);
                 shootdown_ack[me] = s;
             }
+            /* WAKEUP: nothing to do — hlt already woke. Falls to EOI. */
         }
     }
     lapic_eoi();
@@ -196,6 +199,24 @@ int smp_ping(size_t index) {
         ipi_pause(SMP_IPI_POLL_CHUNK);
     }
     return ipi_ping_ack[index] != before ? 0 : -1;
+}
+
+int smp_wakeup(size_t index) {
+    if (index >= SMP_MAX_CPUS || index >= smp_map.count) return -2;
+    const smp_cpu_t *c = &smp_map.cpu[index];
+    if (c->is_bsp || !c->enabled || smp_cpu_state(index) != SMP_CPU_ONLINE) return -2;
+    if (lapic_send_ipi(c->apic_id, SMP_IPI_WAKEUP) != 0) return -1;
+    return 0;
+}
+
+void smp_wakeup_aps(void) {
+    /* UP/single-online fast path: zero IPIs, zero behavior change. */
+    if (smp_map.online <= 1) return;
+    for (size_t i = 0; i < smp_map.count && i < SMP_MAX_CPUS; ++i) {
+        if (smp_map.cpu[i].is_bsp || !smp_map.cpu[i].enabled) continue;
+        if (smp_cpu_state(i) != SMP_CPU_ONLINE) continue;
+        (void)smp_wakeup(i);
+    }
 }
 
 static int smp_canonical48(uint64_t va) {
@@ -365,8 +386,10 @@ void ap_entry(void) {
     }
     /* Parked idle: hlt wakes per IPI and the handler returns here. PIT
      * stays BSP-routed, so only directed IPIs arrive. sti/hlt back to
-     * back is interrupt-safe by architecture (one-instruction shadow). */
-    for (;;) __asm__ volatile("sti; hlt" ::: "memory");
+     * back is interrupt-safe by architecture (one-instruction shadow).
+     * Phase E2: APs graduate from parking to the scheduler idle loop
+     * (kernel-thread tasks only, affinity-gated). */
+    scheduler_ap_idle();
 }
 
 static int trampoline_taken(uint64_t base) {

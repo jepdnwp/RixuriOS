@@ -23,6 +23,11 @@ typedef struct {
     uint64_t user_stack;
     uint64_t user_return;
     uint8_t user_context_valid;
+    /* Phase E2: AP-runnable affinity. 0 = BSP-only (default: today's
+     * placement for every task); 1 = APs may run it (kernel threads
+     * only — user tasks and tasks[0] never migrate). Workers flip to 1
+     * one by one with per-driver concurrency audits, never silently. */
+    uint8_t ap_ok;
     rix_user_context_t user_context;
     uint8_t stack[RIX_STACK_SIZE] __attribute__((aligned(16)));
 } rix_task_t;
@@ -49,12 +54,49 @@ static rix_task_t tasks[RIX_MAX_TASKS];
 static uint32_t cpu_current[SMP_MAX_CPUS];
 static rix_spinlock_t sched_lock;
 static rix_task_id_t next_id;
+/* Phase E2 AP idle slots: captured AP stack (switch target when no task
+ * is runnable) + validity. The BSP never sets its slot. cpu_idle_tmp is
+ * the dummy save area for the yield-to-idle switch: the dead task's own
+ * slot must NOT be written after unlock (another CPU may already have
+ * recycled it for a new task). */
+static uint64_t cpu_idle_rsp[SMP_MAX_CPUS];
+static uint8_t cpu_idle_valid[SMP_MAX_CPUS];
+static uint64_t cpu_idle_tmp[SMP_MAX_CPUS];
 static uint32_t sched_cpu(void){
     int id=smp_cpu_id();
     if(id>=0&&id<SMP_MAX_CPUS)return (uint32_t)id;
     int b=smp_bsp_index();
     if(b>=0&&b<SMP_MAX_CPUS)return (uint32_t)b;
     return 0;
+}
+int scheduler_task_allow_ap(rix_task_id_t id){
+    if(!id)return -1;
+    uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);
+    int rc=-1;
+    for(uint32_t i=1;i<RIX_MAX_TASKS;i++){
+        if(tasks[i].id==id&&tasks[i].state!=TASK_UNUSED){
+            /* Kernel threads only: user tasks never migrate (checked
+             * again at selection). tasks[0] excluded by the scan. */
+            if(tasks[i].process_pid==0){tasks[i].ap_ok=1;rc=0;}
+            break;
+        }
+    }
+    rix_spin_unlock_irqrestore(&sched_lock,irq);
+    return rc;
+}
+
+/* Phase E2 shared selection. Scheduler lock must be held. BSP keeps
+ * today's any-RUNNABLE rule; APs take only RUNNABLE kernel-thread
+ * ap_ok tasks, never slot 0 (BSP boot context). */
+static uint32_t sched_select_locked(uint32_t me,uint32_t old){
+    int bsp=(me==(uint32_t)smp_bsp_index());
+    for(uint32_t n=1;n<RIX_MAX_TASKS;n++){
+        uint32_t i=(old+n)%RIX_MAX_TASKS;
+        if(tasks[i].state!=TASK_RUNNABLE)continue;
+        if(bsp)return i;
+        if(i!=0&&tasks[i].process_pid==0&&tasks[i].ap_ok)return i;
+    }
+    return old;
 }
 
 static uint64_t read_rflags(void){uint64_t v;__asm__ volatile("pushfq; popq %0":"=r"(v)::"memory");return v;}
@@ -105,11 +147,11 @@ static __attribute__((noreturn)) void task_bootstrap(void){
 int scheduler_init(void){
     ticks=0;next_id=1;
     rix_spin_init(&sched_lock);
-    for(uint32_t c=0;c<SMP_MAX_CPUS;c++)cpu_current[c]=0;
+    for(uint32_t c=0;c<SMP_MAX_CPUS;c++){cpu_current[c]=0;cpu_idle_rsp[c]=0;cpu_idle_valid[c]=0;cpu_idle_tmp[c]=0;}
     for(uint32_t i=0;i<RIX_MAX_TASKS;i++){
         tasks[i].id=0;tasks[i].state=TASK_UNUSED;tasks[i].rsp=0;tasks[i].entry=NULL;tasks[i].arg=NULL;
         tasks[i].process_pid=0;tasks[i].user_entry=0;tasks[i].user_stack=0;tasks[i].user_return=UINT64_MAX;
-        tasks[i].user_context_valid=0;
+        tasks[i].user_context_valid=0;tasks[i].ap_ok=0;
     }
     tasks[0].id=0;tasks[0].state=TASK_RUNNING;
     return 0;
@@ -149,8 +191,12 @@ int scheduler_create_kernel_thread(rix_kernel_thread_fn entry,void *arg,rix_task
     uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);
     rix_task_t*t;if(task_alloc(&t)!=0){rix_spin_unlock_irqrestore(&sched_lock,irq);return -1;}
     t->id=next_id++;if(!t->id)t->id=next_id++;t->entry=entry;t->arg=arg;t->process_pid=0;
-    t->user_entry=0;t->user_stack=0;t->user_return=UINT64_MAX;t->user_context_valid=0;t->state=TASK_RUNNABLE;task_init_stack(t);
+    t->user_entry=0;t->user_stack=0;t->user_return=UINT64_MAX;t->user_context_valid=0;t->state=TASK_RUNNABLE;t->ap_ok=0;task_init_stack(t);
     rix_spin_unlock_irqrestore(&sched_lock,irq);
+    /* E2: parked APs predate the scheduler and only hlt-wake on IPI.
+     * Broadcast after unlock (never holding the lock across IPI send);
+     * no-op when online<=1, so UP boots send zero IPIs. */
+    smp_wakeup_aps();
     if(out_id)*out_id=t->id;
     return 0;
 }
@@ -161,8 +207,12 @@ int scheduler_create_user_process(uint64_t pid,uint64_t entry,uint64_t user_stac
     uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);
     rix_task_t*t;if(task_alloc(&t)!=0){kernel_log("DEBUG: scheduler task create fail stage=task-alloc\r\n");rix_spin_unlock_irqrestore(&sched_lock,irq);return -3;}
     t->id=next_id++;if(!t->id)t->id=next_id++;t->entry=NULL;t->arg=NULL;t->process_pid=pid;
-    t->user_entry=entry;t->user_stack=user_stack;t->user_return=UINT64_MAX;t->user_context_valid=0;t->state=TASK_RUNNABLE;task_init_stack(t);
+    t->user_entry=entry;t->user_stack=user_stack;t->user_return=UINT64_MAX;t->user_context_valid=0;t->state=TASK_RUNNABLE;t->ap_ok=0;task_init_stack(t);
     rix_spin_unlock_irqrestore(&sched_lock,irq);
+    /* E2: parked APs predate the scheduler and only hlt-wake on IPI.
+     * Broadcast after unlock (never holding the lock across IPI send);
+     * no-op when online<=1, so UP boots send zero IPIs. */
+    smp_wakeup_aps();
     if(out_id)*out_id=t->id;
     return 0;
 }
@@ -173,8 +223,12 @@ int scheduler_create_fork_child(uint64_t pid,uint64_t entry,uint64_t user_stack,
     uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);
     rix_task_t*t;if(task_alloc(&t)!=0){rix_spin_unlock_irqrestore(&sched_lock,irq);return -1;}
     t->id=next_id++;if(!t->id)t->id=next_id++;t->entry=NULL;t->arg=NULL;t->process_pid=pid;
-    t->user_entry=entry;t->user_stack=user_stack;t->user_return=return_value;t->user_context_valid=0;t->state=TASK_RUNNABLE;task_init_stack(t);
+    t->user_entry=entry;t->user_stack=user_stack;t->user_return=return_value;t->user_context_valid=0;t->state=TASK_RUNNABLE;t->ap_ok=0;task_init_stack(t);
     rix_spin_unlock_irqrestore(&sched_lock,irq);
+    /* E2: parked APs predate the scheduler and only hlt-wake on IPI.
+     * Broadcast after unlock (never holding the lock across IPI send);
+     * no-op when online<=1, so UP boots send zero IPIs. */
+    smp_wakeup_aps();
     if(out_id)*out_id=t->id;
     return 0;
 }
@@ -186,8 +240,12 @@ int scheduler_create_fork_child_context(uint64_t pid,const rix_user_context_t*co
     rix_task_t*t;if(task_alloc(&t)!=0){rix_spin_unlock_irqrestore(&sched_lock,irq);return -1;}
     t->id=next_id++;if(!t->id)t->id=next_id++;t->entry=NULL;t->arg=NULL;t->process_pid=pid;
     t->user_entry=context->rip;t->user_stack=context->rsp;t->user_return=0;t->user_context=*context;t->user_context.rax=0;
-    t->user_context_valid=1;t->state=TASK_RUNNABLE;task_init_stack(t);
+    t->user_context_valid=1;t->state=TASK_RUNNABLE;t->ap_ok=0;task_init_stack(t);
     rix_spin_unlock_irqrestore(&sched_lock,irq);
+    /* E2: parked APs predate the scheduler and only hlt-wake on IPI.
+     * Broadcast after unlock (never holding the lock across IPI send);
+     * no-op when online<=1, so UP boots send zero IPIs. */
+    smp_wakeup_aps();
     if(out_id)*out_id=t->id;
     return 0;
 }
@@ -216,12 +274,25 @@ void scheduler_yield(void){
      * The lock is released before rix_context_switch and never held
      * across process_activate. */
     rix_spin_lock(&sched_lock);
-    uint32_t old=cpu_current[sched_cpu()],next=old;
+    uint32_t me=sched_cpu();
+    uint32_t old=cpu_current[me],next=old;
     trace_searching();
-    for(uint32_t n=1;n<RIX_MAX_TASKS;n++){uint32_t i=(old+n)%RIX_MAX_TASKS;if(tasks[i].state==TASK_RUNNABLE){next=i;break;}}
+    next=sched_select_locked(me,old);
     trace_old_next(old,next);
-    cr3trace_push(3,(uint64_t)tasks[old].id,(uint64_t)tasks[next].id,0);
-    if(next==old){rix_spin_unlock(&sched_lock);if(flags&0x200ULL)sti();return;}
+    if(next==old){
+        /* Nothing else runnable. A RUNNING current simply continues
+         * (legacy). A DEAD current on an AP returns to its idle hlt
+         * loop; the BSP keeps the legacy spin. */
+        if(tasks[old].state==TASK_RUNNING){rix_spin_unlock(&sched_lock);if(flags&0x200ULL)sti();return;}
+        if(me<SMP_MAX_CPUS&&cpu_idle_valid[me]){
+            uint64_t idle=cpu_idle_rsp[me];
+            rix_spin_unlock(&sched_lock);
+            rix_context_switch(&cpu_idle_tmp[me],idle);
+            if(flags&0x200ULL)sti();
+            return;
+        }
+        rix_spin_unlock(&sched_lock);if(flags&0x200ULL)sti();return;
+    }
     if(tasks[old].state==TASK_RUNNING)tasks[old].state=TASK_RUNNABLE;
     trace_old_updated(old);
     trace_activating(tasks[next].process_pid);
@@ -232,6 +303,7 @@ void scheduler_yield(void){
        The resumed-task path below activates the selected process after the
        switch; task_bootstrap defers the first user load to x86_enter_user(). */
     tasks[next].state=TASK_RUNNING;cpu_current[sched_cpu()]=next;
+    cr3trace_push(3,(uint64_t)tasks[old].id,(uint64_t)tasks[next].id,0);
     trace_selected(tasks[next].id,tasks[next].process_pid);
     trace_first_task(next);
     trace_switching();
@@ -256,4 +328,37 @@ void scheduler_yield(void){
     if(resumed->process_pid){if(process_activate(resumed->process_pid)!=0){rix_spin_lock(&sched_lock);resumed->state=TASK_DEAD;rix_spin_unlock(&sched_lock);}}
     else if(resumed->id==0){(void)process_activate(0);}
     if(flags&0x200ULL)sti();
+}
+
+/* Phase E2 AP idle entry. Captures this AP's stack as the idle context
+ * once, then hlt-parks, running ap_ok kernel-thread tasks as the BSP
+ * publishes them (wakeup IPIs arrive with IF=1). No stack variables
+ * live across the switches below: only globals are touched. */
+__attribute__((noreturn)) void scheduler_ap_idle(void){
+    int id=smp_cpu_id();
+    if(id<0||id>=SMP_MAX_CPUS){for(;;)__asm__ volatile("sti; hlt" ::: "memory");}
+    const smp_cpu_t*cpu=smp_cpu((size_t)id);
+    if(!cpu||cpu->is_bsp){for(;;)__asm__ volatile("sti; hlt" ::: "memory");}
+    uint32_t me=(uint32_t)id;
+    for(;;){
+        /* Re-publish every iteration (not just once): APs park before
+         * scheduler_init runs, and init zeroes this table — the slot
+         * self-heals on the next loop. RSP is stable (this same stack). */
+        uint64_t rsp;__asm__ volatile("mov %%rsp,%0":"=r"(rsp)::"memory");
+        cpu_idle_rsp[me]=rsp;cpu_idle_valid[me]=1;
+        __asm__ volatile("" ::: "memory");
+        __asm__ volatile("sti" ::: "memory");
+        rix_spin_lock(&sched_lock);
+        uint32_t old=cpu_current[me];
+        uint32_t next=sched_select_locked(me,old);
+        if(next==old||tasks[next].state!=TASK_RUNNABLE){
+            rix_spin_unlock(&sched_lock);
+            __asm__ volatile("hlt" ::: "memory");
+            continue;
+        }
+        tasks[next].state=TASK_RUNNING;cpu_current[me]=next;
+        cr3trace_push(3,(uint64_t)tasks[old].id,(uint64_t)tasks[next].id,0);
+        rix_spin_unlock(&sched_lock);
+        rix_context_switch(&cpu_idle_rsp[me],tasks[next].rsp);
+    }
 }

@@ -8,8 +8,7 @@
 
 /* HW stubs: this TU exercises the pure smp_build_map core plus the
  * buffer-backed trampoline setup. IPI/PMM/VMM/log calls are stubbed. */
-static size_t stub_cpu_count;
-static acpi_cpu_info_t stub_cpus[4];
+static size_t stub_cpu_count;static acpi_cpu_info_t stub_cpus[4];
 static uint32_t stub_lapic = 7;
 size_t acpi_cpu_count(void) { return stub_cpu_count; }
 const acpi_cpu_info_t *acpi_cpu(size_t index) {
@@ -41,6 +40,12 @@ static int eoi_count;
 void lapic_eoi(void) { eoi_count++; }
 static int ap_enable_count;
 void lapic_ap_enable(void) { ap_enable_count++; }
+/* Phase E2: ap_entry now ends in scheduler_ap_idle (scheduler.c, not
+ * linked here). The host path never reaches it; the stub only satisfies
+ * the link. */
+__attribute__((noreturn)) void scheduler_ap_idle(void) {
+    for (;;) { }
+}
 static uint64_t flushed[8];
 static size_t flushed_count;
 void smp_flush_one(uint64_t va) {
@@ -406,7 +411,43 @@ int main(void) {
         fr.vector = 0xE2u;
         x86_ipi_dispatch(&fr);
         x86_ipi_dispatch(0);
-        assert(eoi_count == eoi_before + 3);
+        fr.vector = SMP_IPI_WAKEUP;
+        x86_ipi_dispatch(&fr);
+        assert(eoi_count == eoi_before + 4);
+    }
+    /* Phase E2 wakeup: bad targets never send (BSP index, out of range,
+     * PRESENT-but-never-onlined AP — cpu 1/2 were forced ONLINE by the
+     * ping tests above). The send-count is saved/restored around the
+     * positive tests so the later D1 shootdown count asserts stay exact. */
+    assert(smp_wakeup(99) == -2);
+    assert(smp_wakeup(0) == -2);
+    assert(smp_wakeup(3) == -2);
+    assert(fixed_ipi_count == 2);
+    {
+        size_t saved_ipi = fixed_ipi_count;
+        /* Wakeup success is fire-and-forget: one IPI, EOI on receipt
+         * (cpu 2 is ONLINE from the ping tests). */
+        stub_lapic = 2;
+        fixed_ipi_rc = 0;
+        fixed_ipi_synth = 1;
+        {
+            size_t before = fixed_ipi_count;
+            int eoi_before = eoi_count;
+            assert(smp_wakeup(2) == 0);
+            assert(fixed_ipi_count == before + 1);
+            assert(fixed_ipi_log[before] == (int)(2u * 256u + SMP_IPI_WAKEUP));
+            assert(eoi_count == eoi_before + 1);
+        }
+        /* Wakeup send failure fails closed. */
+        fixed_ipi_rc = -1;
+        assert(smp_wakeup(2) == -1);
+        /* Broadcast is a no-op while a single CPU is online (UP path). */
+        {
+            size_t ipi_before = fixed_ipi_count;
+            smp_wakeup_aps();
+            assert(fixed_ipi_count == ipi_before);
+        }
+        fixed_ipi_count = saved_ipi;
     }
     /* Shootdown negatives: no IPI, no flush. */
     flushed_count = 0;

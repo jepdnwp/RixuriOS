@@ -119,12 +119,21 @@ int smp_cpu_id(void);
  * 0xFF (spurious) is deliberately unused. */
 #define SMP_IPI_PING 224u
 #define SMP_IPI_SHOOTDOWN 225u
+/* Phase E2: scheduler wakeup. EOI-only handler (hlt wakes on any
+ * interrupt); fire-and-forget, no ack. */
+#define SMP_IPI_WAKEUP 226u
 /* IPI entry called from the isr224/isr225 stubs (same frame layout as
  * IRQs). Never blocks; unknown vectors are EOId and ignored. */
 void x86_ipi_dispatch(const void *frame);
 /* Ping one AP and wait for its ack, bounded. 0 acked, -1 timeout/send
  * failure, -2 bad target (unknown index, BSP, disabled or not ONLINE). */
 int smp_ping(size_t index);
+/* Phase E2: wake one AP (fire-and-forget, no ack wait). Same -2 target
+ * rules as ping; 0 sent, -1 send failure. */
+int smp_wakeup(size_t index);
+/* Broadcast a wakeup to every ONLINE AP. No-op when online<=1 (UP boot
+ * sends zero IPIs). Called from scheduler create paths after unlock. */
+void smp_wakeup_aps(void);
 /* invlpg(va) on this CPU plus every other ONLINE AP, bounded single-flight
  * (only the BSP calls it; APs only ack). 0 complete, -1 timeout/send
  * failure, -2 bad address (zero or non-canonical). On a UP/single-online
