@@ -82,6 +82,26 @@ smp_map_t: cpu[64], count, online, bsp_apic, bsp_index
 - D: IPI ping/pong + shootdown counter test, cross-CPU atomic counter.
 - E: 10+ processes across CPUs, no starvation, `preemption_test`.
 
+## Phase D2 (done 2026-09-12): TLB shootdown on unmap
+
+- Single choke point: `address_space_unmap()` (covers brk shrink/
+  rollback and shm unmap/destroy paths). After clearing the leaf it
+  flushes locally when its own root is current (`vmm_invlpg()`, new tiny
+  wrapper — this also fixes a latent UP-only stale-TLB window: the old
+  path flushed nothing at all and relied on the next CR3 reload), and
+  broadcasts via `smp_shootdown(va)` whenever more than one CPU is
+  online (its internal local flush then covers this CPU).
+- Gate rationale: no CPU besides the BSP can hold user mappings yet
+  (APs never enter userspace, no migration), so `online<=1` skips IPIs
+  entirely — zero behavior change on UP and on >8-CPU BSP-only boots.
+  Revisit the gate when threads migrate (P5); the hook itself stays.
+- Deadlock audit: callers run in syscall/process context, never in IRQ
+  context; APs ack without locks; single-flight from one BSP. No new
+  host harness (no address_space harness exists); `smp_shootdown`
+  itself stays fully unit-tested.
+- `vmm_unmap_page_in_pml4` keeps its local-only flush with a comment
+  stating the SMP rule; no in-tree caller unmaps shared kernel pages.
+
 ## Phase C1 (done 2026-09-11): per-CPU stacks + cpu_id
 
 - `smp_start_aps` allocates a zeroed 16 KiB PMM stack per started AP,

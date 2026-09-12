@@ -2,6 +2,7 @@
 #include "../mm/pmm.h"
 #include "../mm/vmm.h"
 #include "../mm/ptmap.h"
+#include "../arch/x86_64/smp.h"
 #include <stdint.h>
 
 #define PAGE_MASK 0x000FFFFFFFFFF000ULL
@@ -65,7 +66,20 @@ static int map_page(rix_address_space_t *as,uint64_t va,uint64_t pa,uint64_t fla
 int address_space_map(rix_address_space_t *as,uint64_t va,uint64_t pa,uint64_t flags){return map_page(as,va,pa,flags,1);}
 int address_space_map_shared(rix_address_space_t *as,uint64_t va,uint64_t pa,uint64_t flags){return map_page(as,va,pa,flags,0);}
 int address_space_update_flags(rix_address_space_t *as,uint64_t va,uint64_t flags){if(!as||!as->pml4_phys||!user_va(va)||!user_pml4_ok(va))return -1;uint64_t old=address_space_query_flags(as,va);if((old&(RIXURI_PTE_PRESENT|RIXURI_PTE_USER|RIXURI_PTE_OWNED))!=(RIXURI_PTE_PRESENT|RIXURI_PTE_USER|RIXURI_PTE_OWNED))return -1;uint64_t pa=address_space_translate(as,va)&PAGE_MASK;if(!pa)return -1;flags|=RIXURI_PTE_PRESENT|RIXURI_PTE_USER|RIXURI_PTE_OWNED;return vmm_map_page_in_pml4(as->pml4_phys,va,pa,flags);}
-int address_space_unmap(rix_address_space_t *as,uint64_t va){if(!as||!as->pml4_phys||!user_va(va)||!user_pml4_ok(va))return -1;uint64_t old=address_space_query_flags(as,va);if(!(old&RIXURI_PTE_PRESENT))return -1;uint64_t pa=address_space_translate(as,va)&PAGE_MASK;uint64_t*pml4=ptr(as->pml4_phys);uint64_t e=pml4[(va>>39)&0x1ffULL];if(!(e&RIXURI_PTE_PRESENT))return -1;uint64_t*pdpt=ptr(e&PAGE_MASK);e=pdpt[(va>>30)&0x1ffULL];if(!(e&RIXURI_PTE_PRESENT))return -1;uint64_t*pd=ptr(e&PAGE_MASK);e=pd[(va>>21)&0x1ffULL];if(!(e&RIXURI_PTE_PRESENT)||e&PTE_PS)return -1;uint64_t*pt=ptr(e&PAGE_MASK);pt[(va>>12)&0x1ffULL]=0;if(old&RIXURI_PTE_OWNED)pmm_free_page(pa);return 0;}
+int address_space_unmap(rix_address_space_t *as,uint64_t va){if(!as||!as->pml4_phys||!user_va(va)||!user_pml4_ok(va))return -1;uint64_t old=address_space_query_flags(as,va);if(!(old&RIXURI_PTE_PRESENT))return -1;uint64_t pa=address_space_translate(as,va)&PAGE_MASK;uint64_t*pml4=ptr(as->pml4_phys);uint64_t e=pml4[(va>>39)&0x1ffULL];if(!(e&RIXURI_PTE_PRESENT))return -1;uint64_t*pdpt=ptr(e&PAGE_MASK);e=pdpt[(va>>30)&0x1ffULL];if(!(e&RIXURI_PTE_PRESENT))return -1;uint64_t*pd=ptr(e&PAGE_MASK);e=pd[(va>>21)&0x1ffULL];if(!(e&RIXURI_PTE_PRESENT)||e&PTE_PS)return -1;uint64_t*pt=ptr(e&PAGE_MASK);pt[(va>>12)&0x1ffULL]=0;if(old&RIXURI_PTE_OWNED)pmm_free_page(pa);
+/* Phase D2 TLB discipline (single choke point for all user unmaps: brk
+ * shrink/rollback, shm unmap/destroy paths). The local entry is flushed
+ * when this root is current (without it, same-task reuse of the VA right
+ * after unmap could hit a stale TLB entry even on UP). When more than one
+ * CPU is online, broadcast as well: another CPU may hold the entry (its
+ * own invlpg runs inside smp_shootdown, so no separate local flush is
+ * needed on that path). Callers run in syscall/process context, never in
+ * IRQ context; APs ack without locks, so no deadlock. Revisit when
+ * threads migrate across CPUs (P5): the hook stays, the gate condition
+ * may need the migration-aware form. */
+if(smp_online_count()>1)(void)smp_shootdown(va);
+else if(as->pml4_phys==vmm_current_pml4())vmm_invlpg(va);
+return 0;}
 uint64_t address_space_translate(const rix_address_space_t *as,uint64_t va){uint64_t e=walk_pte(as,va);if(!(e&RIXURI_PTE_PRESENT))return 0;if(e&PTE_PS)return(e&PAGE_MASK)|(va&0x1fffffULL);return(e&PAGE_MASK)|(va&0xfffULL);}
 uint64_t address_space_query_flags(const rix_address_space_t *as,uint64_t va){uint64_t e=walk_pte(as,va);return e&(RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE|RIXURI_PTE_USER|RIXURI_PTE_NX|RIXURI_PTE_OWNED);}
 void address_space_destroy(rix_address_space_t *as){destroy_user_tables(as);}

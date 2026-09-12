@@ -42,8 +42,13 @@ void vmm_switch_pml4(uint64_t pml4_phys){if(!pml4_phys)return;current_pml4_phys=
 void vmm_track_pml4(uint64_t pml4_phys){if(!pml4_phys)return;current_pml4_phys=pml4_phys;}
 int vmm_map_page_in_pml4(uint64_t pml4_phys,uint64_t va,uint64_t pa,uint64_t flags){if(!pml4_phys||!canonical48(va)||(va&0xFFFULL)||(pa&0xFFFULL)||(pa&~PAGE_MASK))return -1;uint64_t*pml4=(uint64_t *)(uintptr_t)pml4_phys;uint64_t*pdpt=ensure_table(pml4,(va>>39)&0x1FFULL,flags);if(!pdpt)return -1;uint64_t*pd=ensure_table(pdpt,(va>>30)&0x1FFULL,flags);if(!pd)return -1;uint64_t*pt=split_pd_huge_page(pd,(va>>21)&0x1FFULL,flags);if(!pt)return -1;size_t idx=(size_t)((va>>12)&0x1FFULL);pt[idx]=(pa&PAGE_MASK)|(flags&LEAF_FLAGS);if(pml4_phys==current_pml4_phys)invlpg(va);return 0;}
 int vmm_unmap_page_in_pml4(uint64_t pml4_phys,uint64_t va){if(!pml4_phys||!canonical48(va)||(va&0xFFFULL))return -1;uint64_t*pml4=(uint64_t *)(uintptr_t)pml4_phys;uint64_t e=pml4[(va>>39)&0x1FFULL];if(!(e&RIXURI_PTE_PRESENT))return 0;uint64_t*pdpt=entry_table(e);e=pdpt[(va>>30)&0x1FFULL];if(!(e&RIXURI_PTE_PRESENT))return 0;uint64_t*pd=entry_table(e);e=pd[(va>>21)&0x1FFULL];if(!(e&RIXURI_PTE_PRESENT)||(e&PTE_PS))return 0;uint64_t*pt=entry_table(e);pt[(va>>12)&0x1FFULL]=0;if(pml4_phys==current_pml4_phys)invlpg(va);return 0;}
+/* NOTE (Phase D2): this flushes only the local TLB. Unmapping a page that
+ * other CPUs may hold (shared kernel mappings) additionally requires
+ * smp_shootdown(va); see address_space_unmap for the established pattern.
+ * No in-tree caller unmaps shared kernel pages today. */
 int vmm_map_page(uint64_t va,uint64_t pa,uint64_t flags){return vmm_map_page_in_pml4(current_pml4_phys,va,pa,flags);}
 void vmm_unmap_page(uint64_t va){(void)vmm_unmap_page_in_pml4(current_pml4_phys,va);}
+void vmm_invlpg(uint64_t va){if(!canonical48(va)||(va&0xFFFULL))return;invlpg(va);}
 #define MMIO_PTE_FLAGS (RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE|RIXURI_PTE_NX|RIXURI_PTE_PWT|RIXURI_PTE_PCD)
 #define MMIO_WINDOW_BASE 0xFFFF960000000000ULL
 #define MMIO_WINDOW_PAGES 16384ULL

@@ -738,6 +738,17 @@ Evidence: `make test` RC=0 (host suite incl. `smp_test`, which adapts via symbol
 Not claimed: per-CPU TSS/IST (Phase C), IPI ping/pong + shootdown (Phase D), preemptive scheduler (P1), hardware PASS.
 
 
+## 2026-09-11 — P0 Phase C1: per-CPU kernel stacks + smp_cpu_id
+
+Spec: APs ran their whole C entry on the 4 KiB trampoline page itself; `smp_cpu_t.stack_phys` existed but was never populated; no CPU-to-index accessor. Scheduler and trampoline asm deliberately untouched.
+
+Implementation (`kernel/arch/x86_64/smp.{c,h}`): `smp_start_aps` allocates + zeroes 4 pages per AP via `pmm_alloc_pages`, records the base in `stack_phys`, passes `base + 16 KiB - 8` as `stack_top`; alloc failure skips the AP (DEGRADED, never panic). `smp_setup_trampoline` now requires nonzero + 8-aligned `stack_top` instead of confinement to the page. New `smp_cpu_id()` (LAPIC-ID scan, `-1` unknown). Host tests updated to the new contract (stack arena stub, distinctness asserts, cpu_id cases incl. unknown-ID negative) with no production-logic weakening.
+
+Evidence: `make test` RC=0, `make image` RC=0, QEMU `-smp 4` reaches `SMP: online=4`, `SHELL READY` with 0 exceptions, and GDB register reads prove each parked AP's RSP inside its recorded 16 KiB range with `state=ONLINE` (BSP keeps its own stack). QEMU `-smp 1` unchanged (SHELL READY, 0 exceptions).
+
+Not claimed: stack guard pages (follow-up with per-CPU scheduler), per-CPU runqueues/TSS (Phase C/E), IPI/shootdown (Phase D), HW PASS.
+
+
 ## 2026-09-11 — P0 Phase D1b: AP kernel-GDT switch (first-IPI triple fault)
 
 QEMU `-d int,cpu_reset` evidence on the D1 tree: the first ping IPI
@@ -777,12 +788,24 @@ live multi-vCPU guest correlated with frozen snapshots afterwards;
 serial-file polling is non-intrusive and preferred for verdict runs.
 
 
-## 2026-09-11 — P0 Phase C1: per-CPU kernel stacks + smp_cpu_id
+## 2026-09-12 — P0 Phase D2: TLB shootdown on unmap (+ build hygiene note)
 
-Spec: APs ran their whole C entry on the 4 KiB trampoline page itself; `smp_cpu_t.stack_phys` existed but was never populated; no CPU-to-index accessor. Scheduler and trampoline asm deliberately untouched.
+`address_space_unmap()` (brk shrink/rollback, shm unmap/destroy) is now
+the single TLB-discipline choke point: local `vmm_invlpg()` (new wrapper)
+when its root is current — closing a latent UP stale-TLB window where the
+old path flushed nothing and relied on the next CR3 reload — plus
+`smp_shootdown(va)` whenever more than one CPU is online. `vmm.h/c`
+gained the wrapper with a comment stating the SMP rule for future
+kernel-page unmaps (none exist today). Deadlock-audited (syscall/process
+context only; lock-free AP acks). No new host harness (none exists for
+address_space); `smp_shootdown` remains fully unit-tested.
 
-Implementation (`kernel/arch/x86_64/smp.{c,h}`): `smp_start_aps` allocates + zeroes 4 pages per AP via `pmm_alloc_pages`, records the base in `stack_phys`, passes `base + 16 KiB - 8` as `stack_top`; alloc failure skips the AP (DEGRADED, never panic). `smp_setup_trampoline` now requires nonzero + 8-aligned `stack_top` instead of confinement to the page. New `smp_cpu_id()` (LAPIC-ID scan, `-1` unknown). Host tests updated to the new contract (stack arena stub, distinctness asserts, cpu_id cases incl. unknown-ID negative) with no production-logic weakening.
+Evidence: `make test` RC=0, `make image`/`make iso` RC=0, WHPX `-smp 1`
+SHELL READY with no exceptions (hook dormant by design at online==1).
+Multi-CPU firing of the hook awaits P5-era AP userspace (documented, not
+claimed).
 
-Evidence: `make test` RC=0, `make image` RC=0, QEMU `-smp 4` reaches `SMP: online=4`, `SHELL READY` with 0 exceptions, and GDB register reads prove each parked AP's RSP inside its recorded 16 KiB range with `state=ONLINE` (BSP keeps its own stack). QEMU `-smp 1` unchanged (SHELL READY, 0 exceptions).
-
-Not claimed: stack guard pages (follow-up with per-CPU scheduler), per-CPU runqueues/TSS (Phase C/E), IPI/shootdown (Phase D), HW PASS.
+Build hygiene note: `make` printed `Clock skew detected` (WSL↔Windows FS
+clocks disagree) — dependency staleness is a real risk here; when in
+doubt use `make clean` and verify artifact freshness by disassembly +
+mtime cascade, not by trust.

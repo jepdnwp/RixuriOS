@@ -27,6 +27,10 @@ int vmm_map_page_in_pml4(uint64_t pml4_phys,uint64_t virtual_address,uint64_t ph
 int vmm_unmap_page_in_pml4(uint64_t pml4_phys,uint64_t virtual_address);
 int vmm_map_page(uint64_t virtual_address,uint64_t physical_address,uint64_t flags);
 void vmm_unmap_page(uint64_t virtual_address);
+/* Single-address TLB invalidate on the current CR3. Used by unmap paths
+ * that open-code their walks (address_space_unmap) instead of going
+ * through vmm_unmap_page_in_pml4 (which flushes itself when current). */
+void vmm_invlpg(uint64_t virtual_address);
 /* Supervisor-uncached MMIO mapping for device drivers. vmm_map_page targets
  * the CURRENT address space, which is a user root inside syscalls/IRQs, so
  * it must never be used for device MMIO reached from those contexts (the
