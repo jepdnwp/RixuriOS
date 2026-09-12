@@ -35,9 +35,16 @@ static void mark_range(uint64_t base,uint64_t pages,int freeable){
         if(freeable){
             if(!(managed_bitmap[word_index]&bit)){managed_bitmap[word_index]|=bit;++total_pages_count;}
             if(page_bitmap[word_index]&bit){page_bitmap[word_index]&=~bit;++free_pages_count;}
-        }else if(!(page_bitmap[word_index]&bit)){
-            page_bitmap[word_index]|=bit;
-            if(free_pages_count)--free_pages_count;
+        }else{
+            /* Firmware-usable is not the same as allocator-releasable.
+             * Kernel image, boot metadata, the low legacy window and the
+             * saved memory map must remain permanently owned by the boot
+             * environment even if a caller later invokes pmm_free_page(). */
+            reserved_bitmap[word_index]|=bit;
+            if(!(page_bitmap[word_index]&bit)){
+                page_bitmap[word_index]|=bit;
+                if(free_pages_count)--free_pages_count;
+            }
         }
     }
 }

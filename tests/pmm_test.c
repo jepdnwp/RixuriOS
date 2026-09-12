@@ -1,0 +1,44 @@
+#include "../kernel/mm/pmm.h"
+#include <assert.h>
+#include <stdint.h>
+#include <string.h>
+
+static void put32(uint8_t *entry, size_t offset, uint32_t value) {
+    memcpy(entry + offset, &value, sizeof(value));
+}
+
+static void put64(uint8_t *entry, size_t offset, uint64_t value) {
+    memcpy(entry + offset, &value, sizeof(value));
+}
+
+int main(void) {
+    uint8_t memory_map[40];
+    memset(memory_map, 0, sizeof(memory_map));
+    put32(memory_map, 0u, 7u);       /* EFI_CONVENTIONAL_MEMORY */
+    put64(memory_map, 8u, 0u);       /* base */
+    put64(memory_map, 24u, 512u);    /* two MiB of pages */
+
+    pmm_init(memory_map, sizeof(memory_map), sizeof(memory_map),
+             0x100000u, 0x101000u, 0x102000u, 0x1000u);
+
+    assert(pmm_is_managed(0x100000u));
+    assert(pmm_is_reserved(0x100000u));
+    assert(pmm_is_in_use(0x100000u));
+    assert(pmm_is_reserved(0x102000u));
+    assert(pmm_is_in_use(0x102000u));
+
+    uint64_t free_before = pmm_free_pages();
+    pmm_free_page(0x100000u);
+    pmm_free_page(0x102000u);
+    assert(pmm_is_in_use(0x100000u));
+    assert(pmm_is_in_use(0x102000u));
+    assert(pmm_free_pages() == free_before);
+
+    uint64_t page = pmm_alloc_page_below(0x104000u);
+    assert(page == 0x101000u || page == 0x103000u);
+    assert(!pmm_is_reserved(page));
+    assert(pmm_is_in_use(page));
+    pmm_free_page(page);
+    assert(pmm_free_pages() == free_before);
+    return 0;
+}

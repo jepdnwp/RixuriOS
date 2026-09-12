@@ -17,7 +17,7 @@ PROGRAM_NAMES := echo cat args grep true false sleep ls mkdir rm rmdir touch sta
 PROGRAM_ELFS := $(addprefix build/programs/,$(addsuffix .elf,$(PROGRAM_NAMES)))
 PROGRAM_START_OBJ := build/programs/start.o
 
-.PHONY: all clean check image iso-test powerloss-test test-all run qemu build-run test user-init programs rixfs-image usb-test hid-test tty-test shell-test pipe-test net-test hosts-test rtl-test e1000-test acpi-test smp-test rixfs-mount-test auth-test phase20-test ring3-test sysroot
+.PHONY: all clean check image iso-test powerloss-test test-all run qemu build-run test user-init programs rixfs-image usb-test hid-test tty-test shell-test pipe-test net-test hosts-test rtl-test e1000-test acpi-test smp-test gdt-test pmm-test rixfs-mount-test auth-test phase20-test ring3-test sysroot
 all: build/kernel.elf
 
 build:
@@ -246,7 +246,9 @@ smp-test: | build
 gdt-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/gdt_test.c kernel/arch/x86_64/gdt.c -o build/gdt_test
 		build/gdt_test
-
+pmm-test: | build
+	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/pmm_test.c kernel/mm/pmm.c -o build/pmm_test
+		build/pmm_test
 xhci-caps-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/xhci_caps_test.c kernel/usb/xhci_caps.c -o build/xhci_caps_test
 		build/xhci_caps_test
@@ -271,7 +273,7 @@ e1000-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/e1000_test.c kernel/net/e1000.c -o build/e1000_test
 		build/e1000_test
 
-test: check usb-test hid-test tty-test shell-test pipe-test net-test libc-test hosts-test rtl-test e1000-test acpi-test smp-test gdt-test xhci-caps-test xhci-profile-test rixfs-mount-test symlink-test
+test: check usb-test hid-test tty-test shell-test pipe-test net-test libc-test hosts-test rtl-test e1000-test acpi-test smp-test gdt-test pmm-test xhci-caps-test xhci-profile-test rixfs-mount-test symlink-test
 	@echo 'Static kernel build checks completed.'
 
 sysroot:
