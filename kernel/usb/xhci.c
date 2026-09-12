@@ -736,6 +736,75 @@ static int xhci_warm_reset_port(volatile uint32_t *reg) {
     return -5;
 }
 
+/* Phase H2: force the link to RxDetect via LWS before a port reset.
+ * A link stuck in Polling/Compliance (the 0x6e1/0xae1 family: speed
+ * known, PED never set) ignores PR forever; asking for RxDetect
+ * re-arms detection first. Ignored by ports that don't need it. */
+static void xhci_force_rxdetect(volatile uint32_t *reg) {
+    uint32_t v = (*reg & ~(XHCI_PORT_PR | XHCI_PORT_WPR | XHCI_PORT_LWS |
+                           XHCI_PORT_PLS_MASK)) |
+                 XHCI_PORT_PP | XHCI_PORT_CHANGE_MASK | XHCI_PORT_LWS |
+                 (5u << 5);
+    *reg = v;
+    xhci_udelay(10000u);
+}
+
+/* Phase H2: power-cycle a port (off, settle, on). Some devices only
+ * enumerate after a power drop; also clears electrically stuck links.
+ * Returns 0 with CCS still set, -2 if the device vanished. */
+static int xhci_power_cycle_port(volatile uint32_t *reg) {
+    uint32_t v = (*reg & ~(XHCI_PORT_PR | XHCI_PORT_WPR | XHCI_PORT_LWS |
+                           XHCI_PORT_PP)) | XHCI_PORT_CHANGE_MASK;
+    *reg = v;
+    xhci_udelay(100000u);
+    v = (*reg & ~(XHCI_PORT_PR | XHCI_PORT_WPR | XHCI_PORT_LWS)) |
+        XHCI_PORT_PP | XHCI_PORT_CHANGE_MASK;
+    *reg = v;
+    xhci_udelay(100000u);
+    if ((*reg & XHCI_PORT_CCS) == 0u) return -2;
+    return 0;
+}
+
+/* Phase H2: PED verification. A "recovered" reset without an enabled
+ * link always fails downstream at Address Device, so report it as
+ * failure here instead of a false success. */
+static int xhci_port_enabled(volatile uint32_t *reg) {
+    uint32_t s = *reg;
+    return ((s & XHCI_PORT_CCS) && (s & XHCI_PORT_PED)) ? 0 : -1;
+}
+
+/* Pure USB2 bus-reset attempt (PR sequence only, no fallbacks).
+ * Returns 0 with PRC observed, -3 on disconnect, -4/-5 on timeout. */
+static int xhci_usb2_reset(volatile uint32_t *reg) {
+    for (uint32_t i = 0; i < XHCI_RESET_POLL_LIMIT; ++i) {
+        uint32_t s = *reg;
+        if ((s & XHCI_STS_HSE) != 0u) { (void)s; }
+        if ((s & XHCI_PORT_PR) == 0u) {
+            if ((s & XHCI_PORT_PRC) != 0u) {
+                xhci_clear_port_change(reg);
+                /* Post-reset: device must still be present with a speed. */
+                uint32_t after = *reg;
+                if ((after & XHCI_PORT_CCS) == 0u) return -3;
+                return 0;
+            }
+            if ((s & XHCI_PORT_CCS) == 0u) return -3;
+            /* PR cleared without PRC: USB3 link may still be training;
+             * give it a little more time before failing. */
+            xhci_udelay(1000u);
+            uint32_t retry = *reg;
+            if (retry & XHCI_PORT_PRC) {
+                xhci_clear_port_change(reg);
+                return 0;
+            }
+            return -4;
+        }
+        if ((i & 0x3ffu) == 0u) xhci_udelay(50u);
+    }
+    /* Timeout with PR still asserted: deassert to leave the port sane. */
+    xhci_clear_port_change(reg);
+    return -5;
+}
+
 int xhci_reset_port(size_t controller, uint8_t port) {
     const rix_xhci_controller_t *c = xhci_controller(controller);
     volatile uint32_t *reg = port_reg(c, port);
@@ -788,49 +857,20 @@ int xhci_reset_port(size_t controller, uint8_t port) {
             }
         }
     }
-    /* USB2 path: clear stale change bits, then assert PR while keeping PP. */
-    v = (*reg & ~(XHCI_PORT_PR | XHCI_PORT_WPR | XHCI_PORT_LWS)) |
-        XHCI_PORT_PP | XHCI_PORT_CHANGE_MASK | XHCI_PORT_PR;
-    *reg = v;
-    for (uint32_t i = 0; i < XHCI_RESET_POLL_LIMIT; ++i) {
-        uint32_t s = *reg;
-        if ((s & XHCI_STS_HSE) != 0u) { (void)s; }
-        if ((s & XHCI_PORT_PR) == 0u) {
-            if ((s & XHCI_PORT_PRC) != 0u) {
-                xhci_clear_port_change(reg);
-                /* Post-reset: device must still be present with a speed. */
-                uint32_t after = *reg;
-                if ((after & XHCI_PORT_CCS) == 0u) return -3;
-                return 0;
-            }
-            if ((s & XHCI_PORT_CCS) == 0u) return -3;
-            /* PR cleared without PRC: USB3 link may still be training;
-             * give it a little more time before failing. */
-            xhci_udelay(1000u);
-            uint32_t retry = *reg;
-            if (retry & XHCI_PORT_PRC) {
-                xhci_clear_port_change(reg);
-                return 0;
-            }
-            /* Hot-Reset did not complete the port: fall back to Warm
-             * Reset (the 0x331 escape hatch) before giving up. Harmless
-             * on USB2 (no-op or clean failure there). */
-            if (xhci_warm_reset_port(reg) == 0) {
-                serial_write("xHCI: port recovered via warm reset\r\n");
-                return 0;
-            }
-            return -4;
-        }
-        if ((i & 0x3ffu) == 0u) xhci_udelay(50u);
-    }
-    /* Timeout with PR still asserted (the 0x331 wedge): deassert to
-     * leave the port sane, then try Warm Reset once before failing. */
-    xhci_clear_port_change(reg);
-    if (xhci_warm_reset_port(reg) == 0) {
-        serial_write("xHCI: port recovered via warm reset\r\n");
-        return 0;
-    }
+    /* Phase H2 escalation: plain USB2 reset first; then RxDetect
+     * force + retry, power cycle + retry, warm reset. First ENABLED
+     * result wins; PED is verified at every step (an "enabled-looking"
+     * but un-enabled link fails downstream at Address Device anyway). */
+    if (xhci_usb2_reset(reg) == 0 && xhci_port_enabled(reg) == 0) return 0;
+    xhci_force_rxdetect(reg);
+    if (xhci_usb2_reset(reg) == 0 && xhci_port_enabled(reg) == 0) goto h2_recovered;
+    if (xhci_power_cycle_port(reg) == 0 &&
+        xhci_usb2_reset(reg) == 0 && xhci_port_enabled(reg) == 0) goto h2_recovered;
+    if (xhci_warm_reset_port(reg) == 0 && xhci_port_enabled(reg) == 0) goto h2_recovered;
     return -5;
+h2_recovered:
+    serial_write("xHCI: port recovered after reset escalation\r\n");
+    return 0;
 }
 
 static volatile uint8_t *runtime_base(const rix_xhci_controller_t *c) {

@@ -164,7 +164,7 @@
 
 ## Phase P1 (reverted 2026-09-12): timer preemption is premature
 
-## Phase H1 (spec 2026-09-12): hardware xHCI port-reset recovery
+## Phase H1 (done 2026-09-12): hardware xHCI port-reset recovery
 
 - Field report (ASUS PRIME B650M-R, real silicon): boot reaches
   SHELL READY, but every connected port fails attach with rc=4 at
@@ -181,6 +181,23 @@
   - Recovery prints one line (`port recovered via warm reset`).
 - Acceptance: keyboard works on HW (user-verified); QEMU suite
   unchanged (no devices there — compile + boot proof only).
+
+
+## Phase H2 (spec 2026-09-12): reset escalation (RxDetect + power cycle)
+
+- Field evidence round 2 (same ASUS board, H1 ISO): warm reset now
+  "recovers" ports, but attach fails one step later at rc=7 (Address
+  Device) with PED=0 — the link never reaches Enabled, so the device
+  cannot answer. Speeds read valid (1/2/3) on all 4 controllers at
+  once: systematic, not signal. H1's WPR "success" was false (WRC
+  without PED); H2 verifies PED at every step.
+- Escalation inside `xhci_reset_port` (pure PR extracted to
+  `xhci_usb2_reset`): PR, RxDetect-force (LWS) + retry, power-cycle +
+  retry, warm reset. First ENABLED result wins; recovery prints once
+  (`port recovered after reset escalation`). Worst case ~2.5 s per
+  failing port on first encounter, then 10 s park. QEMU unaffected
+  (no devices, reset never runs).
+- Acceptance: keyboard works on HW (user-verified).
 
 ## Phase U1 (done 2026-09-12): libc nanosleep NULL-deref fix (rixtest #PF)
 
