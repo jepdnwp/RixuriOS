@@ -3,6 +3,7 @@
 #include "../mm/vmm.h"
 #include "../mm/pmm.h"
 #include "../serial.h"
+#include "../time/time.h"
 #include "kernel.h"
 #include <stddef.h>
 
@@ -767,8 +768,10 @@ int xhci_reset_port(size_t controller, uint8_t port) {
         if (speed == 0u) {
             /* Ambiguous: USB3 in RxDetect/Polling (needs hundreds of ms to
              * train, PR would wedge it to 0x331), or ghost CCS with no
-             * device. Give training a real window before any PR. */
-            for (uint32_t i = 0; i < XHCI_RESET_POLL_LIMIT; ++i) {
+             * device. Give training a real window before any PR: 4x the
+             * normal poll budget (~2s). Seen necessary on AMD silicon
+             * where ports report CCS=1 long before the link trains. */
+            for (uint32_t i = 0; i < 4u * XHCI_RESET_POLL_LIMIT; ++i) {
                 uint32_t s = *reg;
                 if ((s & XHCI_PORT_CCS) == 0u) return -2;
                 if ((s & XHCI_PORT_PED) != 0u) break;
@@ -809,12 +812,24 @@ int xhci_reset_port(size_t controller, uint8_t port) {
                 xhci_clear_port_change(reg);
                 return 0;
             }
+            /* Hot-Reset did not complete the port: fall back to Warm
+             * Reset (the 0x331 escape hatch) before giving up. Harmless
+             * on USB2 (no-op or clean failure there). */
+            if (xhci_warm_reset_port(reg) == 0) {
+                serial_write("xHCI: port recovered via warm reset\r\n");
+                return 0;
+            }
             return -4;
         }
         if ((i & 0x3ffu) == 0u) xhci_udelay(50u);
     }
-    /* Timeout with PR still asserted: deassert to leave the port sane. */
+    /* Timeout with PR still asserted (the 0x331 wedge): deassert to
+     * leave the port sane, then try Warm Reset once before failing. */
     xhci_clear_port_change(reg);
+    if (xhci_warm_reset_port(reg) == 0) {
+        serial_write("xHCI: port recovered via warm reset\r\n");
+        return 0;
+    }
     return -5;
 }
 
@@ -965,9 +980,14 @@ int xhci_poll_port_status_change(size_t controller, uint8_t *port, uint8_t *conn
 
 /* Ports whose last attach attempt failed. The fallback scan must not retry
  * them every poll (that is the log flood in the photo: error=4/6 forever).
- * A failed port is retried only after a physical disconnect/reconnect
- * (CCS=0 clears the flag) or after a successful detach. */
+ * A failed port is retried after a physical disconnect/reconnect (CCS=0
+ * clears the flag), after a successful detach, or after a quiet interval
+ * (timed retry below: training on real silicon can take seconds, and a
+ * park-forever policy would never pick up a late-training keyboard). */
 static uint8_t port_attach_failed[XHCI_MAX][256];
+/* Monotonic-ns timestamp of the park; 0 means unparked. */
+static uint64_t port_attach_fail_ns[XHCI_MAX][256];
+#define XHCI_PORT_RETRY_NS 10000000000ULL
 
 int xhci_service_hotplug(size_t controller, rix_xhci_device_t *device, uint8_t *connected) {
     if (controller >= count || !device || !connected) return -1;
@@ -984,12 +1004,20 @@ int xhci_service_hotplug(size_t controller, rix_xhci_device_t *device, uint8_t *
            but never retry a port whose last attach already failed: that is
            the error=4/6 flood. Failed ports retry only after disconnect. */
         const rix_xhci_controller_t *c = &controllers[controller];
-        /* Reap failed flags for ports that are now physically gone. */
+        /* Reap failed flags for ports that are now physically gone, or
+         * whose quiet interval elapsed (timed retry for slow training).
+         * Subtraction is wrap-safe on monotonic time. */
         for (uint8_t p = 1; p <= c->max_ports; ++p) {
             if (!port_attach_failed[controller][p]) continue;
             rix_xhci_port_status_t st;
-            if (xhci_port_status(controller, p, &st) != 0 || !st.connected)
+            if (xhci_port_status(controller, p, &st) != 0 || !st.connected) {
                 port_attach_failed[controller][p] = 0;
+                port_attach_fail_ns[controller][p] = 0;
+            } else if (time_monotonic_ns() - port_attach_fail_ns[controller][p] >
+                       XHCI_PORT_RETRY_NS) {
+                port_attach_failed[controller][p] = 0;
+                port_attach_fail_ns[controller][p] = 0;
+            }
         }
         for (uint8_t candidate = 1; candidate <= c->max_ports; ++candidate) {
             if (port_attach_failed[controller][candidate]) continue;
@@ -1037,8 +1065,10 @@ int xhci_service_hotplug(size_t controller, rix_xhci_device_t *device, uint8_t *
                 if (preg) xhci_clear_port_change(preg);
             }
             port_attach_failed[controller][port] = 1;
+            port_attach_fail_ns[controller][port] = time_monotonic_ns();
         } else {
             port_attach_failed[controller][port] = 0;
+            port_attach_fail_ns[controller][port] = 0;
         }
         return attach_rc;
     }
@@ -1050,7 +1080,7 @@ int xhci_service_hotplug(size_t controller, rix_xhci_device_t *device, uint8_t *
             device->speed = slot->speed;
             int detach_rc = xhci_device_detach(controller, (uint8_t)slot_id);
             device->state = detach_rc == 0 ? RIX_XHCI_DEVICE_DETACHED : RIX_XHCI_DEVICE_ERROR;
-            if (detach_rc == 0 && port != 0u) port_attach_failed[controller][port] = 0;
+            if (detach_rc == 0 && port != 0u) { port_attach_failed[controller][port] = 0; port_attach_fail_ns[controller][port] = 0; }
             return detach_rc;
         }
     }

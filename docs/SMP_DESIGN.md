@@ -164,6 +164,24 @@
 
 ## Phase P1 (reverted 2026-09-12): timer preemption is premature
 
+## Phase H1 (spec 2026-09-12): hardware xHCI port-reset recovery
+
+- Field report (ASUS PRIME B650M-R, real silicon): boot reaches
+  SHELL READY, but every connected port fails attach with rc=4 at
+  PORTSC=0x331 (PR stuck, speed 0) — USB keyboard dead, no input.
+  QEMU never exercises this (no devices); HW-only path.
+- Three changes, one HW cycle (`kernel/usb/xhci.c` only):
+  - Timed retry: parked ports re-attempt after 10 s quiet
+    (`port_attach_fail_ns`, wrap-safe monotonic compare), not only
+    on disconnect. Slow-training links get picked up late; ghost-CCS
+    ports just re-fail quietly (existing throttle covers logging).
+  - Warm-reset fallback: both USB2-PR failure exits try WPR before
+    giving up (the 0x331 escape hatch; harmless no-op on USB2).
+  - 4x training window for the ambiguous speed==0 case (~2 s).
+  - Recovery prints one line (`port recovered via warm reset`).
+- Acceptance: keyboard works on HW (user-verified); QEMU suite
+  unchanged (no devices there — compile + boot proof only).
+
 ## Phase U1 (done 2026-09-12): libc nanosleep NULL-deref fix (rixtest #PF)
 
 - User-reported `rixtest` crash in QEMU: `#PF CR2=0x1 e=5` in ring3
