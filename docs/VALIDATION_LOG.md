@@ -949,3 +949,26 @@ SHELL READY, 0 exceptions/panics/timeouts.
 
 Not claimed: AP preemption, priorities/quantums per task, worker
 migration remainder, hardware PASS.
+## 2026-09-12 — P1 reverted: timer preemption backed out (E4 shape restored)
+
+Attempted P1-slice (BSP 100 ms quantum) then P1-full (RESCHED-IPI 227,
+hog proof, IRQ/task yield split, IF policy). Slice went green twice
+(UP/SMP4); full hung silently on UP at 111 lines mid-hog. Two real
+layers found: (1) never-yielding tasks inherit IF=0 from the switch
+and freeze PIT (fixed, then (2) the actual killer — IF=1-everywhere
+exposes the kernel's unlocked allocators (pmm/heap/vmm/process) to
+IRQ-yield preemption: a quantum landing mid-allocator corrupts state
+through a second task's allocation. Pre-P1 IF~=0 shielded all of it
+by accident. Conclusion: preemption needs a kernel-wide
+preempt-safety retrofit of its own; not a slice. Fully backed out:
+vector 227, broadcast, hog, IRQ-yield split, IF policy, RESCHED host
+asserts — tree is cooperative E4 again (wakeup/ap_idle/affinity/probe/
+serial-worker kept).
+
+Evidence of restoration: `make test` RC=0, `make image`/`iso` RC=0,
+UP SHELL READY at exactly 170 lines (E4 count), WHPX `-smp 4` at
+exactly 202 lines (E4 count): `online=4`, ping/shootdown ok, serial
+worker cpu=3, probe cpu=3, SHELL READY, 0 exceptions/panics/timeouts.
+`kernel.elf` byte-size identical to the E4 build (362488).
+SMP_DESIGN P1 sections replaced by this revert note; the attempt's
+mechanism evidence stays in the log history above.

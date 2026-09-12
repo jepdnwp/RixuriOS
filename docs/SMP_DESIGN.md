@@ -17,81 +17,31 @@
 
 ## Phase E1 (done 2026-09-12): SMP-safe scheduler core, no behavior change
 
+- Motivation: `tasks[32]` + single `current_index` are touched lockless;
+  any AP scheduling (E2) or IPI-wakeup would race the BSP today.
+- Change (mechanical, `kernel/sched/scheduler.c` only):
+  - `current_index` → `cpu_current[SMP_MAX_CPUS]`, routed via
+    `sched_cpu()` (`smp_cpu_id`, fallback BSP index, then 0). Zero-init
+    is correct: every CPU conceptually starts running `tasks[0]`.
+  - One `rix_spinlock_t sched_lock`: irqsave-guarded in create/exit/
+    returned paths (arbitrary caller IRQ posture); plain lock/unlock in
+    `scheduler_yield` where IRQs are already off by the existing `cli`.
+    NEVER held across `rix_context_switch` or `process_activate` — lock
+    covers only the `tasks[]` mutation windows (alloc+init, select+
+    publish, DEAD-store). IRQ posture across the switch is byte-identical
+    to today (`cli` still held, `sti` at the end).
+  - Audit: no IRQ/IPI handler takes the lock today (`x86_ipi_dispatch`
+    only acks + invlpg; PIT only ticks) — verified, not assumed.
+- Explicitly NOT in E1: AP scheduling (APs keep parking), runqueues,
+  migration, preemption, host harness (none exists for scheduler —
+  create paths need process/user_entry doubles; deferred, not claimed).
+- Acceptance: `make test` RC=0, `-smp 1` + `-smp 4` boots identical
+  (SHELL READY, `online=4`, ping/shootdown ok, 0 exceptions). ANY
+  deviation → revert: `scheduler_yield` is the historically fragile path
+  and E1 buys optionality, not features.
+
+
 ## Phase E2 (done 2026-09-12): AP kernel-thread execution + wakeup IPI
-
-## Phase E3 (done 2026-09-12): console serialization
-
-## Phase E4 (done 2026-09-12): input lock + serial-worker migration
-
-## Phase E5 (deferred 2026-09-12): keyboard/xhci/net migration
-
-- Audit result: ps2 already has `ps2_lock`, but keyboard↔xhci share
-  the HC (event ring/TRBs, pure-poll, no IRQ handler) and the net
-  stack is fully unlocked against BSP syscall paths. All three need
-  subsystem locks first — and the rig has `xHCI: controllers=0`, so
-  HC-lock behavior would be unprovable here. Deferred with reason,
-  not forgotten: each migrates with its lock in its own phase.
-
-## Phase P1-slice (done 2026-09-12): BSP timer preemption
-
-- Quantum 10 PIT ticks (100 Hz → 100 ms) on the BSP only; APs stay
-  cooperative (documented asymmetry; symmetric preemption needs a
-  per-CPU timer or reschedule-IPI — later).
-- `scheduler_preempt_tick()` (called from `pit_irq`): no-op unless
-  calling CPU is the BSP and runnable>=2; else `yield`. IRQ posture:
-  IF=0 in handler → yield's `flags` logic skips `sti`, `iret`
-  restores; `cli` harmless; sched_lock never observed held (E1: yield
-  holds it only under `cli`, creates under irqsave). No sleep under
-  console/tty/input locks ⇒ a preempted holder is always
-  reschedulable ⇒ bounded waiter spins, no deadlock.
-- No nested-IRQ hazard (gates are IF=0); no stack pile-up (frames pop
-  via `iret` on resume; handler runs µs vs 100 ms quantum).
-- Pre-init safe: empty map/tasks ⇒ early return before touching state.
-- Proof: bounded `PREEMPT n` lines (1st/64th/256th, then silent) +
-  shell alive + verdicts. Revert bar: any IRQ-context fault or lost
-  shell.
-
-- First worker migration (one per phase for bisectability). Chosen:
-  `serial_tty_worker` — its whole loop is already-locked calls after
-  this phase: `serial_read_byte` (E3 console lock), `tty_input` (new
-  input lock), echo-back `serial_write_com1_n` (E3), `yield`.
-- New `tty_input_lock` (global, irqsave — `tty_input` already runs in
-  ps2-IRQ context today). Wraps whole `tty_input` + `tty_read` bodies.
-  Audit: input graph is leaves-only (edit buffers, echo via
-  `tty_output`, `signal_hook` which is already IRQ-safe); `tty_read`
-  never sleeps inside (callers yield outside). Nesting order is always
-  input→output, never reversed (output path is FB/ring only) — stated,
-  not enforced.
-- Worker logs its CPU once (probe pattern) for placement proof; input
-  itself can't be injected through the file-backed serial rig.
-- Acceptance: UP identical; SMP4 verdicts + shell + worker-cpu line +
-  0 exceptions. Revert bar: any input/echo corruption (compare shell
-  prompt behavior) or missing shell.
-
-- Why: true concurrency made serial output byte-interleave (E2 tore a
-  proof line across two writers). Every future phase's evidence depends
-  on clean logs.
-- One `console_lock` (`serial.c`, always irqsave — fault/IRQ writers
-  exist). Whole-call atomicity for `serial_write/_n/_com1/_com1_n` and
-  `serial_read_byte` (serializes the COM1 check-then-read too).
-  `tty_output` splits: public wrapper locks (covers syscall-write and
-  echo-path FB atomicity per call), `tty_output_nolock` for `serial.c`'s
-  internal mirror so one call's UART+FB stay atomic together.
-- Guarantee is per-call, not per-line: multi-call log lines can still
-  interleave as intact fragments (parseable); torn bytes disappear.
-- No forensic variants needed: the nested-fault path halts by design
-  (`in_fault` guard) before attempting any logging, so the blocking
-  lock cannot self-deadlock — but the old SHARED `in_fault` flag would
-  halt a second CPU's forensics whenever two CPUs fault together. E3
-  makes it per-CPU (BSP-fallback routing, same as the scheduler).
-- Rules (audited, documented): no sleep/yield under the lock (all
-  leaves: port IO, memory, FB MMIO); holders never call `panic`;
-  `tty.c` never calls back into `serial.c` (no cycle); `serial_drain`
-  stays best-effort unlocked (LSR reads only).
-- Host: `tty_test` gains spin stubs (additive, smp_test pattern);
-  `serial.c` has no host harness (documented).
-- Acceptance: UP identical; SMP4 verdicts + byte-clean serial (the
-  probe's own `on cpu` line intact — the E2-torn case).
 
 - Why not all tasks: the 4 production workers (xhci/serial/kbd/net)
   were written for BSP-only cooperative scheduling; their driver paths
@@ -134,28 +84,82 @@
   shootdown ok, shell, 0 exceptions, probe lines present. Revert bar:
   any fault in driver workers (they must NOT move) or missing shell.
 
-- Motivation: `tasks[32]` + single `current_index` are touched lockless;
-  any AP scheduling (E2) or IPI-wakeup would race the BSP today.
-- Change (mechanical, `kernel/sched/scheduler.c` only):
-  - `current_index` → `cpu_current[SMP_MAX_CPUS]`, routed via
-    `sched_cpu()` (`smp_cpu_id`, fallback BSP index, then 0). Zero-init
-    is correct: every CPU conceptually starts running `tasks[0]`.
-  - One `rix_spinlock_t sched_lock`: irqsave-guarded in create/exit/
-    returned paths (arbitrary caller IRQ posture); plain lock/unlock in
-    `scheduler_yield` where IRQs are already off by the existing `cli`.
-    NEVER held across `rix_context_switch` or `process_activate` — lock
-    covers only the `tasks[]` mutation windows (alloc+init, select+
-    publish, DEAD-store). IRQ posture across the switch is byte-identical
-    to today (`cli` still held, `sti` at the end).
-  - Audit: no IRQ/IPI handler takes the lock today (`x86_ipi_dispatch`
-    only acks + invlpg; PIT only ticks) — verified, not assumed.
-- Explicitly NOT in E1: AP scheduling (APs keep parking), runqueues,
-  migration, preemption, host harness (none exists for scheduler —
-  create paths need process/user_entry doubles; deferred, not claimed).
-- Acceptance: `make test` RC=0, `-smp 1` + `-smp 4` boots identical
-  (SHELL READY, `online=4`, ping/shootdown ok, 0 exceptions). ANY
-  deviation → revert: `scheduler_yield` is the historically fragile path
-  and E1 buys optionality, not features.
+
+## Phase E3 (done 2026-09-12): console serialization
+
+- Why: true concurrency made serial output byte-interleave (E2 tore a
+  proof line across two writers). Every future phase's evidence depends
+  on clean logs.
+- One `console_lock` (`serial.c`, always irqsave — fault/IRQ writers
+  exist). Whole-call atomicity for `serial_write/_n/_com1/_com1_n` and
+  `serial_read_byte` (serializes the COM1 check-then-read too).
+  `tty_output` splits: public wrapper locks (covers syscall-write and
+  echo-path FB atomicity per call), `tty_output_nolock` for `serial.c`'s
+  internal mirror so one call's UART+FB stay atomic together.
+- Guarantee is per-call, not per-line: multi-call log lines can still
+  interleave as intact fragments (parseable); torn bytes disappear.
+- No forensic variants needed: the nested-fault path halts by design
+  (`in_fault` guard) before attempting any logging, so the blocking
+  lock cannot self-deadlock — but the old SHARED `in_fault` flag would
+  halt a second CPU's forensics whenever two CPUs fault together. E3
+  makes it per-CPU (BSP-fallback routing, same as the scheduler).
+- Rules (audited, documented): no sleep/yield under the lock (all
+  leaves: port IO, memory, FB MMIO); holders never call `panic`;
+  `tty.c` never calls back into `serial.c` (no cycle); `serial_drain`
+  stays best-effort unlocked (LSR reads only).
+- Host: `tty_test` gains spin stubs (additive, smp_test pattern);
+  `serial.c` has no host harness (documented).
+- Acceptance: UP identical; SMP4 verdicts + byte-clean serial (the
+  probe's own `on cpu` line intact — the E2-torn case).
+
+
+## Phase E4 (done 2026-09-12): input lock + serial-worker migration
+
+- First worker migration (one per phase for bisectability). Chosen:
+  `serial_tty_worker` — its whole loop is already-locked calls after
+  this phase: `serial_read_byte` (E3 console lock), `tty_input` (new
+  input lock), echo-back `serial_write_com1_n` (E3), `yield`.
+- New `tty_input_lock` (global, irqsave — `tty_input` already runs in
+  ps2-IRQ context today). Wraps whole `tty_input` + `tty_read` bodies.
+  Audit: input graph is leaves-only (edit buffers, echo via
+  `tty_output`, `signal_hook` which is already IRQ-safe); `tty_read`
+  never sleeps inside (callers yield outside). Nesting order is always
+  input→output, never reversed (output path is FB/ring only) — stated,
+  not enforced.
+- Worker logs its CPU once (probe pattern) for placement proof; input
+  itself can't be injected through the file-backed serial rig.
+- Acceptance: UP identical; SMP4 verdicts + shell + worker-cpu line +
+  0 exceptions. Revert bar: any input/echo corruption (compare shell
+  prompt behavior) or missing shell.
+
+
+## Phase E5 (deferred 2026-09-12): keyboard/xhci/net migration
+
+- Audit result: ps2 already has `ps2_lock`, but keyboard↔xhci share
+  the HC (event ring/TRBs, pure-poll, no IRQ handler) and the net
+  stack is fully unlocked against BSP syscall paths. All three need
+  subsystem locks first — and the rig has `xHCI: controllers=0`, so
+  HC-lock behavior would be unprovable here. Deferred with reason,
+  not forgotten: each migrates with its lock in its own phase.
+
+## Phase P1 (reverted 2026-09-12): timer preemption is premature
+
+- Attempted (slice: BSP quantum; full: RESCHED-IPI 227 + hog proof):
+  green TWICE on UP/SMP4 — then a silent UP hang on the third boot.
+- Root cause (two layers, both real): (1) never-yielding tasks inherit
+  IF=0 from the switch, freezing PIT — fixed via sti-before-switch;
+  (2) the actual killer: IF=1-everywhere exposes the kernel's
+  unlocked allocators (pmm/heap/vmm/process) to IRQ-yield preemption.
+  A quantum landing mid-allocator corrupts state via a second task's
+  allocation. Pre-P1 IF≈0 accidentally shielded all of it.
+- Verdict: timer preemption needs a kernel-wide preempt-safety
+  retrofit (preempt-disable windows or fine-grained allocator locks)
+  — its own project, not a slice. Fully backed out (vector 227,
+  broadcast, hog, IRQ-yield split all removed); the tree is
+  cooperative again (E4 shape). The slice/full green runs are kept in
+  the log as evidence of mechanism, not of safety. E6 (ps2 bottom
+  half) stands as filed.
+
 
 ## Data model (`kernel/arch/x86_64/smp.h`)
 

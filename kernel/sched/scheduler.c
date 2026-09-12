@@ -158,20 +158,6 @@ int scheduler_init(void){
 }
 void scheduler_tick(void){ticks++;}
 uint64_t scheduler_ticks(void){return ticks;}
-/* Phase P1-slice BSP timer preemption (see SMP_DESIGN.md). IRQ-safe by
- * construction: sched_lock is never observed held here (yield holds it
- * only under cli, creates under irqsave), and no sleep happens under
- * console/tty/input locks, so a preempted holder always comes back. */
-static volatile uint64_t preempt_count;
-void scheduler_preempt_tick(void){
-    if(sched_cpu()!=(uint32_t)smp_bsp_index())return;
-    if(scheduler_runnable_count()<2)return;
-    preempt_count++;
-    if(preempt_count==1||preempt_count==64||preempt_count==256){
-        kernel_log("PREEMPT ");kernel_log_dec(preempt_count);kernel_log("\r\n");
-    }
-    scheduler_yield();
-}
 rix_task_id_t scheduler_current_id(void){return tasks[cpu_current[sched_cpu()]].id;}
 uint32_t scheduler_runnable_count(void){uint32_t n=0;for(uint32_t i=0;i<RIX_MAX_TASKS;i++)if(tasks[i].state==TASK_RUNNABLE||tasks[i].state==TASK_RUNNING)n++;return n;}
 void scheduler_dump_states(void){
@@ -276,6 +262,11 @@ __attribute__((noreturn)) void scheduler_exit_current(void){
  * and process activation still run). Default 0. If a bootloop vanishes
  * with this set, the switch/task-stack path is implicated. */
 #define RIX_DEBUG_NO_CTX_SWITCH 0
+/* Cooperative yield (E2 shape). No IRQ-context callers exist: PIT only
+ * ticks, IPI handlers only ack/flush/EOI, faults halt by design — so
+ * plain lock/unlock under the entry cli plus the entry-IF sti tail is
+ * the whole IRQ story. See P1-revert in SMP_DESIGN.md for why timer
+ * preemption was backed out (kernel-wide preempt-safety retrofit). */
 void scheduler_yield(void){
     static unsigned boot_marker;
     if (boot_marker++ < 2) serial_write("BOOT: scheduler yield\r\n");
@@ -296,7 +287,8 @@ void scheduler_yield(void){
     if(next==old){
         /* Nothing else runnable. A RUNNING current simply continues
          * (legacy). A DEAD current on an AP returns to its idle hlt
-         * loop; the BSP keeps the legacy spin. */
+         * loop (scratch save slot: the dead slot may already be
+         * recycled); the BSP keeps the legacy spin. */
         if(tasks[old].state==TASK_RUNNING){rix_spin_unlock(&sched_lock);if(flags&0x200ULL)sti();return;}
         if(me<SMP_MAX_CPUS&&cpu_idle_valid[me]){
             uint64_t idle=cpu_idle_rsp[me];
@@ -362,6 +354,9 @@ __attribute__((noreturn)) void scheduler_ap_idle(void){
         cpu_idle_rsp[me]=rsp;cpu_idle_valid[me]=1;
         __asm__ volatile("" ::: "memory");
         __asm__ volatile("sti" ::: "memory");
+        /* E2 cooperative pick (plain lock: no IRQ-context caller takes
+         * sched_lock — PIT only ticks, IPI handlers only ack/EOI, faults
+         * halt — so IF=1 here is safe; see P1-revert for the full story). */
         rix_spin_lock(&sched_lock);
         uint32_t old=cpu_current[me];
         uint32_t next=sched_select_locked(me,old);
