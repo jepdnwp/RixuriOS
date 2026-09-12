@@ -972,3 +972,22 @@ worker cpu=3, probe cpu=3, SHELL READY, 0 exceptions/panics/timeouts.
 `kernel.elf` byte-size identical to the E4 build (362488).
 SMP_DESIGN P1 sections replaced by this revert note; the attempt's
 mechanism evidence stays in the log history above.
+## 2026-09-12 — Phase E6: ps2 bottom half (IRQ never takes tty locks)
+
+IRQ1 drained the 8042 and ran scancodes straight into `tty_input`
+(input+output locks): a task holding either with IF=1 plus a keypress
+deadlocks (handler spins on the interrupted holder). `ps2_lock`
+trylock never covered it (different lock). Fix (`ps2_keyboard.c`
+only): IRQ appends to a 64-entry ring under `ps2_lock` and returns;
+the poll worker moves HW bytes into the same ring, then processes it
+FIFO in task context (IRQs masked) — ordering and shift state intact,
+single-context. Overflow drops newest with a counter (no IRQ logging).
+No IRQ path takes tty/console locks anymore (faults halt by design).
+
+Evidence: `make test` RC=0, `make image`/`iso` RC=0, UP SHELL READY
+(170), WHPX `-smp 4`: `online=4`, ping/shootdown ok, worker/probe
+cpu=3, SHELL READY, 0 exceptions. No host harness (port IO); no
+keypresses in the rig, so this is a no-regression proof — HW keypress
+proof needs fingers.
+
+Not claimed: worker remainder, P1 (reverted, own project), HW PASS.

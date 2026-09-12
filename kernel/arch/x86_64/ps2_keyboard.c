@@ -16,6 +16,27 @@ static uint8_t extended_scancode;
  * both drain it, so without mutual exclusion a byte can be consumed twice
  * (stale duplicate read) and one keypress appears as two. */
 static rix_spinlock_t ps2_lock;
+/* Phase E6 bottom half: IRQ1 only drains HW bytes into this ring (under
+ * ps2_lock) and returns — it never calls tty_input anymore. The poll
+ * worker moves HW bytes into the same ring, then processes the ring FIFO
+ * in task context. Rationale: tty_input takes the input/output locks; an
+ * IRQ handler spinning on those while the holder cannot resume until
+ * iret is a keypress-timing deadlock (invisible without input HW, fatal
+ * with it). After E6 no IRQ path takes tty/console locks. */
+#define PS2_RING_SIZE 64u
+static uint8_t ps2_ring[PS2_RING_SIZE];
+static size_t ps2_ring_head, ps2_ring_tail, ps2_ring_count;
+static uint64_t ps2_ring_dropped;
+static void ps2_ring_push(uint8_t byte){
+    if(ps2_ring_count<PS2_RING_SIZE){
+        ps2_ring[ps2_ring_tail]=byte;
+        ps2_ring_tail=(ps2_ring_tail+1u)%PS2_RING_SIZE;
+        ps2_ring_count++;
+    }else{
+        /* Overflow drops newest (no IRQ-side logging, ever). */
+        ps2_ring_dropped++;
+    }
+}
 
 static inline uint8_t inb(uint16_t port) {
     uint8_t val;
@@ -59,12 +80,12 @@ static void ps2_irq_handler(unsigned irq, const struct interrupt_frame *frame) {
     uint8_t pending[PS2_DRAIN_MAX];
     size_t count;
     /* IRQ context must never block: if the poll worker holds the lock it is
-     * already draining these bytes, so just return. Processing stays under
-     * the lock so multi-byte sequences (0xE0 prefix, shift state) cannot
-     * split across IRQ and poll contexts. */
+     * already draining these bytes, so just return. Bytes go to the ring;
+     * scancode processing (tty_input under the tty locks) happens only in
+     * the poll worker's task context (Phase E6). */
     if (!rix_spin_trylock(&ps2_lock)) return;
     count = ps2_drain_locked(pending, sizeof(pending));
-    for (size_t i = 0; i < count; ++i) ps2_handle_scancode(pending[i]);
+    for (size_t i = 0; i < count; ++i) ps2_ring_push(pending[i]);
     rix_spin_unlock(&ps2_lock);
 }
 
@@ -113,6 +134,10 @@ void ps2_keyboard_init(void) {
     shift_held = 0;
     ctrl_held = 0;
     extended_scancode = 0;
+    ps2_ring_head = 0;
+    ps2_ring_tail = 0;
+    ps2_ring_count = 0;
+    ps2_ring_dropped = 0;
     /* Do not probe or command the legacy 8042 here. On USB-only systems the
        controller may be absent or firmware-owned, and port I/O can stall the
        boot path. PS/2 input remains available when IRQ1 actually produces
@@ -124,12 +149,20 @@ void ps2_keyboard_poll(void) {
     /* Firmware PS/2 routing is not consistent on modern boards; drain the
        controller even when IRQ1 is unavailable. The drain runs under the
        PS/2 lock with interrupts masked so an IRQ1 firing mid-drain cannot
-       consume (and duplicate) the same byte. */
+       consume (and duplicate) the same byte. Phase E6: HW bytes join the
+       ring first, then the whole ring is processed FIFO — single-context
+       ordering for multi-byte sequences and shift state. */
     uint8_t pending[PS2_DRAIN_MAX];
     size_t count;
     uint64_t flags;
     rix_spin_lock_irqsave(&ps2_lock, &flags);
     count = ps2_drain_locked(pending, sizeof(pending));
-    for (size_t i = 0; i < count; ++i) ps2_handle_scancode(pending[i]);
+    for (size_t i = 0; i < count; ++i) ps2_ring_push(pending[i]);
+    while (ps2_ring_count) {
+        uint8_t byte = ps2_ring[ps2_ring_head];
+        ps2_ring_head = (ps2_ring_head + 1u) % PS2_RING_SIZE;
+        ps2_ring_count--;
+        ps2_handle_scancode(byte);
+    }
     rix_spin_unlock_irqrestore(&ps2_lock, flags);
 }

@@ -142,6 +142,26 @@
   HC-lock behavior would be unprovable here. Deferred with reason,
   not forgotten: each migrates with its lock in its own phase.
 
+## Phase E6 (done 2026-09-12): ps2 bottom half (IRQ never takes tty locks)
+
+- Hazard: IRQ1 handler drained the 8042 and ran scancodes straight
+  into `tty_input` (input+output locks). A task holding either lock
+  with IF=1 plus a keypress deadlocks the machine (handler spins on
+  the interrupted holder). trylock on `ps2_lock` never covered it
+  (different lock). Invisible in the input-less QEMU rig; fatal on
+  hardware with probability per keypress.
+- Fix: IRQ appends drained bytes to a 64-entry ring (under `ps2_lock`,
+  still trylock-or-return, still never blocks) and returns. The poll
+  worker drains HW into the same ring, then processes the ring FIFO in
+  task context (IRQs masked by its irqsave) — multi-byte sequences and
+  shift state keep their ordering, now single-context. Overflow drops
+  newest with a counter (no IRQ-side logging, ever).
+- After E6 no IRQ path takes tty/console locks (faults halt by design
+  before logging). The E3/E4 locking discipline is then complete.
+- No host harness (port IO throughout) — QEMU proof only (identical
+  lines; HW keypress proof needs fingers, not claimed here).
+- Acceptance: UP/SMP4 identical to E4 counts, shell, 0 exceptions.
+
 ## Phase P1 (reverted 2026-09-12): timer preemption is premature
 
 - Attempted (slice: BSP quantum; full: RESCHED-IPI 227 + hog proof):
