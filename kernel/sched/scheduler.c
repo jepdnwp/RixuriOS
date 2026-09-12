@@ -1,5 +1,7 @@
 #include "scheduler.h"
 #include "../arch/x86_64/irq.h"
+#include "../arch/x86_64/smp.h"
+#include "../sync/lock.h"
 #include "../process/process.h"
 #include "../arch/x86_64/user_entry.h"
 #include "kernel.h"
@@ -39,14 +41,27 @@ _Static_assert(sizeof(rix_user_context_t) == 144, "user context size");
 extern void rix_context_switch(uint64_t *old_rsp,uint64_t new_rsp);
 static volatile uint64_t ticks;
 static rix_task_t tasks[RIX_MAX_TASKS];
-static uint32_t current_index;
+/* Phase E1: per-CPU current-task slot + one scheduler spinlock.
+ * Zero-init is correct: every CPU conceptually starts running tasks[0].
+ * Lock rule: irqsave in create/exit/returned paths (arbitrary caller IRQ
+ * posture); plain lock/unlock in yield (IRQs already off via cli).
+ * NEVER held across rix_context_switch or process_activate. */
+static uint32_t cpu_current[SMP_MAX_CPUS];
+static rix_spinlock_t sched_lock;
 static rix_task_id_t next_id;
+static uint32_t sched_cpu(void){
+    int id=smp_cpu_id();
+    if(id>=0&&id<SMP_MAX_CPUS)return (uint32_t)id;
+    int b=smp_bsp_index();
+    if(b>=0&&b<SMP_MAX_CPUS)return (uint32_t)b;
+    return 0;
+}
 
 static uint64_t read_rflags(void){uint64_t v;__asm__ volatile("pushfq; popq %0":"=r"(v)::"memory");return v;}
 static void cli(void){__asm__ volatile("cli" ::: "memory");}
 static void sti(void){__asm__ volatile("sti" ::: "memory");}
 
-static __attribute__((noreturn)) void task_returned(void){ tasks[current_index].state=TASK_DEAD; for(;;) scheduler_yield(); }
+static __attribute__((noreturn)) void task_returned(void){ uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);tasks[cpu_current[sched_cpu()]].state=TASK_DEAD;rix_spin_unlock_irqrestore(&sched_lock,irq);for(;;) scheduler_yield(); }
 static void boot_user_entry_marker(void){serial_write("BOOT: USER ENTRY READY\r\n");}
 static void trace_yield_begin(void){}
 static void trace_flags(void){}
@@ -59,9 +74,9 @@ static void trace_first_task(uint32_t idx){static unsigned n=0;if(n<1&&tasks[idx
 static void trace_selected(uint64_t id,uint64_t pid){static unsigned n=0;if(n<4){kernel_log("DEBUG: scheduler selected task=");kernel_log_dec(id);kernel_log(" pid=");kernel_log_dec(pid);kernel_log("\r\n");n++;}}
 static void trace_switched(void){static unsigned n=0;if(n<4){kernel_log("DEBUG: context_switch returned\r\n");n++;}}
 static void trace_switching(void){static unsigned n=0;if(n<4){kernel_log("DEBUG: switching context\r\n");n++;}}
-static void trace_resumed(void){static unsigned n=0;if(n<4){kernel_log("DEBUG: resumed task id=");kernel_log_dec(tasks[current_index].id);kernel_log("\r\n");n++;}}
+static void trace_resumed(void){static unsigned n=0;if(n<4){kernel_log("DEBUG: resumed task id=");kernel_log_dec(tasks[cpu_current[sched_cpu()]].id);kernel_log("\r\n");n++;}}
 static __attribute__((noreturn)) void task_bootstrap(void){
-    rix_task_t *t=&tasks[current_index];
+    rix_task_t *t=&tasks[cpu_current[sched_cpu()]];
     if(t->process_pid){
         serial_write("BOOT: userspace bootstrap selected\r\n");
         {static unsigned n=0;if(n<2){kernel_log("DEBUG: userspace bootstrap begin pid=");kernel_log_dec(t->process_pid);kernel_log("\r\n");n++;}}
@@ -88,7 +103,9 @@ static __attribute__((noreturn)) void task_bootstrap(void){
 }
 
 int scheduler_init(void){
-    ticks=0;current_index=0;next_id=1;
+    ticks=0;next_id=1;
+    rix_spin_init(&sched_lock);
+    for(uint32_t c=0;c<SMP_MAX_CPUS;c++)cpu_current[c]=0;
     for(uint32_t i=0;i<RIX_MAX_TASKS;i++){
         tasks[i].id=0;tasks[i].state=TASK_UNUSED;tasks[i].rsp=0;tasks[i].entry=NULL;tasks[i].arg=NULL;
         tasks[i].process_pid=0;tasks[i].user_entry=0;tasks[i].user_stack=0;tasks[i].user_return=UINT64_MAX;
@@ -99,16 +116,16 @@ int scheduler_init(void){
 }
 void scheduler_tick(void){ticks++;}
 uint64_t scheduler_ticks(void){return ticks;}
-rix_task_id_t scheduler_current_id(void){return tasks[current_index].id;}
+rix_task_id_t scheduler_current_id(void){return tasks[cpu_current[sched_cpu()]].id;}
 uint32_t scheduler_runnable_count(void){uint32_t n=0;for(uint32_t i=0;i<RIX_MAX_TASKS;i++)if(tasks[i].state==TASK_RUNNABLE||tasks[i].state==TASK_RUNNING)n++;return n;}
 void scheduler_dump_states(void){
  kernel_log("DEBUG: TASKS run=");kernel_log_dec(scheduler_runnable_count());kernel_log(" curidx=");
- kernel_log_dec(current_index);kernel_log("\r\n");
+ kernel_log_dec(cpu_current[sched_cpu()]);kernel_log("\r\n");
  for(uint32_t i=0;i<RIX_MAX_TASKS;i++){
   if(tasks[i].state==TASK_UNUSED)continue;
   kernel_log("DEBUG: TASK i=");kernel_log_dec(i);kernel_log(" id=");kernel_log_dec(tasks[i].id);
   kernel_log(" st=");kernel_log_dec((uint64_t)tasks[i].state);kernel_log(" pid=");kernel_log_dec(tasks[i].process_pid);
-  kernel_log(i==current_index?" CUR":"");kernel_log("\r\n");
+  kernel_log(i==cpu_current[sched_cpu()]?" CUR":"");kernel_log("\r\n");
  }
 }
 
@@ -129,9 +146,11 @@ static void task_init_stack(rix_task_t *t){
 
 int scheduler_create_kernel_thread(rix_kernel_thread_fn entry,void *arg,rix_task_id_t *out_id){
     if(!entry)return -1;
-    rix_task_t*t;if(task_alloc(&t)!=0)return -1;
+    uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);
+    rix_task_t*t;if(task_alloc(&t)!=0){rix_spin_unlock_irqrestore(&sched_lock,irq);return -1;}
     t->id=next_id++;if(!t->id)t->id=next_id++;t->entry=entry;t->arg=arg;t->process_pid=0;
     t->user_entry=0;t->user_stack=0;t->user_return=UINT64_MAX;t->user_context_valid=0;t->state=TASK_RUNNABLE;task_init_stack(t);
+    rix_spin_unlock_irqrestore(&sched_lock,irq);
     if(out_id)*out_id=t->id;
     return 0;
 }
@@ -139,9 +158,11 @@ int scheduler_create_kernel_thread(rix_kernel_thread_fn entry,void *arg,rix_task
 int scheduler_create_user_process(uint64_t pid,uint64_t entry,uint64_t user_stack,rix_task_id_t *out_id){
     if(!pid||!entry||!user_stack){kernel_log("DEBUG: scheduler task create fail stage=args\r\n");return -1;}
     rix_process_t*p=process_lookup(pid);if(!p||!p->address_space.pml4_phys||!p->kernel_stack){kernel_log("DEBUG: scheduler task create fail stage=lookup pid=");kernel_log_dec(pid);kernel_log("\r\n");return -2;}
-    rix_task_t*t;if(task_alloc(&t)!=0){kernel_log("DEBUG: scheduler task create fail stage=task-alloc\r\n");return -3;}
+    uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);
+    rix_task_t*t;if(task_alloc(&t)!=0){kernel_log("DEBUG: scheduler task create fail stage=task-alloc\r\n");rix_spin_unlock_irqrestore(&sched_lock,irq);return -3;}
     t->id=next_id++;if(!t->id)t->id=next_id++;t->entry=NULL;t->arg=NULL;t->process_pid=pid;
     t->user_entry=entry;t->user_stack=user_stack;t->user_return=UINT64_MAX;t->user_context_valid=0;t->state=TASK_RUNNABLE;task_init_stack(t);
+    rix_spin_unlock_irqrestore(&sched_lock,irq);
     if(out_id)*out_id=t->id;
     return 0;
 }
@@ -149,9 +170,11 @@ int scheduler_create_user_process(uint64_t pid,uint64_t entry,uint64_t user_stac
 int scheduler_create_fork_child(uint64_t pid,uint64_t entry,uint64_t user_stack,uint64_t return_value,rix_task_id_t*out_id){
     if(!pid||!entry||!user_stack)return -1;
     rix_process_t*p=process_lookup(pid);if(!p||!p->address_space.pml4_phys||!p->kernel_stack)return -1;
-    rix_task_t*t;if(task_alloc(&t)!=0)return -1;
+    uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);
+    rix_task_t*t;if(task_alloc(&t)!=0){rix_spin_unlock_irqrestore(&sched_lock,irq);return -1;}
     t->id=next_id++;if(!t->id)t->id=next_id++;t->entry=NULL;t->arg=NULL;t->process_pid=pid;
     t->user_entry=entry;t->user_stack=user_stack;t->user_return=return_value;t->user_context_valid=0;t->state=TASK_RUNNABLE;task_init_stack(t);
+    rix_spin_unlock_irqrestore(&sched_lock,irq);
     if(out_id)*out_id=t->id;
     return 0;
 }
@@ -159,17 +182,21 @@ int scheduler_create_fork_child(uint64_t pid,uint64_t entry,uint64_t user_stack,
 int scheduler_create_fork_child_context(uint64_t pid,const rix_user_context_t*context,rix_task_id_t*out_id){
     if(!pid||!context)return -1;
     rix_process_t*p=process_lookup(pid);if(!p||!p->address_space.pml4_phys||!p->kernel_stack)return -1;
-    rix_task_t*t;if(task_alloc(&t)!=0)return -1;
+    uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);
+    rix_task_t*t;if(task_alloc(&t)!=0){rix_spin_unlock_irqrestore(&sched_lock,irq);return -1;}
     t->id=next_id++;if(!t->id)t->id=next_id++;t->entry=NULL;t->arg=NULL;t->process_pid=pid;
     t->user_entry=context->rip;t->user_stack=context->rsp;t->user_return=0;t->user_context=*context;t->user_context.rax=0;
     t->user_context_valid=1;t->state=TASK_RUNNABLE;task_init_stack(t);
+    rix_spin_unlock_irqrestore(&sched_lock,irq);
     if(out_id)*out_id=t->id;
     return 0;
 }
 
 __attribute__((noreturn)) void scheduler_exit_current(void){
     cli();
-    tasks[current_index].state=TASK_DEAD;
+    rix_spin_lock(&sched_lock);
+    tasks[cpu_current[sched_cpu()]].state=TASK_DEAD;
+    rix_spin_unlock(&sched_lock);
     for(;;) scheduler_yield();
 }
 
@@ -184,12 +211,17 @@ void scheduler_yield(void){
     trace_flags();
     cli();
     trace_yield_begin();
-    uint32_t old=current_index,next=old;
+    /* E1: selection + publish under the scheduler lock (IRQs already off,
+     * so plain lock/unlock; IRQ posture across the switch is unchanged).
+     * The lock is released before rix_context_switch and never held
+     * across process_activate. */
+    rix_spin_lock(&sched_lock);
+    uint32_t old=cpu_current[sched_cpu()],next=old;
     trace_searching();
     for(uint32_t n=1;n<RIX_MAX_TASKS;n++){uint32_t i=(old+n)%RIX_MAX_TASKS;if(tasks[i].state==TASK_RUNNABLE){next=i;break;}}
     trace_old_next(old,next);
     cr3trace_push(3,(uint64_t)tasks[old].id,(uint64_t)tasks[next].id,0);
-    if(next==old){if(flags&0x200ULL)sti();return;}
+    if(next==old){rix_spin_unlock(&sched_lock);if(flags&0x200ULL)sti();return;}
     if(tasks[old].state==TASK_RUNNING)tasks[old].state=TASK_RUNNABLE;
     trace_old_updated(old);
     trace_activating(tasks[next].process_pid);
@@ -199,7 +231,7 @@ void scheduler_yield(void){
        is fragile on physical CPUs and can fail immediately after MOV CR3.
        The resumed-task path below activates the selected process after the
        switch; task_bootstrap defers the first user load to x86_enter_user(). */
-    tasks[next].state=TASK_RUNNING;current_index=next;
+    tasks[next].state=TASK_RUNNING;cpu_current[sched_cpu()]=next;
     trace_selected(tasks[next].id,tasks[next].process_pid);
     trace_first_task(next);
     trace_switching();
@@ -208,18 +240,20 @@ void scheduler_yield(void){
     if(tasks[old].state==TASK_RUNNABLE)tasks[old].state=TASK_RUNNING;
     if(tasks[old].process_pid){(void)process_activate(tasks[old].process_pid);}
     else if(tasks[old].id==0){(void)process_activate(0);}
-    current_index=old;
+    cpu_current[sched_cpu()]=old;
+    rix_spin_unlock(&sched_lock);
     if(flags&0x200ULL){sti();}
     return;
 #endif
+    rix_spin_unlock(&sched_lock);
     rix_context_switch(&tasks[old].rsp,tasks[next].rsp);
     trace_switched();
     trace_resumed();
     /* The context switch returns in the task that was waiting in this
        function. The address space must follow the resumed task, not the task
        that ran immediately before it. */
-    rix_task_t*resumed=&tasks[current_index];
-    if(resumed->process_pid){if(process_activate(resumed->process_pid)!=0)resumed->state=TASK_DEAD;}
+    rix_task_t*resumed=&tasks[cpu_current[sched_cpu()]];
+    if(resumed->process_pid){if(process_activate(resumed->process_pid)!=0){rix_spin_lock(&sched_lock);resumed->state=TASK_DEAD;rix_spin_unlock(&sched_lock);}}
     else if(resumed->id==0){(void)process_activate(0);}
     if(flags&0x200ULL)sti();
 }

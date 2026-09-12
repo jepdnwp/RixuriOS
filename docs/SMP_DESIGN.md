@@ -13,6 +13,32 @@
   with completion counting, VMM shootdown hook.
 - **Phase E — scheduler SMP:** per-CPU runqueues, scheduler lock,
   cross-CPU wakeup. Only then may lockless globals be touched.
+  (E1 spec 2026-09-12 below: lock + per-CPU current, zero behavior change.)
+
+## Phase E1 (done 2026-09-12): SMP-safe scheduler core, no behavior change
+
+- Motivation: `tasks[32]` + single `current_index` are touched lockless;
+  any AP scheduling (E2) or IPI-wakeup would race the BSP today.
+- Change (mechanical, `kernel/sched/scheduler.c` only):
+  - `current_index` → `cpu_current[SMP_MAX_CPUS]`, routed via
+    `sched_cpu()` (`smp_cpu_id`, fallback BSP index, then 0). Zero-init
+    is correct: every CPU conceptually starts running `tasks[0]`.
+  - One `rix_spinlock_t sched_lock`: irqsave-guarded in create/exit/
+    returned paths (arbitrary caller IRQ posture); plain lock/unlock in
+    `scheduler_yield` where IRQs are already off by the existing `cli`.
+    NEVER held across `rix_context_switch` or `process_activate` — lock
+    covers only the `tasks[]` mutation windows (alloc+init, select+
+    publish, DEAD-store). IRQ posture across the switch is byte-identical
+    to today (`cli` still held, `sti` at the end).
+  - Audit: no IRQ/IPI handler takes the lock today (`x86_ipi_dispatch`
+    only acks + invlpg; PIT only ticks) — verified, not assumed.
+- Explicitly NOT in E1: AP scheduling (APs keep parking), runqueues,
+  migration, preemption, host harness (none exists for scheduler —
+  create paths need process/user_entry doubles; deferred, not claimed).
+- Acceptance: `make test` RC=0, `-smp 1` + `-smp 4` boots identical
+  (SHELL READY, `online=4`, ping/shootdown ok, 0 exceptions). ANY
+  deviation → revert: `scheduler_yield` is the historically fragile path
+  and E1 buys optionality, not features.
 
 ## Data model (`kernel/arch/x86_64/smp.h`)
 

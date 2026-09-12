@@ -840,3 +840,21 @@ image`/`iso` RC=0, `-smp 1` SHELL READY clean, `-smp 4` as above.
 
 Not claimed: per-CPU scheduler/runqueues (Phase E), preemptive
 scheduler (P1), hardware PASS.
+## 2026-09-12 — P0 Phase E1: SMP-safe scheduler core, zero behavior change
+
+`kernel/sched/scheduler.c` only: `current_index` became
+`cpu_current[SMP_MAX_CPUS]` routed via `sched_cpu()` (`smp_cpu_id`,
+BSP-index fallback, then 0; zero-init means every CPU starts on
+`tasks[0]`), plus one `rix_spinlock_t` — irqsave in the four create
+paths / exit / task-returned (arbitrary caller IRQ posture), plain
+lock/unlock in `yield` where the existing `cli` already runs. Never
+held across `rix_context_switch` or `process_activate`; IRQ posture
+across the switch byte-identical. Verified no IRQ/IPI handler takes
+the lock (`x86_ipi_dispatch` acks + invlpg only, PIT only ticks). APs
+still park; no runqueues/migration/preemption (E2/P1, not claimed).
+
+Evidence: `make test` RC=0, `make image`/`iso` RC=0, WHPX `-smp 1`
+SHELL READY (166 serial lines, same count as C2), WHPX `-smp 4`
+`online=4` + ping 1/2/3 ok + shootdown ok + SHELL READY (203 lines,
+same count as C2) with 0 exceptions/panics/timeouts. Identical
+line counts are the behavior-preservation proof.
