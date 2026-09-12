@@ -269,7 +269,8 @@ symlink-test: | build
 		$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/symlink_test.c kernel/fs/rixfs.c kernel/fs/rixfs_ops.c kernel/fs/rixfs_dir.c kernel/fs/rixfs_fsck.c -o build/symlink_test && \
 		build/symlink_test; \
 	else \
-		echo "symlink tests: SKIPPED (tests/symlink_test.c not present)"; \
+		echo "symlink tests: BLOCKED (tests/symlink_test.c not present)" >&2; \
+		exit 2; \
 	fi
 
 e1000-test: | build
