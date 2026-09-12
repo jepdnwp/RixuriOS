@@ -122,7 +122,23 @@ int usb_parse_configuration_descriptor(const uint8_t *data, size_t length,
             endpoint->attributes = descriptor[3];
             endpoint->max_packet_size = le16(descriptor + 4u);
             endpoint->interval = descriptor[6];
+            endpoint->max_burst = 0;
+            endpoint->mult = 0;
+            endpoint->esit_payload = 0;
             interfaces[current_interface].endpoint_count++;
+            /* Phase H3: a 6-byte companion immediately after its
+             * endpoint belongs to it. Anything else (short, long,
+             * stray without a preceding endpoint) is skipped like any
+             * unknown descriptor — never counted, never fatal. */
+            size_t next = offset + descriptor_length;
+            if (next + RIX_USB_EP_COMPANION_SIZE <= total_length &&
+                data[next] == RIX_USB_EP_COMPANION_SIZE &&
+                data[next + 1u] == RIX_USB_DESC_ENDPOINT_COMPANION) {
+                endpoint->max_burst = data[next + 2u] & 0x0fu;
+                endpoint->mult = data[next + 3u] & 0x03u;
+                endpoint->esit_payload = le16(data + next + 4u);
+                offset += RIX_USB_EP_COMPANION_SIZE;
+            }
         }
         offset += descriptor_length;
     }

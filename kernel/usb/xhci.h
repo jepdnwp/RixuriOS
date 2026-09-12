@@ -22,6 +22,9 @@ typedef struct {
     uint16_t max_packet_size;
     uint8_t interval;
     uint8_t max_burst;
+    /* Phase H3: SuperSpeed ESIT payload (0 = derive as MPS*(burst+1)
+     * for SS periodic endpoints, ignored for USB2). */
+    uint16_t esit_payload;
 } rix_xhci_endpoint_config_t;
 
 #define RIX_XHCI_DEVICE_DETACHED 0u

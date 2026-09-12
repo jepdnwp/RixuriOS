@@ -67,9 +67,48 @@ static void test_rejections(void) {
                                                &interfaces, &endpoints) != 0);
 }
 
+static void test_companion(void) {
+    /* Phase H3: SuperSpeed companion attaches to its endpoint only. */
+    static const uint8_t descriptor[] = {
+        9, RIX_USB_DESC_CONFIGURATION, 38, 0, 1, 1, 0, 0x80, 50,
+        9, RIX_USB_DESC_INTERFACE, 0, 0, 2, 0xff, 0, 0, 0,
+        7, RIX_USB_DESC_ENDPOINT, 0x81, RIX_USB_EP_INTERRUPT, 0x00, 0x04, 4,
+        6, RIX_USB_DESC_ENDPOINT_COMPANION, 3, 1, 0x00, 0x08,
+        7, RIX_USB_DESC_ENDPOINT, 0x02, RIX_USB_EP_BULK, 0x00, 0x02, 0
+    };
+    rix_usb_configuration_info_t config;
+    rix_usb_interface_info_t interfaces[1];
+    rix_usb_endpoint_info_t endpoints[2];
+    size_t interface_count = 0, endpoint_count = 0;
+    assert(usb_parse_configuration_descriptor(
+        descriptor, sizeof(descriptor), &config, interfaces, 1, endpoints, 2,
+        &interface_count, &endpoint_count) == 0);
+    assert(interface_count == 1 && endpoint_count == 2);
+    assert(endpoints[0].max_packet_size == 1024);
+    assert(endpoints[0].max_burst == 3 && endpoints[0].mult == 1);
+    assert(endpoints[0].esit_payload == 0x0800);
+    assert(endpoints[1].max_burst == 0 && endpoints[1].mult == 0);
+    assert(endpoints[1].esit_payload == 0);
+    /* Malformed companion (wrong size) is ignored, endpoint intact. */
+    static const uint8_t ragged[] = {
+        9, RIX_USB_DESC_CONFIGURATION, 30, 0, 1, 1, 0, 0x80, 50,
+        9, RIX_USB_DESC_INTERFACE, 0, 0, 1, 0xff, 0, 0, 0,
+        7, RIX_USB_DESC_ENDPOINT, 0x81, RIX_USB_EP_INTERRUPT, 0x00, 0x04, 4,
+        5, RIX_USB_DESC_ENDPOINT_COMPANION, 3, 1, 0
+    };
+    interface_count = 0;
+    endpoint_count = 0;
+    assert(usb_parse_configuration_descriptor(
+        ragged, sizeof(ragged), &config, interfaces, 1, endpoints, 2,
+        &interface_count, &endpoint_count) == 0);
+    assert(endpoint_count == 1);
+    assert(endpoints[0].max_burst == 0 && endpoints[0].esit_payload == 0);
+}
+
 int main(void) {
     test_device();
     test_configuration();
+    test_companion();
     test_rejections();
     return 0;
 }

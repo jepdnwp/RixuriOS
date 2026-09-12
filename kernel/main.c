@@ -78,7 +78,8 @@ static int xhci_enumerate_and_configure(size_t controller, const rix_xhci_device
   uint8_t transfer=endpoint->attributes&RIX_USB_EP_TRANSFER_MASK;
   if(transfer==RIX_USB_EP_CONTROL||transfer==RIX_USB_EP_ISOCHRONOUS)continue;
   rix_xhci_endpoint_config_t config={endpoint->address,endpoint->attributes,
-                                      endpoint->max_packet_size,endpoint->interval,0};
+                                      endpoint->max_packet_size,endpoint->interval,
+                                      endpoint->max_burst,endpoint->esit_payload};
   rc=xhci_configure_endpoint(controller,device->slot_id,&config);
   if(rc!=0)return rc;
  }

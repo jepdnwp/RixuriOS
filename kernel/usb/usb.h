@@ -8,6 +8,10 @@
 #define RIX_USB_DESC_ENDPOINT 5u
 #define RIX_USB_DESC_HID 0x21u
 #define RIX_USB_DESC_HID_REPORT 0x22u
+/* Phase H3: SuperSpeed Endpoint Companion (6 bytes, follows its
+ * endpoint descriptor). */
+#define RIX_USB_DESC_ENDPOINT_COMPANION 0x30u
+#define RIX_USB_EP_COMPANION_SIZE 6u
 #define RIX_USB_EP_TRANSFER_MASK 0x03u
 #define RIX_USB_EP_CONTROL 0u
 #define RIX_USB_EP_ISOCHRONOUS 1u
@@ -56,6 +60,11 @@ typedef struct {
     uint8_t attributes;
     uint16_t max_packet_size;
     uint8_t interval;
+    /* Phase H3: from the companion descriptor when present (SS only);
+     * zero for USB2 endpoints (unchanged behavior there). */
+    uint8_t max_burst;
+    uint8_t mult;
+    uint16_t esit_payload;
 } rix_usb_endpoint_info_t;
 
 int usb_parse_device_descriptor(const uint8_t *data, size_t length,

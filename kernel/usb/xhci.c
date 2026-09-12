@@ -1621,7 +1621,16 @@ int xhci_configure_endpoint(size_t controller, uint8_t slot_id,
     slot_context[0] = (slot_context[0] & ~XHCI_SLOT_CONTEXT_ENTRIES_MASK) |
                       ((uint32_t)context_entries << 27);
     input[1] = XHCI_INPUT_ADD_SLOT | (1u << (endpoint_id + 1u));
-    endpoint[0] = (uint32_t)config->interval << 16;
+    /* Phase H3: Max ESIT Payload (dword0 low half) for SuperSpeed
+     * periodic endpoints; 0 elsewhere keeps the USB2 path identical.
+     * Prefer the companion value, else derive MPS*(burst+1). */
+    uint32_t esit = 0u;
+    if (slot->speed >= 4u && transfer_type == RIX_USB_EP_INTERRUPT) {
+        esit = config->esit_payload ? (uint32_t)config->esit_payload :
+               (uint32_t)config->max_packet_size * ((uint32_t)config->max_burst + 1u);
+        if (esit > 0xffffu) esit = 0xffffu;
+    }
+    endpoint[0] = (esit & 0xffffu) | ((uint32_t)config->interval << 16);
     uint8_t endpoint_type = transfer_type == RIX_USB_EP_INTERRUPT
         ? (direction ? XHCI_EP_INTERRUPT_IN : XHCI_EP_INTERRUPT_OUT)
         : (direction ? XHCI_EP_BULK_IN : XHCI_EP_BULK_OUT);

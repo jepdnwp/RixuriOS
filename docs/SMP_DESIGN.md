@@ -185,6 +185,30 @@
 
 ## Phase H2 (spec 2026-09-12): reset escalation (RxDetect + power cycle)
 
+## Phase H3 (spec 2026-09-12): SuperSpeed endpoint companion support
+
+- Scope note (honest): this does NOT fix the USB keyboard (USB2
+  device on USB2-speed ports — H2's track). It enables SuperSpeed
+  devices (flash drives): companion descriptor parse + burst/ESIT
+  programming. No SS device on hand to prove with; proof is host
+  unit tests + QEMU no-regression (no devices there either).
+- Changes (`kernel/usb/usb.{h,c}`, `xhci.c`, `main.c`,
+  `tests/usb_descriptor_test.c` only):
+  - New `RIX_USB_DESC_ENDPOINT_COMPANION (0x30)`; endpoint info gains
+    `max_burst`, `mult`, `esit_payload`. Parser attaches a companion
+    only to the immediately preceding endpoint (validated 6-byte);
+    stray/leading companions are ignored, never counted (same
+    skip-discipline as today).
+  - `xhci_configure_endpoint` programs Max ESIT Payload
+    (`MPS*(burst+1)`, SS periodic only; 0 elsewhere — USB2 path
+    byte-identical) and the parsed burst.
+  - `main.c` passes the parsed burst instead of hardcoded 0.
+- Explicitly NOT in H3: SS link management, BOS/LPM, hub depth/TT,
+  actual SS hardware proof (needs a USB3 stick on the ASUS box —
+  follow-up with the owner).
+- Acceptance: `make test` RC=0 incl. new companion asserts, QEMU
+  boots unchanged.
+
 - Field evidence round 2 (same ASUS board, H1 ISO): warm reset now
   "recovers" ports, but attach fails one step later at rc=7 (Address
   Device) with PED=0 — the link never reaches Enabled, so the device
