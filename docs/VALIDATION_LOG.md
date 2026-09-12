@@ -1050,3 +1050,53 @@ Six of eight suite failures root-caused and fixed (auth re-verified
   (ping echo_rounds, uniq read_line) verified correct, untouched.
 Pending re-verification: cred, phase20-test, killtest/capdelegatetest/
 renametest direct runs, full-suite re-run, UP/SMP4 sanity on this tree.
+
+## 2026-09-12 — Phase H6: xHCI hardware profile + keyboard-first port order
+
+The owner asked for xHCI to be configured for the machine it runs on, so
+the hardware was re-read on this box instead of being trusted to the
+repository. The Windows registry gave the four controllers' PCI
+locations for the first time (`Enum\PCI` → `LocationInformation` plus the
+USB stack's own controller description): `1022:43F7` bus 12/0/0 (USB
+3.10, xHCI 1.10), `1022:15B6` bus 14/0/3 (3.10, 1.20),
+`1022:15B7` bus 14/0/4 (3.10, 1.20), `1022:15B8` bus 15/0/0 (2.0, 1.20).
+Board/BIOS/CPU/RAM re-read unchanged: PRIME B650M-R Rev 1.xx, AMI 3035,
+Ryzen 7 7700, ~32 GB.
+
+That data is now a driver-side profile rather than prose:
+`kernel/usb/xhci_profile.{c,h}` holds the per-PCI-ID name, expected port
+count, expected HCIVERSION, observed failing-port list and quirk flags as
+pure host-tested data. `xhci.c` stores the PCI identity per controller,
+verifies the profile against the controller's own
+HCSPARAMS1/HCIVERSION/Supported-Protocol walk (the controller always wins;
+a mismatch is logged), and prints one identity line per controller
+(`ctl=N bus= dev= fn= id= hci= slots= ports= <name> quirks= profile=
+proto=`) plus a `known-bad=` line. Boot-device port selection now scores
+connected ports instead of taking the first one: known-good USB2 first
+(the keyboard aim), known-failing ports last (deprioritized, never
+banned), ties to the lowest port. The only behavioral quirk is
+`USB2_ONLY` for `1022:15B8`, whose device ID makes the absence of
+SuperSpeed ports a fact; it is applied only when that controller's own
+protocol walk agrees, and it keeps the USB3 wait-train/warm-reset branch
+away from a USB2-only port. `xhci_dump_ports()` gained `proto=` and
+`known-bad=` per port, and keyboard registration now logs its port.
+
+Validation:
+
+```text
+make all  CROSS=x86_64-linux-gnu- HOST_CC=gcc   RC=0 (only the known font_psf GNU-stack link warning)
+make test CROSS=x86_64-linux-gnu- HOST_CC=gcc   RC=0, incl. "xhci profile tests: PASS"
+make image CROSS=x86_64-linux-gnu- HOST_CC=gcc  RC=0 (64 MiB RixFS image + UEFI ESP)
+timeout 70 bash ./scripts/run-qemu.sh           RIXURI:KERNEL_READY, RIXURI: SHELL READY,
+                                                xHCI: controllers=0, no CPU exception or panic
+                                                (qemu_rc=124 is the expected bounded timeout)
+```
+
+This is build/host-test/boot evidence only. QEMU exposes zero xHCI
+controllers, so the profile verdicts, the USB2-only quirk and the port
+ordering are not hardware-exercised here; the profile table itself is
+covered by the new host test. Physical evidence still needs one boot log
+or photo from the owner (identity lines, `known-bad=`, `xHCI: port order`
+and `xHCI: attach failed ... PORTSC=`). The identity lines are also what
+settles the open ctl↔PCI-ID question: the earlier failing-port list
+implies an 18-port `ctl0`, which the bus-order prediction does not.

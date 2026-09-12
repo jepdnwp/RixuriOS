@@ -183,9 +183,67 @@
   unchanged (no devices there — compile + boot proof only).
 
 
+## Phase H6 (spec 2026-09-12): per-ID hardware profile + keyboard-first port order
+
+- Why: the board's four controllers have known identities (PCI IDs and
+  bus/device/function from the Windows registry), known port counts and a
+  known observed failing-port list, but the driver treated them as four
+  anonymous controllers. H4's `ctl` index is just PCI scan order, so the
+  doc's failing list (`ctl0 p9..p16`) could not be attributed to a part,
+  and boot port choice was "first connected port wins" — which may be a
+  port this exact board never manages to enable.
+- Changes:
+  - New `kernel/usb/xhci_profile.{c,h}`: per-PCI-ID table (name,
+    expected ports, expected HCIVERSION, failing ports, quirk flags).
+    Pure data + pure functions, no MMIO, host-tested like `xhci_caps.c`
+    (`tests/xhci_profile_test.c`, `make xhci-profile-test`).
+  - `xhci.c`: controllers store `vendor_id`/`device_id`; init logs one
+    identity line (`ctl=N bus/dev/fn id=PPPP:DDDD hci=0120 slots=N
+    ports=N <name> quirks=... profile=ok|mismatch proto=...`) plus a
+    `known-bad=` line, and verifies the profile against the controller's
+    own HCSPARAMS1/HCIVERSION/protocol map. Controller wins; a mismatch
+    is logged, never silently trusted.
+  - One behavioral quirk, set only where the device ID proves it:
+    `XHCI_PROFILE_QUIRK_USB2_ONLY` for `1022:15B8`, and only when its own
+    protocol walk also reports no USB3 range. It keeps a stale speed field
+    from sending a USB2-only port into the SS wait-train/warm-reset branch
+    (the 0x331 wedge) and fails a ghost port fast instead of burning the
+    4x training window.
+  - Boot-device port order: score = speed class (USB2 0, USB3 1, unknown
+    protocol 2) + `XHCI_PROFILE_BAD_PENALTY` (4) for a listed failing
+    port; lowest score wins, ties keep the lowest port number. Known-good
+    USB2 first, failing ports last (deprioritized, never banned). One
+    `xHCI: port order ctl=N port=M score=S proto=U<n>` line per selection
+    change, so a non-preferred choice is visible without log flooding.
+  - `xhci_dump_ports()` adds `proto=U<n>` and `known-bad=<0|1>` per port;
+    `main.c` logs `port=` on keyboard registration.
+- Explicitly NOT in H6: any assumed ctl↔ID mapping (the identity line
+  decides), banning ports, per-port electrical workarounds, SuperSpeed
+  link management, and hardware proof (needs the owner's boot log).
+- Acceptance: `make test` RC=0 including the new asserts; QEMU boot
+  unchanged (0 controllers there, so the profile path is compile/link
+  checked only — the table itself is host-tested).
+
 ## Phase H2 (spec 2026-09-12): reset escalation (RxDetect + power cycle)
 
 ## Phase H4 (spec 2026-09-12): per-controller protocol map + quirk IDs
+
+## Phase H5 (spec 2026-09-12): BIOS-ownership verdict logging
+
+- Field puzzle: all 4 controllers fail identically at reset/address
+  with no PED ever — a common cause outside our code is firmware SMI
+  still owning USB (legacy keyboard emulation traps port accesses;
+  keyboard works in BIOS menus but never in the OS).
+- Change (`xhci_bios_handoff` only + one log line per controller):
+  paced handoff poll (~100 ms worst case instead of a tight loop
+  that expires before a slow SMI releases) and a verdict line
+  (`handoff BIOS-owned=0/1 rc=N`) distinguishing OS-takeover from
+  never-owned on the HW photo. Behavior on success is unchanged.
+- If a controller reports BIOS-owned=1 with rc=0, SMI is out and the
+  hunt continues in reset sequencing; if BIOS-owned=1 rc!=0 (or the
+  owner disables legacy USB in BIOS and input springs to life), the
+  suspect is confirmed without another code cycle.
+- Acceptance: verdict lines visible on HW photo; QEMU unchanged.
 
 - Why: H1/H2 guess USB2-vs-SS from the PORTSC speed field (0 =
   "ambiguous"), but an untrained SS port also reads 0/speed-stale —

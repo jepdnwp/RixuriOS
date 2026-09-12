@@ -182,24 +182,41 @@ static int is_xhci_device(const rix_pci_device_t *d) {
            d->prog_if == PCI_PROGIF_XHCI;
 }
 
-/* Phase H4: known-silicon table (WMI-confirmed on the ASUS PRIME
- * B650M-R test box). Names only — no behavioral quirks without
- * per-ID evidence. */
-typedef struct { uint16_t vendor, device; const char *name; uint32_t quirks; } xhci_quirk_entry_t;
-static const xhci_quirk_entry_t xhci_quirks[] = {
-    {0x1022u, 0x15b7u, "AMD Raphael USB3", XHCI_QUIRK_NONE},
-    {0x1022u, 0x15b6u, "AMD Raphael USB3", XHCI_QUIRK_NONE},
-    {0x1022u, 0x43f7u, "ASMedia ASM3xxx USB3", XHCI_QUIRK_NONE},
-    {0x1022u, 0x15b8u, "AMD Raphael USB2-only", XHCI_QUIRK_NONE},
-};
-static const char *xhci_quirk_name(uint16_t vendor, uint16_t device, uint32_t *quirks) {
-    for (size_t i = 0; i < sizeof(xhci_quirks) / sizeof(xhci_quirks[0]); ++i)
-        if (xhci_quirks[i].vendor == vendor && xhci_quirks[i].device == device) {
-            if (quirks) *quirks = xhci_quirks[i].quirks;
-            return xhci_quirks[i].name;
-        }
-    if (quirks) *quirks = XHCI_QUIRK_NONE;
-    return "unknown";
+/* Phase H6: the known-silicon table moved to xhci_profile.c (pure data,
+ * host-tested in tests/xhci_profile_test.c). This TU only consumes it: the
+ * profile names the part for the boot log, carries the expectations the
+ * controller is verified against, and supplies the observed-failing-port
+ * list that orders boot-device port selection. */
+static int xhci_has_usb3_range(const rix_xhci_controller_t *c) {
+    for (unsigned i = 0; i < c->proto_ranges && i < XHCI_SPC_MAX_RANGES; ++i)
+        if (c->proto_major[i] == 3u) return 1;
+    return 0;
+}
+/* PCI IDs and xHCI interface versions are 4 hex digits; serial_write_hex
+ * pads to 16, which is unreadable for an ID, so print bare nibbles here. */
+static void xhci_write_hex4(uint16_t v) {
+    static const char digits[] = "0123456789abcdef";
+    char buf[5];
+    buf[0] = digits[(v >> 12) & 0xfu];
+    buf[1] = digits[(v >> 8) & 0xfu];
+    buf[2] = digits[(v >> 4) & 0xfu];
+    buf[3] = digits[v & 0xfu];
+    buf[4] = 0;
+    serial_write(buf);
+}
+static const xhci_profile_t *xhci_controller_profile(const rix_xhci_controller_t *c) {
+    return c ? xhci_profile_lookup(c->vendor_id, c->device_id) : NULL;
+}
+/* Apply the profile's quirk flags. The USB2-only flag is honored only when
+ * the controller's own Supported-Protocol walk confirms it has no USB3
+ * range; if the two disagree the controller wins, the quirk stays off and
+ * xhci_init logs the mismatch. A profile must never override silicon. */
+static uint32_t xhci_apply_profile_quirks(const rix_xhci_controller_t *c) {
+    const xhci_profile_t *profile = xhci_controller_profile(c);
+    if (!profile) return XHCI_PROFILE_QUIRK_NONE;
+    return ((profile->quirks & XHCI_PROFILE_QUIRK_USB2_ONLY) && !xhci_has_usb3_range(c))
+               ? XHCI_PROFILE_QUIRK_USB2_ONLY
+               : XHCI_PROFILE_QUIRK_NONE;
 }
 /* Phase H4: Supported-Protocol walk over MMIO (handoff-walk pattern).
  * Snapshots 16 bytes per entry, decodes pure. Stops at the first
@@ -246,11 +263,17 @@ int xhci_port_protocol(size_t controller, uint8_t port) {
 }
 /* Take OS ownership from firmware via the USB Legacy Support capability.
  * No-op when the controller reports no extended capabilities. Bounded:
- * at most XHCI_EXT_CAP_WALK_MAX capability steps and XHCI_POLL_LIMIT
- * handoff polls; never wedges the boot on a stuck BIOS semaphore. */
-static int xhci_bios_handoff(volatile uint8_t *base, uint64_t mmio_size) {
+ * at most XHCI_EXT_CAP_WALK_MAX capability steps and a paced handoff
+ * poll (~100ms worst case — a tight loop expires before a slow BIOS
+ * SMI releases; never wedges the boot on a stuck semaphore).
+ * Sets *was_owned when BIOS ownership was ever observed (diagnostic:
+ * tells OS-takeover apart from never-owned on the boot log). */
+static void xhci_udelay(uint32_t us);
+static int xhci_bios_handoff(volatile uint8_t *base, uint64_t mmio_size,
+                             uint32_t *was_owned) {
     uint32_t hcc;
     uint32_t xecp;
+    if (was_owned) *was_owned = 0;
     if (!base || !mmio_size) return -1;
     if (mmio_size < (uint64_t)XHCI_HCCPARAMS1 + 4u) return -1;
     hcc = *(volatile uint32_t *)(base + XHCI_HCCPARAMS1);
@@ -268,9 +291,12 @@ static int xhci_bios_handoff(volatile uint8_t *base, uint64_t mmio_size) {
         }
         legsup = (volatile uint32_t *)(base + xecp);
         if (!(*legsup & XHCI_USBLSUP_BIOS_OWNED)) return 0;
+        if (was_owned) *was_owned = 1;
         *legsup |= XHCI_USBLSUP_OS_OWNED;
-        for (uint32_t i = 0; i < XHCI_POLL_LIMIT; ++i)
+        for (uint32_t i = 0; i < 1000000u; ++i) {
             if (!(*legsup & XHCI_USBLSUP_BIOS_OWNED)) return 0;
+            if ((i & 0x3ffu) == 0u) xhci_udelay(100u);
+        }
         return -2;
     }
     return -3;
@@ -572,9 +598,26 @@ int xhci_init(void) {
     for (size_t i = 0; i < pci_device_count() && count < XHCI_MAX; ++i) {
         const rix_pci_device_t *d = pci_device(i);
         if (!is_xhci_device(d)) continue;
-        serial_write("xHCI: AMD/PCI candidate "); serial_write_hex(d->vendor_id);
-        serial_write(":"); serial_write_hex(d->device_id); serial_write(" bus=");
-        serial_write_dec(d->bus); serial_write(" dev=");serial_write_dec(d->device); serial_write("\r\n");
+        /* Phase H6: name the part here too, not only on the success line, so
+         * a controller that fails before becoming ctl=N is still
+         * identifiable from the log. */
+        {
+            const xhci_profile_t *candidate_profile =
+                xhci_profile_lookup(d->vendor_id, d->device_id);
+            serial_write("xHCI: AMD/PCI candidate ");
+            xhci_write_hex4(d->vendor_id);
+            serial_write(":");
+            xhci_write_hex4(d->device_id);
+            serial_write(" bus=");
+            serial_write_dec(d->bus);
+            serial_write(" dev=");
+            serial_write_dec(d->device);
+            serial_write(" fn=");
+            serial_write_dec(d->function);
+            serial_write(" ");
+            serial_write(candidate_profile ? candidate_profile->name : "unknown");
+            serial_write("\r\n");
+        }
         {
             uint32_t cmd_save = pci_config_read32(d->bus, d->device, d->function, PCI_COMMAND);
             uint64_t bar_size = 0, bar_base = 0;
@@ -619,6 +662,8 @@ int xhci_init(void) {
                 c->bus = d->bus;
                 c->device = d->device;
                 c->function = d->function;
+                c->vendor_id = d->vendor_id;
+                c->device_id = d->device_id;
                 c->bar0 = bar_base;
                 c->mmio_va = regs_va;
                 c->cap_length = base[XHCI_CAPLENGTH];
@@ -637,7 +682,23 @@ int xhci_init(void) {
                 /* Phase H4: protocol map before handoff/runtime (MMIO
                  * reads only; never fails init). */
                 xhci_scan_protocols(c, base, bar_size);
-                handoff = xhci_bios_handoff(base, bar_size);
+                /* Phase H6: resolve the profile now that the controller has
+                 * described itself (HCSPARAMS1 + protocol walk), and apply
+                 * only the quirks those capabilities confirm. */
+                c->quirks = xhci_apply_profile_quirks(c);
+                const xhci_profile_t *profile = xhci_controller_profile(c);
+                unsigned profile_verdict = xhci_profile_verify(profile, c->max_ports,
+                                                               (uint16_t)c->hci_version,
+                                                               xhci_has_usb3_range(c));
+                {
+                    uint32_t was_owned = 0;
+                    handoff = xhci_bios_handoff(base, bar_size, &was_owned);
+                    serial_write("xHCI: handoff BIOS-owned=");
+                    serial_write_dec(was_owned);
+                    serial_write(" rc=");
+                    serial_write_dec((uint64_t)(handoff < 0 ? -handoff : handoff));
+                    serial_write("\r\n");
+                }
                 if (handoff != 0) {
                     serial_write("xHCI: candidate BIOS handoff failed\r\n");
                     continue;
@@ -682,15 +743,58 @@ int xhci_init(void) {
                     serial_write(" operational="); serial_write_hex(bar_base + c->cap_length);
                     serial_write(" ports="); serial_write_dec(c->max_ports);
                     serial_write("\r\n");
-                    /* Phase H4: name the silicon + print the protocol map.
-                     * This line is the HW topology evidence (photo it). */
+                    /* Phase H6: identity line. The ctl index depends on the
+                     * kernel's PCI scan order, so bus/dev/fn + PCI ID + port
+                     * count are printed together with the part name: this one
+                     * line is what maps a ctl number to physical silicon. The
+                     * profile verdict compares the Windows-side board facts
+                     * against what this controller reported; a mismatch is
+                     * logged, never silently accepted. */
                     {
-                        uint32_t quirks = XHCI_QUIRK_NONE;
-                        const char *name = xhci_quirk_name(d->vendor_id, d->device_id, &quirks);
                         serial_write("xHCI: ctl=");
                         serial_write_dec(count);
+                        serial_write(" bus=");
+                        serial_write_dec(d->bus);
+                        serial_write(" dev=");
+                        serial_write_dec(d->device);
+                        serial_write(" fn=");
+                        serial_write_dec(d->function);
+                        serial_write(" id=");
+                        xhci_write_hex4(c->vendor_id);
+                        serial_write(":");
+                        xhci_write_hex4(c->device_id);
+                        serial_write(" hci=");
+                        xhci_write_hex4((uint16_t)c->hci_version);
+                        serial_write(" slots=");
+                        serial_write_dec(c->max_slots);
+                        serial_write(" ports=");
+                        serial_write_dec(c->max_ports);
                         serial_write(" ");
-                        serial_write(name);
+                        serial_write(profile ? profile->name : "unknown");
+                        serial_write(" quirks=");
+                        serial_write((c->quirks & XHCI_PROFILE_QUIRK_USB2_ONLY)
+                                         ? "usb2-only"
+                                         : "none");
+                        serial_write(" profile=");
+                        if (!profile) serial_write("unknown");
+                        else if (profile_verdict == XHCI_PROFILE_OK) serial_write("ok");
+                        else {
+                            serial_write("mismatch");
+                            if (profile_verdict & XHCI_PROFILE_VERIFY_PORTS) {
+                                serial_write(" ports=");
+                                serial_write_dec(c->max_ports);
+                                serial_write("/");
+                                serial_write_dec(profile->expected_ports);
+                            }
+                            if (profile_verdict & XHCI_PROFILE_VERIFY_HCI) {
+                                serial_write(" hci=");
+                                xhci_write_hex4((uint16_t)c->hci_version);
+                                serial_write("/");
+                                xhci_write_hex4(profile->expected_hci);
+                            }
+                            if (profile_verdict & XHCI_PROFILE_VERIFY_USB3)
+                                serial_write(" usb3-range-on-usb2-only-id");
+                        }
                         serial_write(" proto=");
                         if (!c->proto_ranges) serial_write("unknown");
                         for (unsigned pi = 0; pi < c->proto_ranges && pi < XHCI_SPC_MAX_RANGES; ++pi) {
@@ -701,6 +805,22 @@ int xhci_init(void) {
                             serial_write_dec(c->proto_start[pi]);
                             serial_write("-");
                             serial_write_dec((uint64_t)c->proto_start[pi] + (uint64_t)c->proto_count[pi] - 1u);
+                        }
+                        serial_write("\r\n");
+                    }
+                    /* Phase H6: the ports this exact board was observed
+                     * failing to enable, so the log shows why a port is
+                     * ordered last instead of first. Bounded by
+                     * XHCI_PROFILE_BAD_PORT_MAX. */
+                    if (profile && profile->bad_ports && profile->bad_port_count) {
+                        serial_write("xHCI: ctl=");
+                        serial_write_dec(count);
+                        serial_write(" known-bad=");
+                        for (uint8_t bi = 0;
+                             bi < profile->bad_port_count &&
+                             bi < (uint8_t)XHCI_PROFILE_BAD_PORT_MAX; ++bi) {
+                            if (bi) serial_write(",");
+                            serial_write_dec(profile->bad_ports[bi]);
                         }
                         serial_write("\r\n");
                     }
@@ -751,12 +871,18 @@ static void xhci_clear_port_change(volatile uint32_t *reg) {
 void xhci_dump_ports(void) {
     for (size_t ci = 0; ci < count; ++ci) {
         const rix_xhci_controller_t *c = &controllers[ci];
+        /* Phase H6: the inventory names each controller and marks the ports
+         * this board is known to fail on, so a physical port walk can be
+         * matched against the running system without another build. */
+        const xhci_profile_t *profile = xhci_controller_profile(c);
         kernel_log("xHCI: ctl=");
         kernel_log_dec(ci);
         kernel_log(" ports=");
         kernel_log_dec(c->max_ports);
         kernel_log(" slots=");
         kernel_log_dec(c->max_slots);
+        kernel_log(" ");
+        kernel_log(profile ? profile->name : "unknown");
         kernel_log("\r\n");
         for (uint8_t port = 1; port <= c->max_ports; ++port) {
             volatile uint8_t *base = (volatile uint8_t *)(uintptr_t)c->mmio_va;
@@ -772,6 +898,10 @@ void xhci_dump_ports(void) {
             kernel_log_dec((uint64_t)((v & XHCI_PORT_PED) != 0u));
             kernel_log(" speed=");
             kernel_log_dec((uint64_t)((v & XHCI_PORT_SPEED_MASK) >> XHCI_PORT_SPEED_SHIFT));
+            kernel_log(" proto=U");
+            kernel_log_dec((uint64_t)xhci_port_protocol(ci, port));
+            kernel_log(" known-bad=");
+            kernel_log_dec((uint64_t)xhci_profile_port_known_bad(profile, port));
             kernel_log(" PLS=");
             kernel_log_dec((uint64_t)((v & XHCI_PORT_PLS_MASK) >> 5));
             kernel_log(" PORTSC=");
@@ -921,9 +1051,17 @@ int xhci_reset_port(size_t controller, uint8_t port) {
          * when the speed field disagrees, and known-USB2 ports skip
          * the training wait (their speed is valid at connect; a
          * persistent 0 is a ghost, failed fast by the PR attempt).
-         * Unknown protocol keeps the legacy heuristic. */
+         * Unknown protocol keeps the legacy heuristic. Phase H6 adds
+         * the profile's USB2-only fact: such a controller has no
+         * SuperSpeed ports by construction, so a stale/nonzero speed
+         * field must never send this port down the SS wait-train path
+         * (the 0x331 wedge) and a persistent speed 0 is a ghost that
+         * should fail fast at the PR attempt instead of burning the
+         * 4x training window. */
         int proto = xhci_port_protocol(controller, port);
-        if (speed >= 4u || proto == 3) {
+        uint32_t usb2_only = c->quirks & XHCI_PROFILE_QUIRK_USB2_ONLY;
+        if (usb2_only) proto = 2;
+        if (!usb2_only && (speed >= 4u || proto == 3)) {
             int wrc = xhci_wait_usb3_trained(reg);
             if (wrc == 0) return 0;
             return xhci_warm_reset_port(reg);
@@ -1153,6 +1291,16 @@ int xhci_service_hotplug(size_t controller, rix_xhci_device_t *device, uint8_t *
                 port_attach_fail_ns[controller][p] = 0;
             }
         }
+        /* Phase H6 boot-device order: among connected, unparked, unoccupied
+         * ports pick the best-scoring one instead of the first (lowest)
+         * port. The score prefers a known-good USB2 port — the documented
+         * aim for the boot keyboard — and deprioritizes, never bans, the
+         * ports this exact board was observed failing: such a port is still
+         * attempted once every known-good candidate is exhausted. Ties keep
+         * the lowest port number, so the choice cannot oscillate. */
+        const xhci_profile_t *profile = xhci_controller_profile(c);
+        uint8_t best_port = 0;
+        int best_score = 0;
         for (uint8_t candidate = 1; candidate <= c->max_ports; ++candidate) {
             if (port_attach_failed[controller][candidate]) continue;
             rix_xhci_port_status_t status;
@@ -1161,7 +1309,36 @@ int xhci_service_hotplug(size_t controller, rix_xhci_device_t *device, uint8_t *
             for (uint16_t slot_id = 1; slot_id <= c->max_slots; ++slot_id)
                 if (runtimes[controller].slots[slot_id].allocated &&
                     runtimes[controller].slots[slot_id].port == candidate) { occupied = 1; break; }
-            if (!occupied) { port = candidate; is_connected = 1; rc = 1; break; }
+            if (occupied) continue;
+            int score = xhci_profile_port_priority(
+                xhci_port_protocol(controller, candidate),
+                xhci_profile_port_known_bad(profile, candidate));
+            if (best_port == 0u || score < best_score) {
+                best_port = candidate;
+                best_score = score;
+            }
+        }
+        if (best_port != 0u) {
+            port = best_port;
+            is_connected = 1;
+            rc = 1;
+            /* One line per selection change. A nonzero score means the
+             * chosen port is USB3, of unknown protocol, or listed as
+             * failing — exactly the case worth seeing on the boot log
+             * without flooding it on every poll. */
+            static uint8_t last_selected[XHCI_MAX];
+            if (best_score > 0 && last_selected[controller] != best_port) {
+                last_selected[controller] = best_port;
+                serial_write("xHCI: port order ctl=");
+                serial_write_dec(controller);
+                serial_write(" port=");
+                serial_write_dec(best_port);
+                serial_write(" score=");
+                serial_write_dec((uint64_t)best_score);
+                serial_write(" proto=U");
+                serial_write_dec((uint64_t)xhci_port_protocol(controller, best_port));
+                serial_write("\r\n");
+            }
         }
     } else if (rc == 1 && port != 0u) {
         if (!is_connected) {

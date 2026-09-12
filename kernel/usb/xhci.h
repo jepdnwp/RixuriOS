@@ -3,9 +3,13 @@
 #include <stdint.h>
 #include "usb.h"
 #include "xhci_caps.h"
+#include "xhci_profile.h"
 
 typedef struct {
     uint8_t bus, device, function;
+    /* Phase H6: PCI identity, kept so the hotplug/reset paths can look the
+     * controller up in the hardware profile without re-walking PCI. */
+    uint16_t vendor_id, device_id;
     uint64_t bar0;
     uint64_t mmio_va;
     uint8_t cap_length, max_slots, max_intrs, max_ports;
@@ -21,10 +25,11 @@ typedef struct {
     uint8_t proto_ranges;
     uint32_t quirks;
 } rix_xhci_controller_t;
-/* Phase H4 quirk flags: none set today. The table below exists so the
- * boot log names real silicon; behavioral quirks are added only with
- * per-ID evidence, never preemptively. */
-#define XHCI_QUIRK_NONE 0u
+/* Quirk flags and the per-ID evidence that sets them live in
+ * xhci_profile.h (XHCI_PROFILE_QUIRK_*): behavioral quirks are added only
+ * with per-ID evidence, never preemptively. XHCI_QUIRK_NONE is the neutral
+ * value for a controller with no known part. */
+#define XHCI_QUIRK_NONE XHCI_PROFILE_QUIRK_NONE
 /* USB protocol major for a port: 2, 3, or 0 when the map is unknown. */
 int xhci_port_protocol(size_t controller, uint8_t port);
 

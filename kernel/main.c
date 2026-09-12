@@ -122,6 +122,7 @@ static int xhci_enumerate_and_configure(size_t controller, const rix_xhci_device
       }
      }
      serial_write("xHCI: keyboard registered slot=");serial_write_dec(device->slot_id);
+     serial_write(" port=");serial_write_dec(device->port);
      serial_write(" ep=0x");serial_write_hex(known_keyboards[k].endpoint);
      serial_write(" report-id=");serial_write_dec(report_info.report_id);serial_write("\r\n");
      break;

@@ -11,7 +11,7 @@ OBJ := kernel/boot.o kernel/main.o kernel/serial.o kernel/user_init_blob.o \
  kernel/arch/x86_64/cpu.o kernel/arch/x86_64/gdt.o kernel/arch/x86_64/idt.o kernel/arch/x86_64/interrupts.o kernel/arch/x86_64/irq.o kernel/arch/x86_64/apic.o kernel/arch/x86_64/acpi.o kernel/arch/x86_64/smp.o kernel/arch/x86_64/smp_trampoline.o kernel/arch/x86_64/ioapic.o kernel/arch/x86_64/pic.o kernel/arch/x86_64/pit.o kernel/arch/x86_64/ps2_keyboard.o kernel/arch/x86_64/user_entry.o kernel/arch/x86_64/cr3.o \
  kernel/pci/pci.o kernel/pci/dma.o kernel/pci/iommu.o kernel/pci/msix.o kernel/sched/scheduler.o kernel/sched/switch.o kernel/process/process.o kernel/process/signal.o kernel/process/address_space.o kernel/syscall/syscall.o kernel/vfs/vfs.o kernel/fs/rixfs.o kernel/fs/rixfs_ops.o kernel/fs/rixfs_dir.o kernel/fs/rixfs_fsck.o kernel/elf/elf.o kernel/elf/loader.o \
  kernel/mm/pmm.o kernel/mm/vmm.o kernel/mm/ptmap.o kernel/mm/uaccess.o kernel/mm/heap.o kernel/sync/lock.o kernel/sync/waitqueue.o kernel/ipc/channel.o kernel/ipc/pipe.o kernel/ipc/shared_memory.o kernel/tty/tty.o \
-         kernel/storage/block.o kernel/storage/block_cache.o kernel/storage/nvme.o kernel/net/net.o kernel/net/ethernet.o kernel/net/arp.o kernel/net/ipv4.o kernel/net/ipv6.o kernel/net/udp.o kernel/net/tcp.o kernel/net/loopback.o kernel/net/socket.o kernel/net/device.o kernel/net/stack.o kernel/net/dhcp.o kernel/net/rtl8125.o kernel/net/e1000.o kernel/usb/xhci.o kernel/usb/usb.o kernel/usb/hid.o kernel/usb/xhci_caps.o kernel/time/rtc.o kernel/time/time.o kernel/power/power.o kernel/tty/font_psf.o
+         kernel/storage/block.o kernel/storage/block_cache.o kernel/storage/nvme.o kernel/net/net.o kernel/net/ethernet.o kernel/net/arp.o kernel/net/ipv4.o kernel/net/ipv6.o kernel/net/udp.o kernel/net/tcp.o kernel/net/loopback.o kernel/net/socket.o kernel/net/device.o kernel/net/stack.o kernel/net/dhcp.o kernel/net/rtl8125.o kernel/net/e1000.o kernel/usb/xhci.o kernel/usb/usb.o kernel/usb/hid.o kernel/usb/xhci_caps.o kernel/usb/xhci_profile.o kernel/time/rtc.o kernel/time/time.o kernel/power/power.o kernel/tty/font_psf.o
 
 PROGRAM_NAMES := echo cat args grep true false sleep ls mkdir rm rmdir touch stat ln head tail wc cut tr sort uniq env printf pwd which kill ps uname du cp mv find xargs sed test tee basename dirname seq id whoami date ping curl host help hostname credtest auditcheck capdelegatecheck capdelegatetest accountctl sessiontest sessionlisttest killtest metatest renametest authcheck abi-negative proc-test pipe-stress rixtest posix-test
 PROGRAM_ELFS := $(addprefix build/programs/,$(addsuffix .elf,$(PROGRAM_NAMES)))
@@ -251,6 +251,10 @@ xhci-caps-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/xhci_caps_test.c kernel/usb/xhci_caps.c -o build/xhci_caps_test
 		build/xhci_caps_test
 
+xhci-profile-test: | build
+	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/xhci_profile_test.c kernel/usb/xhci_profile.c -o build/xhci_profile_test
+		build/xhci_profile_test
+
 rixfs-mount-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/rixfs_mount_test.c kernel/fs/rixfs.c -o build/rixfs_mount_test
 		build/rixfs_mount_test
@@ -267,7 +271,7 @@ e1000-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/e1000_test.c kernel/net/e1000.c -o build/e1000_test
 		build/e1000_test
 
-test: check usb-test hid-test tty-test shell-test pipe-test net-test libc-test hosts-test rtl-test e1000-test acpi-test smp-test gdt-test xhci-caps-test rixfs-mount-test symlink-test
+test: check usb-test hid-test tty-test shell-test pipe-test net-test libc-test hosts-test rtl-test e1000-test acpi-test smp-test gdt-test xhci-caps-test xhci-profile-test rixfs-mount-test symlink-test
 	@echo 'Static kernel build checks completed.'
 
 sysroot:
