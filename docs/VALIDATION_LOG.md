@@ -890,3 +890,27 @@ twice: `online=4`, ping 1/2/3 ok, shootdown ok, `SMP: E2 probe cpu=3`
 
 Not claimed: worker migration (per-driver audits), user tasks on APs,
 runqueues, preemption (P1), hardware PASS.
+## 2026-09-12 — P0 Phase E3: console serialization (per-call atomicity)
+
+One irqsave `console_lock` (`serial.c`) over whole `serial_write*` /
+`serial_read_byte` calls (also serializes the COM1 check-then-read);
+`tty_output` split into locking wrapper + `tty_output_nolock` for
+`serial.c`'s mirror (one call's UART+FB atomic together; the two locks
+are never nested, so no order to audit). `idt.c` nested-fault guard is
+now per-CPU (the shared flag would have halted a second CPU's
+forensics); nested faults still halt before logging, so the blocking
+lock cannot self-deadlock and no forensic variants were needed. Rules
+audited: leaves only under lock, holders never panic, no
+serial->tty->serial cycle, `serial_drain` best-effort. `tty_test`
+gained spin stubs (additive).
+
+Evidence: `make test` RC=0, `make image`/`iso` RC=0, UP SHELL READY
+(169 = 168 + 1 report line, probe cpu=0 late-run honest `99` at
+KERNEL_READY), WHPX `-smp 4`: `online=4`, ping/shootdown ok, probe
+cpu=3, SHELL READY, 0 exceptions. Serial now shows fragment-level
+interleave only (`pid=` + probe line glued, each fragment intact —
+the documented per-call limit); torn bytes are gone and the total
+dropped 208 -> 205 lines.
+
+Not claimed: per-line atomicity (needs single-call printf refactor —
+explicitly deferred), worker migration, P1, hardware PASS.

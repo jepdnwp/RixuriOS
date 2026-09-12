@@ -66,6 +66,9 @@ rix_tty_t *tty_get(unsigned id);
 int tty_input(unsigned id, uint8_t ch);
 int tty_read(unsigned id, void *buf, size_t n, size_t *out);
 int tty_output(unsigned id, const void *buf, size_t n, size_t *written);
+/* Phase E3: unlocked body for serial.c's console mirror (console lock
+ * already held there). All other callers use tty_output. */
+int tty_output_nolock(unsigned id, const void *buf, size_t n, size_t *written);
 int tty_read_output(unsigned id, void *buf, size_t n, size_t *out);
 int tty_set_canonical(unsigned id, int enabled);
 int tty_set_echo(unsigned id, int enabled);

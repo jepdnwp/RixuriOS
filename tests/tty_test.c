@@ -1,6 +1,23 @@
 #include "kernel/tty/tty.h"
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+
+/* Phase E3: tty_output now takes rix_spin_lock_irqsave (host-stubbed;
+ * single-threaded harness never contends). lock.c is not linked here. */
+typedef struct { volatile uint32_t value; } rix_spinlock_t;
+void rix_spin_init(rix_spinlock_t *lock) { if (lock) lock->value = 0; }
+void rix_spin_lock(rix_spinlock_t *lock) { (void)lock; }
+void rix_spin_unlock(rix_spinlock_t *lock) { (void)lock; }
+uint64_t rix_irq_save(void) { return 0; }
+void rix_irq_restore(uint64_t flags) { (void)flags; }
+void rix_spin_lock_irqsave(rix_spinlock_t *lock, uint64_t *flags) {
+    (void)lock; if (flags) *flags = 0;
+}
+void rix_spin_unlock_irqrestore(rix_spinlock_t *lock, uint64_t flags) {
+    (void)lock; (void)flags;
+}
 
 static uint32_t seen_group;
 static unsigned seen_signal;

@@ -1,5 +1,6 @@
 #include "tty.h"
 #include "font_psf.h"
+#include "../sync/lock.h"
 #ifndef RIX_HOST_TEST
 #include "../mm/vmm.h"
 #endif
@@ -10,6 +11,10 @@ const unsigned char _binary_assets_fonts_terminus_12x24_psf_end[] = {0};
 #endif
 
 static rix_tty_t ttys[RIX_TTY_COUNT];
+/* Phase E3 output lock (irqsave: ps2-IRQ echo paths call tty_output).
+ * Same discipline as serial.c's console_lock; serial.c never calls the
+ * locking wrapper while holding its lock (nolock body instead). */
+static rix_spinlock_t tty_output_lock;
 static struct { volatile uint32_t *pixels; uint32_t size, width, height, pitch, format; uint16_t columns, rows; } framebuffer;
 static uint8_t psf_ascii[128];
 static const rix_psf2_header_t *psf;
@@ -444,7 +449,9 @@ void tty_set_signal_hook(tty_signal_hook_t hook) {
     signal_hook = hook;
 }
 
-int tty_output(unsigned id, const void *buf, size_t n, size_t *written) {
+/* Phase E3: unlocked body. External callers use tty_output (locks);
+ * serial.c's console mirror uses this directly (lock already held). */
+int tty_output_nolock(unsigned id, const void *buf, size_t n, size_t *written) {
     if (written) *written = 0;
     rix_tty_t *t = tty_valid(id);
     if (!t || (!buf && n)) return -1;
@@ -466,6 +473,16 @@ int tty_output(unsigned id, const void *buf, size_t n, size_t *written) {
     }
     if (written) *written = done;
     return 0;
+}
+
+/* Phase E3: locking wrapper (see console_lock in serial.c). Per-call
+ * FB atomicity for syscall-write and echo paths. serial.c's mirror
+ * uses the nolock body (lock already held there). */
+int tty_output(unsigned id, const void *buf, size_t n, size_t *written) {
+    uint64_t f;rix_spin_lock_irqsave(&tty_output_lock,&f);
+    int rc=tty_output_nolock(id,buf,n,written);
+    rix_spin_unlock_irqrestore(&tty_output_lock,f);
+    return rc;
 }
 
 int tty_read_output(unsigned id, void *buf, size_t n, size_t *out) {

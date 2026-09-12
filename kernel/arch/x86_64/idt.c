@@ -1,5 +1,6 @@
 #include "idt.h"
 #include "tss.h"
+#include "smp.h"
 #include "kernel.h"
 #include "../../serial.h"
 #include "../../mm/ptmap.h"
@@ -24,6 +25,8 @@ extern void isr225(void);
 extern void isr226(void);
 
 static struct idt_gate idt[256] __attribute__((aligned(16)));
+/* Phase E3: per-CPU nested-fault guard slots (see dispatch). */
+static volatile unsigned in_fault[SMP_MAX_CPUS];
 static void set_gate(unsigned vector,void (*handler)(void),uint8_t ist,uint8_t attr){uint64_t address=(uint64_t)(uintptr_t)handler;idt[vector].offset_low=(uint16_t)address;idt[vector].selector=0x08;idt[vector].ist=ist&7u;idt[vector].type_attr=attr;idt[vector].offset_mid=(uint16_t)(address>>16);idt[vector].offset_high=(uint32_t)(address>>32);idt[vector].reserved=0;}
 static void lidt(const struct idt_ptr *ptr){__asm__ volatile("lidt (%0)"::"r"(ptr):"memory");}
 static void cli(void){__asm__ volatile("cli":::"memory");}
@@ -96,7 +99,12 @@ static void fault_forensics(const struct interrupt_frame *frame){
         kernel_log("\r\n");
     }
 }
-void x86_exception_dispatch(const struct interrupt_frame *frame){static volatile unsigned in_fault=0;__asm__ volatile("outb %0,%1"::"a"((uint8_t)(frame?frame->vector:0xFFu)),"Nd"((uint16_t)0x80u));if(in_fault){cli();for(;;)__asm__ volatile("hlt");}in_fault=1;if(frame){if(frame->vector==14)page_fault_diagnostics(frame);else{kernel_log("CPU exception vector=");kernel_log_dec(frame->vector);kernel_log(" error=");kernel_log_hex(frame->error);kernel_log(" rip=");kernel_log_hex(frame->rip);kernel_log("\r\n");}kernel_log(" cs=");kernel_log_hex(frame->cs);kernel_log(" rflags=");kernel_log_hex(frame->rflags);kernel_log(" rsp=");kernel_log_hex(frame->rsp);kernel_log(" ss=");kernel_log_hex(frame->ss);kernel_log(" cr3hw=");kernel_log_hex(read_cr3_hw());kernel_log(" cr3sw=");kernel_log_hex(vmm_current_pml4());kernel_log("\r\n");fault_forensics(frame);cr3trace_dump();}serial_drain();cli();for(;;)__asm__ volatile("hlt");}
+void x86_exception_dispatch(const struct interrupt_frame *frame){__asm__ volatile("outb %0,%1"::"a"((uint8_t)(frame?frame->vector:0xFFu)),"Nd"((uint16_t)0x80u));/* Phase E3: per-CPU nested-fault guard. The old shared flag halted a
+ * second CPU's forensics whenever two CPUs faulted together; with APs
+ * running tasks every CPU gets its own slot (BSP-index fallback, then
+ * 0 — same routing as the scheduler). Nested faults still halt with
+ * earlier lines preserved, so the console lock can stay blocking: the
+ * nested path never attempts to take it. */int fcpu=smp_cpu_id();if(fcpu<0||fcpu>=SMP_MAX_CPUS){int fb=smp_bsp_index();fcpu=(fb>=0&&fb<SMP_MAX_CPUS)?fb:0;}if(in_fault[(unsigned)fcpu]){cli();for(;;)__asm__ volatile("hlt");}in_fault[(unsigned)fcpu]=1;if(frame){if(frame->vector==14)page_fault_diagnostics(frame);else{kernel_log("CPU exception vector=");kernel_log_dec(frame->vector);kernel_log(" error=");kernel_log_hex(frame->error);kernel_log(" rip=");kernel_log_hex(frame->rip);kernel_log("\r\n");}kernel_log(" cs=");kernel_log_hex(frame->cs);kernel_log(" rflags=");kernel_log_hex(frame->rflags);kernel_log(" rsp=");kernel_log_hex(frame->rsp);kernel_log(" ss=");kernel_log_hex(frame->ss);kernel_log(" cr3hw=");kernel_log_hex(read_cr3_hw());kernel_log(" cr3sw=");kernel_log_hex(vmm_current_pml4());kernel_log("\r\n");fault_forensics(frame);cr3trace_dump();}serial_drain();cli();for(;;)__asm__ volatile("hlt");}
 void idt_init(void){
     for(unsigned i=0;i<256;i++)set_gate(i,isr_default,0,0x8E);
     void (*exceptions[32])(void)={isr0,isr1,isr2,isr3,isr4,isr5,isr6,isr7,isr8,isr9,isr10,isr11,isr12,isr13,isr14,isr15,isr16,isr17,isr18,isr19,isr20,isr21,isr22,isr23,isr24,isr25,isr26,isr27,isr28,isr29,isr30,isr31};

@@ -19,6 +19,33 @@
 
 ## Phase E2 (done 2026-09-12): AP kernel-thread execution + wakeup IPI
 
+## Phase E3 (done 2026-09-12): console serialization
+
+- Why: true concurrency made serial output byte-interleave (E2 tore a
+  proof line across two writers). Every future phase's evidence depends
+  on clean logs.
+- One `console_lock` (`serial.c`, always irqsave — fault/IRQ writers
+  exist). Whole-call atomicity for `serial_write/_n/_com1/_com1_n` and
+  `serial_read_byte` (serializes the COM1 check-then-read too).
+  `tty_output` splits: public wrapper locks (covers syscall-write and
+  echo-path FB atomicity per call), `tty_output_nolock` for `serial.c`'s
+  internal mirror so one call's UART+FB stay atomic together.
+- Guarantee is per-call, not per-line: multi-call log lines can still
+  interleave as intact fragments (parseable); torn bytes disappear.
+- No forensic variants needed: the nested-fault path halts by design
+  (`in_fault` guard) before attempting any logging, so the blocking
+  lock cannot self-deadlock — but the old SHARED `in_fault` flag would
+  halt a second CPU's forensics whenever two CPUs fault together. E3
+  makes it per-CPU (BSP-fallback routing, same as the scheduler).
+- Rules (audited, documented): no sleep/yield under the lock (all
+  leaves: port IO, memory, FB MMIO); holders never call `panic`;
+  `tty.c` never calls back into `serial.c` (no cycle); `serial_drain`
+  stays best-effort unlocked (LSR reads only).
+- Host: `tty_test` gains spin stubs (additive, smp_test pattern);
+  `serial.c` has no host harness (documented).
+- Acceptance: UP identical; SMP4 verdicts + byte-clean serial (the
+  probe's own `on cpu` line intact — the E2-torn case).
+
 - Why not all tasks: the 4 production workers (xhci/serial/kbd/net)
   were written for BSP-only cooperative scheduling; their driver paths
   are NOT audited for true concurrency. E2 therefore adds a per-task
