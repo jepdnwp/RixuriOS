@@ -1151,3 +1151,28 @@ on the identical build — serial-timing race in the harness window,
 not a kernel regression (direct probes print the string reliably).
 Not claimed: hardware keyboard (still `rc=7`/PED=0 on the ASUS
 board), >8-CPU AP bring-up, HW PASS/CI.
+
+## 2026-09-13 — P1 memory slice: PMM/heap locking + heap block reuse
+
+PMM mutators/counters (`alloc_page_below`, `alloc_pages`,
+`reserve_page`, `free_page`, predicates) now take an irqsave
+spinlock; heap has its own lock with the documented order heap ->
+pmm (no reverse path, no nesting). Freed heap blocks stay as
+tracked free blocks and are reused first-fit (tail split when a
+free record exists, page reclaimed with all its records dropped
+when fully inactive); the bump path uses never-used records only
+and fails closed. Host `pmm_test`/`heap_test` extended (reserved
+rejection, double-free, contiguity, exhaustion, in-place reuse
+`c == a`, split-tail reuse, full reclaim) and wired with
+`kernel/sync/lock.c` under `-DRIX_HOST_TEST`.
+
+Validation (`CROSS=x86_64-linux-gnu- HOST_CC=gcc`):
+
+```text
+make all/test/image RC=0 (-Wall -Wextra -Werror)
+full 26-suite QEMU matrix  ALL PASS (with W^X active)
+```
+
+Still open in Phase 02: VMM-map locking, DMA ownership, pressure/
+soak runs, HW evidence. The reclaim gate is closer (empty pages
+return AND interior blocks reuse) but not claimed closed.
