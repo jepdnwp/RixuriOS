@@ -4,6 +4,7 @@
 #include "../../sched/scheduler.h"
 #include "../../mm/pmm.h"
 #include "../../mm/vmm.h"
+#include "../../sync/lockdep.h"
 #include "kernel.h"
 #include <stddef.h>
 #include <stdint.h>
@@ -137,6 +138,15 @@ int smp_cpu_id(void) {
     for (size_t i = 0; i < smp_map.count && i < SMP_MAX_CPUS; ++i)
         if (smp_map.cpu[i].apic_id == id) return (int)i;
     return -1;
+}
+
+/* lockdep per-CPU routing: strong override of the weak default (0) in
+ * lockdep.c, same pattern as tss_cpu_index. Unknown CPUs map to slot 0
+ * (fail-safe: shared accounting rather than an out-of-range slot). */
+int lockdep_cpu_index(void) {
+    int id = smp_cpu_id();
+    if (id < 0 || (unsigned)id >= RIX_LOCKDEP_CPUS) return 0;
+    return id;
 }
 
 struct smp_intr_frame { uint64_t vector; uint64_t error; uint64_t rip, cs, rflags, rsp, ss; };

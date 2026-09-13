@@ -11,6 +11,10 @@ static void put64(uint8_t *entry, size_t offset, uint64_t value) {
     memcpy(entry + offset, &value, sizeof(value));
 }
 
+/* lockdep warn path needs a sink; warnings fail the test instead. */
+static unsigned lockdep_warnings;
+void serial_write(const char *s) { (void)s; ++lockdep_warnings; }
+
 int main(void) {
     uint8_t memory_map[40];
     memset(memory_map, 0, sizeof(memory_map));
@@ -56,5 +60,6 @@ int main(void) {
     assert(pmm_alloc_pages(1u << 30) == 0u);
     assert(pmm_alloc_page_below(0x1000u) == 0u);
     assert(pmm_free_pages() == free_before);
+    assert(lockdep_warnings == 0u);
     return 0;
 }

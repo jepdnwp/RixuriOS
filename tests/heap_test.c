@@ -7,6 +7,10 @@
 /* Mirrors HEAP_MAX_ALLOCS in kernel/mm/heap.c (record table bound). */
 #define TEST_HEAP_MAX_ALLOCS 256u
 
+/* lockdep warn path needs a sink; warnings fail the test instead. */
+static unsigned lockdep_warnings;
+void serial_write(const char *s) { (void)s; ++lockdep_warnings; }
+
 static void put32(uint8_t *entry, size_t offset, uint32_t value) {
     memcpy(entry + offset, &value, sizeof(value));
 }
@@ -80,6 +84,7 @@ int main(void) {
     assert(kmalloc(8u, 8u) == NULL);
     for (size_t i = 0; i < n; ++i) kfree(v[i]);
     assert(pmm_free_pages() == before);
+    assert(lockdep_warnings == 0u);
 
     assert(kmalloc(4097u, 16u) == NULL);
     assert(pmm_free_pages() == before);

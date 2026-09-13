@@ -1,6 +1,7 @@
 #include "heap.h"
 #include "pmm.h"
 #include "../sync/lock.h"
+#include "../sync/lockdep.h"
 #include <stdint.h>
 
 #define HEAP_PAGE_SIZE 4096ULL
@@ -29,6 +30,8 @@ static uint8_t *current_page;
 static size_t current_offset;
 static heap_allocation_t allocations[HEAP_MAX_ALLOCS];
 static rix_spinlock_t heap_lock;
+/* lockdep rank 20: nests inside PMM (30), never inside vmm-map. */
+static unsigned heap_lockdep_class;
 
 static uintptr_t align_ptr(uintptr_t value, size_t alignment) {
     uintptr_t mask = (uintptr_t)alignment - 1U;
@@ -67,6 +70,7 @@ void heap_init(void) {
     current_page = NULL;
     current_offset = 0;
     rix_spin_init(&heap_lock);
+    rix_lockdep_register("heap", 20u, &heap_lockdep_class);
     for (size_t i = 0; i < HEAP_MAX_ALLOCS; ++i) {
         allocations[i].page = 0;
         allocations[i].ptr = 0;
@@ -82,6 +86,7 @@ void *kmalloc(size_t size, size_t alignment) {
 
     uint64_t irq;
     rix_spin_lock_irqsave(&heap_lock, &irq);
+    (void)rix_lockdep_acquire(heap_lockdep_class);
     /* Reuse path: a freed block costs no new page and no new extent. */
     uintptr_t reuse_at = 0;
     heap_allocation_t *block = find_free_block(size, alignment, &reuse_at);
@@ -100,6 +105,7 @@ void *kmalloc(size_t size, size_t alignment) {
         block->ptr = reuse_at;
         block->size = size;
         block->active = 1;
+        (void)rix_lockdep_release(heap_lockdep_class);
         rix_spin_unlock_irqrestore(&heap_lock, irq);
         return (void *)reuse_at;
     }
@@ -108,6 +114,7 @@ void *kmalloc(size_t size, size_t alignment) {
      * would leak its memory), else fail closed. */
     heap_allocation_t *record = find_empty_record();
     if (!record) {
+        (void)rix_lockdep_release(heap_lockdep_class);
         rix_spin_unlock_irqrestore(&heap_lock, irq);
         return NULL;
     }
@@ -118,6 +125,7 @@ void *kmalloc(size_t size, size_t alignment) {
         aligned + size < aligned || aligned + size > base + HEAP_PAGE_SIZE) {
         uint64_t phys = pmm_alloc_page();
         if (!phys) {
+            (void)rix_lockdep_release(heap_lockdep_class);
             rix_spin_unlock_irqrestore(&heap_lock, irq);
             return NULL;
         }
@@ -130,6 +138,7 @@ void *kmalloc(size_t size, size_t alignment) {
             pmm_free_page(phys);
             current_page = NULL;
             current_offset = 0;
+            (void)rix_lockdep_release(heap_lockdep_class);
             rix_spin_unlock_irqrestore(&heap_lock, irq);
             return NULL;
         }
@@ -140,6 +149,7 @@ void *kmalloc(size_t size, size_t alignment) {
     record->size = size;
     record->active = 1;
     current_offset = (size_t)(aligned + size - (uintptr_t)current_page);
+    (void)rix_lockdep_release(heap_lockdep_class);
     rix_spin_unlock_irqrestore(&heap_lock, irq);
     return (void *)aligned;
 }
@@ -149,6 +159,7 @@ void kfree(void *ptr) {
     uintptr_t address = (uintptr_t)ptr;
     uint64_t irq;
     rix_spin_lock_irqsave(&heap_lock, &irq);
+    (void)rix_lockdep_acquire(heap_lockdep_class);
     for (size_t i = 0; i < HEAP_MAX_ALLOCS; ++i) {
         heap_allocation_t *record = &allocations[i];
         if (!record->active || record->ptr != address) continue;
@@ -171,8 +182,10 @@ void kfree(void *ptr) {
                 }
             }
         }
+        (void)rix_lockdep_release(heap_lockdep_class);
         rix_spin_unlock_irqrestore(&heap_lock, irq);
         return;
     }
+    (void)rix_lockdep_release(heap_lockdep_class);
     rix_spin_unlock_irqrestore(&heap_lock, irq);
 }
