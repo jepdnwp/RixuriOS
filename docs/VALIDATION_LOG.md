@@ -1173,6 +1173,17 @@ make all/test/image RC=0 (-Wall -Wextra -Werror)
 full 26-suite QEMU matrix  ALL PASS (with W^X active)
 ```
 
-Still open in Phase 02: VMM-map locking, DMA ownership, pressure/
+Still open in Phase 02: MMIO-registry lock, DMA ownership, pressure/
 soak runs, HW evidence. The reclaim gate is closer (empty pages
 return AND interior blocks reuse) but not claimed closed.
+
+## 2026-09-13 — VMM map lock + env_utils quiescence fix
+
+VMM table mutations (`map/unmap_page_in_pml4`) take an irqsave
+spinlock (order vmm -> pmm). An `env_utils` intermittent
+(`which: not found` missing) was chased to ground: A/B cleared the
+new lock, serial forensics + a sentinel probe proved the kernel
+emits all bytes correctly and the harness's 0.25s-drain-plus-kill
+cut slow-child output off under load. Fix is harness-side
+(`drain_quiet`: 2s idle window, cap 15s, assertions unchanged),
+5/5 green after. Full matrix re-verified green with the lock.
