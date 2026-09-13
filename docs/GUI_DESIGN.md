@@ -25,7 +25,7 @@ Bu belge herhangi bir üçüncü taraf masaüstünü kopyalama talimatı değild
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
-│ RIX                         DATE/TIME       STATUS   POWER   │
+│ RIXURI                  DATE/TIME           STATUS   POWER  │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
 │ ┌──────────────┐                         ┌────────────────┐ │
@@ -38,14 +38,14 @@ Bu belge herhangi bir üçüncü taraf masaüstünü kopyalama talimatı değild
 │ │              │                         │                │ │
 │ └──────────────┘                         │                │ │
 │                                                             │
-│ ┌──────────────┐                                           │
-│ │ SYSTEM       │                                           │
-│ │ CPU RAM DISK │              CALM DESKTOP                 │
-│ └──────────────┘                                           │
+│ ┌──────────────┐                                            │
+│ │ SYSTEM       │                                            │
+│ │ CPU RAM DISK │              CALM DESKTOP                  │
+│ └──────────────┘                                            │
 │                                                             │
-│                         ┌───────────────────────┐           │
-│                         │         DOCK          │           │
-│                         └───────────────────────┘           │
+│                      ┌───────────────────────┐              │
+│                      │         DOCK          │              │
+│                      └───────────────────────┘              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -149,9 +149,9 @@ Kartlar fazla renkli olmamalıdır. Renk yalnızca anlam için kullanılmalıdı
 Bildirimlerin altında:
 
 ```text
-┌────────┬────────┬────────┐
+┌────────┬────────┬─────────┐
 │ Wi-Fi  │Ethernet│Bluetooth│
-└────────┴────────┴────────┘
+└────────┴────────┴─────────┘
 
 Brightness   ━━━━━━━━━ ●
 Volume       ━━━━━━━ ●

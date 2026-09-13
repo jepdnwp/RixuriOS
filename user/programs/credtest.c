@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <unistd.h>
+#include <errno.h>
 
 #define RIX_VFS_AT_FDCWD (-100)
 #define RIX_VFS_O_WRONLY 1u
@@ -54,7 +55,8 @@ static int read_byte_file(const char *path, char expected) {
 }
 
 static int expect_error(int result, int error) {
-    return result == -error ? 0 : -1;
+    /* libc wrappers return -1 with errno, not raw negatives. */
+    return result < 0 && errno == error ? 0 : -1;
 }
 
 int program_main(int argc, char **argv, char **envp) {

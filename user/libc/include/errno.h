@@ -19,6 +19,7 @@ extern int errno;
 #define RIX_EPIPE 32
 #define RIX_ERANGE 34
 #define RIX_ENOSYS 38
+#define RIX_ELOOP 40
 #define RIX_EMSGSIZE 90
 #define RIX_ENOPROTOOPT 92
 #define RIX_EPROTONOSUPPORT 93

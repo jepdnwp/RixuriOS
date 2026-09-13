@@ -15,6 +15,8 @@
 /* Negative errno-style results are part of the internal VFS/syscall mapping. */
 #define RIX_VFS_ERR_PERMISSION (-13)
 #define RIX_VFS_ERR_EXISTS (-17)
+/* Phase S2: symlink traversal depth exceeded. */
+#define RIX_VFS_ERR_LOOP (-40)
 typedef enum { RIX_VFS_DIR=1, RIX_VFS_FILE=2, RIX_VFS_SYMLINK=3, RIX_VFS_DEVICE=4 } rix_vfs_type_t;
 typedef struct { uint64_t inode; rix_vfs_type_t type; uint32_t mode; uint32_t uid; uint32_t gid; uint64_t size; } rix_vnode_t;
 typedef struct { rix_vnode_t *node; char path[RIX_VFS_PATH_MAX]; } rix_vfs_path_t;
@@ -26,6 +28,7 @@ rixfs_t *vfs_root_fs(void);
 int vfs_normalize_path(const char *input,char *output,size_t output_size);
 int vfs_root(rix_vfs_path_t *out);
 int vfs_lookup(const char *path,rix_vfs_path_t *out);
+int vfs_lookup_nofollow(const char *path,rix_vfs_path_t *out);
 int vfs_lookup_from(const rix_vfs_path_t *base,const char *path,rix_vfs_path_t *out);
 int vfs_open(uint64_t pid,const char *path,uint32_t flags,uint32_t mode,int *out_fd);
 int vfs_pipe(uint64_t pid,int *read_fd,int *write_fd);
@@ -50,6 +53,8 @@ int vfs_rename(const char *old_path,const char *new_path);
 int vfs_mkdir(const char *path,uint32_t mode,uint32_t uid,uint32_t gid);
 int vfs_unlink(const char *path);
 int vfs_link(const char *old_path,const char *new_path);
+int vfs_symlink(const char *target,const char *path);
+int vfs_readlink(const char *path,char *buffer,size_t capacity,size_t *out_length);
 int vfs_rmdir(const char *path);
 int vfs_get_acl(const char *path, rixfs_acl_t *out);
 int vfs_set_acl(const char *path, const rixfs_acl_t *acl);

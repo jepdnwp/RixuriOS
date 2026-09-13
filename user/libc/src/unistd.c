@@ -27,6 +27,8 @@ int mkdir(const char *path,uint32_t mode){return(int)rix_int_result(rix_sys(83,(
 int rmdir(const char *path){return(int)rix_int_result(rix_sys(84,(long)path,0,0));}
 int unlink(const char *path){return(int)rix_int_result(rix_sys(87,(long)path,0,0));}
 int link(const char *old_path,const char *new_path){return(int)rix_int_result(rix_sys(86,(long)old_path,(long)new_path,0));}
+int symlink(const char *target,const char *path){return(int)rix_int_result(rix_sys(85,(long)target,(long)path,0));}
+rix_ssize_t readlink(const char *path,char *buffer,size_t capacity){return(rix_ssize_t)rix_int_result(rix_sys(88,(long)path,(long)buffer,(long)capacity));}
 int getdents(int fd,rix_dirent_t *entries,size_t capacity,size_t *count){return(int)rix_int_result(rix_sys4(78,fd,(long)entries,capacity,(long)count));}
 int getdents64(int fd,rix_dirent_t *entries,size_t capacity,size_t *count){return getdents(fd,entries,capacity,count);}
 off_t lseek(int fd,off_t offset,int whence){return(off_t)rix_int_result(rix_sys(8,fd,(long)offset,whence));}

@@ -30,8 +30,10 @@ static int join_path(const char *dir, const char *name, char *out_path, size_t c
 int program_main(int argc, char **argv, char **envp) {
     (void)envp;
     int arg_index = 1;
+    int symbolic = 0;
 
     while (arg_index < argc && argv[arg_index][0] == '-') {
+        if (argv[arg_index][1] == 's' && argv[arg_index][2] == 0) { symbolic = 1; ++arg_index; continue; }
         out("ln: invalid option\n");
         return 2;
     }
@@ -67,7 +69,7 @@ int program_main(int argc, char **argv, char **envp) {
             }
             dest = full_dest;
         }
-        if (link(source, dest) != 0) {
+        if ((symbolic ? symlink(source, dest) : link(source, dest)) != 0) {
             out("ln: cannot link '");
             out(source);
             out("' to '");

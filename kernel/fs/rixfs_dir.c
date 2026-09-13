@@ -170,7 +170,11 @@ int rixfs_remove_name(rixfs_t *fs, uint64_t dir_inode, const char *name) {
                     }
                     logical -= length;
                 }
-                if (!found || off % sector_size != 0) return -7;
+                if (!found) return -7;
+                /* Phase F1c: entries may sit at any offset (compact
+                 * tails); clear the entry header in place and keep its
+                 * record_size so walks skip the hole. */
+                uint64_t inner = off % sector_size;
                 uint64_t page = pmm_alloc_page();
                 if (!page) return -8;
                 uint8_t *buffer = (uint8_t *)(uintptr_t)page;
@@ -182,7 +186,7 @@ int rixfs_remove_name(rixfs_t *fs, uint64_t dir_inode, const char *name) {
                 bio.buffer_size = sector_size;
                 int rc = block_submit(fs->device, &bio);
                 if (!rc) {
-                    for (unsigned j = 0; j < 8; ++j) buffer[j] = 0;
+                    for (unsigned j = 0; j < 8; ++j) buffer[inner + j] = 0;
                     bio.op = RIX_BIO_WRITE;
                     rc = block_submit(fs->device, &bio);
                 }

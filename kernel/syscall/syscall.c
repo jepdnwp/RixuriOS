@@ -17,6 +17,7 @@
 #define RIX_EBADF 9
 #define RIX_EACCES 13
 #define RIX_EEXIST 17
+#define RIX_ELOOP 40
 #define RIX_EFAULT 14
 #define RIX_ENOMEM 12
 #define RIX_EINTR 4
@@ -31,7 +32,7 @@ static uint8_t exec_image_buffers[RIX_PROCESS_MAX][RIX_MAX_EXEC_IMAGE];
 static int user_string(uint64_t src,char *dst,size_t cap){if(!dst||cap<2)return -1;for(size_t i=0;i+1<cap;i++){uint8_t c;if(copy_from_user(&c,src+i,1)!=0)return -1;dst[i]=(char)c;if(!c)return 0;}dst[cap-1]=0;return -1;}
 static int copy_string_vector(uint64_t vector,char storage[][RIX_PROCESS_ARG_TEXT_MAX],const char *pointers[],size_t *count){if(!count)return -1;*count=0;if(!vector)return 0;for(size_t i=0;i<RIX_PROCESS_ARG_MAX;i++){uint64_t user_ptr=0;if(copy_from_user(&user_ptr,vector+i*sizeof(user_ptr),sizeof(user_ptr))!=0)return -1;if(!user_ptr){*count=i;return 0;}if(user_string(user_ptr,storage[i],RIX_PROCESS_ARG_TEXT_MAX)!=0)return -1;pointers[i]=storage[i];}return -1;}
 static int syscall_interrupted(pid_t pid){unsigned signal=0;return process_signal_take(pid,&signal)==0;}
-static int vfs_result(int rc){return rc==0?0:(rc==RIX_VFS_ERR_PERMISSION?-RIX_EACCES:(rc==RIX_VFS_ERR_EXISTS?-RIX_EEXIST:-RIX_EINVAL));}
+static int vfs_result(int rc){return rc==0?0:(rc==RIX_VFS_ERR_PERMISSION?-RIX_EACCES:(rc==RIX_VFS_ERR_EXISTS?-RIX_EEXIST:(rc==RIX_VFS_ERR_LOOP?-RIX_ELOOP:-RIX_EINVAL)));}
 void syscall_dispatch(rix_syscall_frame_t*frame){
  if(!frame)return;
  int64_t result=-(int64_t)RIX_ENOSYS;pid_t self=process_current();
@@ -82,6 +83,8 @@ void syscall_dispatch(rix_syscall_frame_t*frame){
  case RIX_SYS_RMDIR:{char path[RIX_VFS_PATH_MAX];if(user_string(frame->rdi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}result=vfs_result(vfs_rmdir(path));break;}
  case RIX_SYS_UNLINK:{char path[RIX_VFS_PATH_MAX];if(user_string(frame->rdi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}result=vfs_result(vfs_unlink(path));break;}
  case RIX_SYS_LINK:{char old_path[RIX_VFS_PATH_MAX],new_path[RIX_VFS_PATH_MAX];if(user_string(frame->rdi,old_path,sizeof(old_path))!=0||user_string(frame->rsi,new_path,sizeof(new_path))!=0){result=-RIX_EFAULT;break;}result=vfs_result(vfs_link(old_path,new_path));break;}
+ case RIX_SYS_SYMLINK:{char target[RIX_VFS_PATH_MAX],path[RIX_VFS_PATH_MAX];if(user_string(frame->rdi,target,sizeof(target))!=0||user_string(frame->rsi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}result=vfs_result(vfs_symlink(target,path));break;}
+ case RIX_SYS_READLINK:{char path[RIX_VFS_PATH_MAX];char buffer[RIX_VFS_PATH_MAX];size_t length=0;if(user_string(frame->rdi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}uint64_t capacity=frame->rdx;if(capacity==0||capacity>RIX_VFS_PATH_MAX){result=-RIX_EINVAL;break;}int rc=vfs_readlink(path,buffer,capacity,&length);if(rc!=0){result=vfs_result(rc);break;}if(copy_to_user(frame->rsi,buffer,length)!=0){result=-RIX_EFAULT;break;}result=(int64_t)length;break;}
  case RIX_SYS_GETDENTS:{if(frame->rdx==0||frame->rdx>16u){result=-RIX_EINVAL;break;}uint64_t offset=0;size_t count=0;for(size_t i=0;i<(size_t)frame->rdx;i++){rix_vfs_dirent_t entry;char name[RIX_VFS_NAME_MAX+1];int rc=vfs_readdir(self,(int)frame->rdi,&offset,&entry,name,sizeof(name));if(rc!=0)break;struct {uint64_t inode;uint8_t type;char name[RIX_VFS_NAME_MAX+1];} user_entry={entry.inode,entry.type,{0}};size_t n=0;while(n<RIX_VFS_NAME_MAX&&name[n]){user_entry.name[n]=name[n];++n;}if(copy_to_user(frame->rsi+count*sizeof(user_entry),&user_entry,sizeof(user_entry))!=0){result=-RIX_EFAULT;break;}++count;}if(result!=-RIX_EFAULT){if(copy_to_user(frame->r10,&count,sizeof(count))!=0)result=-RIX_EFAULT;else result=(int64_t)count;}break;}
  case RIX_SYS_CLOSE:{rix_process_t *close_owner=process_lookup(self);if(vfs_close(self,(int)frame->rdi)!=0){if(close_owner&&rix_net_socket_close(&close_owner->sockets,(int)frame->rdi)==0)result=0;else result=-RIX_EINVAL;}else result=0;break;}
  case RIX_SYS_CLOSE_PIPES_EXCEPT:if(vfs_close_pipes_except(self,(int)frame->rdi,(int)frame->rsi)!=0)result=-RIX_EINVAL;else result=0;break;

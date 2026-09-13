@@ -22,21 +22,46 @@ static int alloc_sec(rixfs_t*f,uint64_t*out){uint64_t s=f->super.free_hint;if(s<
  * preserves the old behavior when nothing adjacent is free. Format
  * untouched. */
 static int alloc_sec_near(rixfs_t*f,uint64_t*out,const rixfs_inode_disk_t*in){if(in){for(unsigned i=0;i<RIXFS_DIRECT_EXTENTS;i++){if(!in->extent_length[i])continue;uint64_t ends[2]={in->extent_start[i]+in->extent_length[i],in->extent_start[i]-1u};for(unsigned k=0;k<2;k++){uint64_t a=ends[k];if(a<f->super.data_start_sector||a>=f->super.total_sectors)continue;int used=0;if(bit_get(f,a,&used))return-1;if(!used){if(bit(f,a,1))return-2;f->super.free_hint=a+1;*out=a;return 0;}}}}return alloc_sec(f,out);}
+/* Phase F1b: segregated metadata allocation. Directory sectors allocate
+ * top-down (high sectors) while file data grows bottom-up: the two
+ * streams no longer interleave, so dirs stay coalesced instead of
+ * hitting the 4-extent ceiling after a handful of creates. Order per
+ * call: own-extent adjacency first, then top-down fresh, then the
+ * general scan. Format-compatible (policy only); meta_hint lives in
+ * the in-memory handle. */
+static int alloc_sec_top(rixfs_t*f,uint64_t*out,const rixfs_inode_disk_t*in){if(!f||!f->mounted||!out)return-1;if(in){for(unsigned i=0;i<RIXFS_DIRECT_EXTENTS;i++){if(!in->extent_length[i])continue;uint64_t ends[2]={in->extent_start[i]+in->extent_length[i],in->extent_start[i]-1u};for(unsigned k=0;k<2;k++){uint64_t a=ends[k];if(a<f->super.data_start_sector||a>=f->super.total_sectors)continue;int used=0;if(bit_get(f,a,&used))return-1;if(!used){if(bit(f,a,1))return-2;f->super.free_hint=a+1;*out=a;return 0;}}}}if(!f->meta_hint||f->meta_hint>f->super.total_sectors)f->meta_hint=f->super.total_sectors;uint64_t h=f->meta_hint;if(h<f->super.data_start_sector+1u)h=f->super.total_sectors;for(uint64_t a=h;a-- >f->super.data_start_sector;){int used=0;if(bit_get(f,a,&used))return-1;if(!used){if(bit(f,a,1))return-2;f->meta_hint=a;*out=a;return 0;}}return alloc_sec(f,out);}
 static int append_extent(rixfs_inode_disk_t*in,uint64_t s){for(unsigned i=0;i<RIXFS_DIRECT_EXTENTS;i++){if(in->extent_length[i]){uint64_t end=in->extent_start[i]+in->extent_length[i];if(end==s){in->extent_length[i]++;return 0;}}else{in->extent_start[i]=s;in->extent_length[i]=1;return 0;}}/* Phase F1: also coalesce backwards (predecessor sector) before
  * giving up: the allocator below prefers adjacency, so a file whose
  * growth straddles an occupied sector can still merge on either side. */
 for(unsigned i=0;i<RIXFS_DIRECT_EXTENTS;i++){if(in->extent_length[i]&&in->extent_start[i]==s+1){in->extent_start[i]=s;in->extent_length[i]++;return 0;}}return-1;}
 static int free_inode_data(rixfs_t*f,const rixfs_inode_disk_t*in){for(unsigned e=0;e<RIXFS_DIRECT_EXTENTS;e++)for(uint64_t j=0;j<in->extent_length[e];j++)if(bit(f,in->extent_start[e]+j,0))return-1;return 0;}
 static int grow(rixfs_t*f,rixfs_inode_disk_t*in,uint64_t bytes){uint64_t ss=f->device->sector_size;if(bytes==0){in->size=0;return 0;}uint64_t old=(in->size+ss-1)/ss,neu=(bytes+ss-1)/ss,added=0;for(uint64_t i=old;i<neu;i++){uint64_t s;if(alloc_sec_near(f,&s,in)){for(unsigned e=0;e<RIXFS_DIRECT_EXTENTS;e++)for(uint64_t j=0;j<in->extent_length[e]&&added;j++){uint64_t sec=in->extent_start[e]+in->extent_length[e]-1-j;if(sec>=f->super.data_start_sector){bit(f,sec,0);added--;}}return-1;}if(append_extent(in,s)){bit(f,s,0);for(unsigned e=0;e<RIXFS_DIRECT_EXTENTS;e++)for(uint64_t j=0;j<in->extent_length[e]&&added;j++){uint64_t sec=in->extent_start[e]+in->extent_length[e]-1-j;if(sec>=f->super.data_start_sector){bit(f,sec,0);added--;}}return-2;}added++;}in->size=bytes;return 0;}
-int rixfs_truncate(rixfs_t*f,uint64_t ino,uint64_t ns){if(!f||!f->mounted)return-1;rixfs_inode_disk_t in;if(rixfs_read_inode(f,ino,&in))return-2;if((in.mode&RIXFS_IFMT)!=RIXFS_IFREG)return-3;uint64_t ss=f->device->sector_size;if(ns>in.size){if(grow(f,&in,ns))return-4;return rixfs_write_inode(f,ino,&in);}uint64_t keep=(ns+ss-1)/ss,seen=0;for(unsigned e=0;e<RIXFS_DIRECT_EXTENTS;e++){uint64_t n=in.extent_length[e];if(!n)continue;if(seen>=keep){for(uint64_t j=0;j<n;j++)if(bit(f,in.extent_start[e]+j,0))return-5;in.extent_start[e]=0;in.extent_length[e]=0;}else if(seen+n>keep){uint64_t cut=seen+n-keep;for(uint64_t j=0;j<cut;j++)if(bit(f,in.extent_start[e]+n-1-j,0))return-6;in.extent_length[e]-=cut;}seen+=n;}in.size=ns;return rixfs_write_inode(f,ino,&in);}
+int rixfs_truncate(rixfs_t*f,uint64_t ino,uint64_t ns){if(!f||!f->mounted)return-1;rixfs_inode_disk_t in;if(rixfs_read_inode(f,ino,&in))return-2;{uint32_t fmt=in.mode&RIXFS_IFMT;if(fmt!=RIXFS_IFREG&&fmt!=RIXFS_IFLNK)return-3;}uint64_t ss=f->device->sector_size;if(ns>in.size){if(grow(f,&in,ns))return-4;return rixfs_write_inode(f,ino,&in);}uint64_t keep=(ns+ss-1)/ss,seen=0;for(unsigned e=0;e<RIXFS_DIRECT_EXTENTS;e++){uint64_t n=in.extent_length[e];if(!n)continue;if(seen>=keep){for(uint64_t j=0;j<n;j++)if(bit(f,in.extent_start[e]+j,0))return-5;in.extent_start[e]=0;in.extent_length[e]=0;}else if(seen+n>keep){uint64_t cut=seen+n-keep;for(uint64_t j=0;j<cut;j++)if(bit(f,in.extent_start[e]+n-1-j,0))return-6;in.extent_length[e]-=cut;}seen+=n;}in.size=ns;return rixfs_write_inode(f,ino,&in);}
 static int valid_name(const char*n,size_t*l){if(!n||!n[0]||n[0]=='/'||(n[0]=='.'&&n[1]==0)||(n[0]=='.'&&n[1]=='.'&&n[2]==0))return-1;size_t x=0;while(n[x]){if(n[x]=='/'||++x>RIXFS_NAME_MAX)return-1;}*l=x;return 0;}
 static int alloc_inode(rixfs_t*f,uint64_t*out){for(uint64_t i=1;i<=f->super.inode_count;i++){rixfs_inode_disk_t in;if(rixfs_read_inode(f,i,&in))return-1;if(in.inode==0){*out=i;return 0;}}return-2;}
 static int dir_sector(const rixfs_inode_disk_t*dir,uint64_t logical,uint64_t*sector){uint64_t pos=logical;for(unsigned e=0;e<RIXFS_DIRECT_EXTENTS;e++){if(pos<dir->extent_length[e]){*sector=dir->extent_start[e]+pos;return 0;}pos-=dir->extent_length[e];}return-1;}
-static int dir_append(rixfs_t*f,rixfs_inode_disk_t*dir,uint64_t ino,uint8_t type,const char*name,size_t nl){uint64_t ss=f->device->sector_size;if(ss>UINT16_MAX||nl>RIXFS_NAME_MAX||dir->size%ss)return-1;uint64_t sectors=dir->size/ss,sec=0;int existing=0,add_size=0;uint64_t q=pmm_alloc_page();if(!q)return-2;uint8_t*b=(uint8_t*)(uintptr_t)q;for(uint64_t logical=0;logical<sectors;logical++){if(dir_sector(dir,logical,&sec)||rd(f->device,sec,b)){pmm_free_page(q);return-3;}uint64_t old=0;for(unsigned i=0;i<8;i++)old|=(uint64_t)b[i]<<(8*i);if(!old){existing=1;break;}}if(!existing&&dir_sector(dir,sectors,&sec)==0){existing=1;add_size=sectors==0;}if(!existing){if(alloc_sec_near(f,&sec,dir)){pmm_free_page(q);return-4;}if(append_extent(dir,sec)){bit(f,sec,0);pmm_free_page(q);return-5;}
-add_size=1;}int r=existing?rd(f->device,sec,b):0;if(r){pmm_free_page(q);return-6;}if(!existing)for(uint32_t i=0;i<ss;i++)b[i]=0;uint16_t rs=(uint16_t)ss;for(unsigned i=0;i<8;i++)b[i]=(uint8_t)(ino>>(8*i));b[8]=(uint8_t)rs;b[9]=(uint8_t)(rs>>8);b[10]=type;b[11]=(uint8_t)nl;for(size_t i=0;i<nl;i++)b[16+i]=name[i];r=journal_write(f,sec,b);pmm_free_page(q);if(r){if(!existing)bit(f,sec,0);return-7;}if(add_size)dir->size+=ss;return 0;}
-int rixfs_mkdir(rixfs_t*f,uint64_t d,const char*name,uint32_t mode,uint32_t uid,uint32_t gid,uint64_t*out){size_t nl;if(!f||!out||valid_name(name,&nl))return-1;uint64_t old;uint8_t t;if(rixfs_lookup_name(f,d,name,&old,&t)==0)return-2;uint64_t ino;if(alloc_inode(f,&ino))return-3;uint64_t sec;if(alloc_sec(f,&sec))return-4;rixfs_inode_disk_t in={0};in.inode=ino;in.mode=RIXFS_IFDIR|(mode&07777u);in.uid=uid;in.gid=gid;in.generation=1;in.links=1;in.extent_start[0]=sec;in.extent_length[0]=1;if(rixfs_write_inode(f,ino,&in)){bit(f,sec,0);return-5;}rixfs_inode_disk_t dir;if(rixfs_read_inode(f,d,&dir)||dir_append(f,&dir,ino,RIXFS_DIR_TYPE_DIR,name,nl)){free_inode_data(f,&in);rixfs_inode_disk_t z={0};rixfs_write_inode(f,ino,&z);return-6;}if(rixfs_write_inode(f,d,&dir))return-7;*out=ino;return 0;}
+/* Phase F1c: compact dirents. Readers already walk by record_size, but
+ * writers used one sector per entry, so a few creates exhausted the 4
+ * direct extents. Pack entries: shrink the last live entry to true size
+ * and append in the freed tail (or reuse a trailing hole). Mixed
+ * full-sector/compact layouts coexist; old images read unchanged. */
+static void dir_write_at(uint8_t*b,uint64_t ino,uint16_t rs,uint8_t type,const char*name,size_t nl){for(unsigned i=0;i<8;i++)b[i]=(uint8_t)(ino>>(8*i));b[8]=(uint8_t)rs;b[9]=(uint8_t)(rs>>8);b[10]=type;b[11]=(uint8_t)nl;for(size_t i=0;i<nl;i++)b[16+i]=(uint8_t)name[i];}
+/* Stage an entry at b[at..at+avail): rs=need plus a hole header when the
+ * leftover fits one, else absorb the slack (<=15 bytes) into the entry. */
+static void dir_place(uint8_t*b,uint32_t at,uint32_t avail,uint64_t ino,uint8_t type,const char*name,size_t nl){uint64_t need=(uint64_t)RIXFS_DIRENT_MIN_SIZE+nl;uint16_t left=(uint16_t)(avail-need);if(left>=RIXFS_DIRENT_MIN_SIZE){dir_write_at(b+at,ino,(uint16_t)need,type,name,nl);for(unsigned i=0;i<8;i++)b[at+need+i]=0;b[at+need+8]=(uint8_t)left;b[at+need+9]=(uint8_t)(left>>8);b[at+need+10]=0;b[at+need+11]=0;for(uint32_t i=(uint32_t)(at+need+12);i<at+avail;i++)b[i]=0;}else dir_write_at(b+at,ino,(uint16_t)avail,type,name,nl);}
+/* Returns 1 if staged into b (caller journals), 0 if it does not fit,
+ * -1 on corrupt layout (caller falls back to the sector path). */
+static int dir_tail_fit(uint8_t*b,uint32_t ss,uint64_t ino,uint8_t type,const char*name,size_t nl){uint64_t need=(uint64_t)RIXFS_DIRENT_MIN_SIZE+nl;if(need>ss)return 0;uint32_t off=0,last_off=0;uint16_t last_rs=0;uint64_t last_ino=0;uint8_t last_nl=0;int have=0;while(off<ss){if(off+RIXFS_DIRENT_MIN_SIZE>ss)return-1;uint64_t e_ino=0;for(unsigned i=0;i<8;i++)e_ino|=(uint64_t)b[off+i]<<(8*i);uint16_t rs=(uint16_t)b[off+8]|((uint16_t)b[off+9]<<8);uint8_t e_nl=b[off+11];if(!rs){for(uint32_t i=off;i<ss;i++)if(b[i])return-1;if(!have){dir_write_at(b,ino,(uint16_t)ss,type,name,nl);return 1;}uint32_t avail=ss-off;if(avail<need)return 0;dir_place(b,off,avail,ino,type,name,nl);return 1;}if(rs<RIXFS_DIRENT_MIN_SIZE||off+rs>ss)return-1;if(e_ino&&e_nl>rs-RIXFS_DIRENT_MIN_SIZE)return-1;last_off=off;last_rs=rs;last_ino=e_ino;last_nl=e_nl;have=1;off+=rs;}if(off!=ss)return-1;if(!last_ino){if(last_rs<need)return 0;dir_place(b,last_off,last_rs,ino,type,name,nl);return 1;}uint16_t tru=(uint16_t)(RIXFS_DIRENT_MIN_SIZE+last_nl);if(last_rs<tru)return-1;uint16_t slack=(uint16_t)(last_rs-tru);if(slack<need)return 0;b[last_off+8]=(uint8_t)tru;b[last_off+9]=(uint8_t)(tru>>8);dir_place(b,last_off+tru,slack,ino,type,name,nl);return 1;}
+static int dir_append(rixfs_t*f,rixfs_inode_disk_t*dir,uint64_t ino,uint8_t type,const char*name,size_t nl){uint64_t ss=f->device->sector_size;if(ss>UINT16_MAX||nl>RIXFS_NAME_MAX||dir->size%ss)return-1;uint32_t ssz=(uint32_t)ss;uint64_t sectors=dir->size/ss,sec=0;uint64_t q=pmm_alloc_page();if(!q)return-2;uint8_t*b=(uint8_t*)(uintptr_t)q;if(sectors>0){if(dir_sector(dir,sectors-1,&sec)||rd(f->device,sec,b)){pmm_free_page(q);return-3;}int fit=dir_tail_fit(b,ssz,ino,type,name,nl);if(fit==1){int jr=journal_write(f,sec,b);pmm_free_page(q);return jr?-7:0;}if(fit<0){pmm_free_page(q);return-3;}}
+int existing=0,add_size=0;for(uint64_t logical=0;logical<sectors;logical++){if(dir_sector(dir,logical,&sec)||rd(f->device,sec,b)){pmm_free_page(q);return-3;}uint64_t old=0;for(unsigned i=0;i<8;i++)old|=(uint64_t)b[i]<<(8*i);if(!old){uint16_t rrs=(uint16_t)b[8]|((uint16_t)b[9]<<8);if(rrs==ssz){existing=1;break;}int allz=1;for(uint64_t i=0;i<ss;i++)if(b[i]){allz=0;break;}if(allz){existing=1;break;}}}if(!existing&&dir_sector(dir,sectors,&sec)==0){existing=1;add_size=sectors==0;}if(!existing){if(alloc_sec_top(f,&sec,dir)){pmm_free_page(q);return-4;}if(append_extent(dir,sec)){bit(f,sec,0);pmm_free_page(q);return-5;}
+add_size=1;}int r=existing?rd(f->device,sec,b):0;if(r){pmm_free_page(q);return-6;}if(!existing)for(uint32_t i=0;i<ssz;i++)b[i]=0;dir_write_at(b,ino,(uint16_t)ssz,type,name,nl);r=journal_write(f,sec,b);pmm_free_page(q);if(r){if(!existing)bit(f,sec,0);return-7;}if(add_size)dir->size+=ss;return 0;}
+int rixfs_mkdir(rixfs_t*f,uint64_t d,const char*name,uint32_t mode,uint32_t uid,uint32_t gid,uint64_t*out){size_t nl;if(!f||!out||valid_name(name,&nl))return-1;uint64_t old;uint8_t t;if(rixfs_lookup_name(f,d,name,&old,&t)==0)return-2;    uint64_t ino;if(alloc_inode(f,&ino))return-3;uint64_t sec;if(alloc_sec_top(f,&sec,0))return-4;rixfs_inode_disk_t in={0};in.inode=ino;in.mode=RIXFS_IFDIR|(mode&07777u);in.uid=uid;in.gid=gid;in.generation=1;in.links=1;in.extent_start[0]=sec;in.extent_length[0]=1;if(rixfs_write_inode(f,ino,&in)){bit(f,sec,0);return-5;}rixfs_inode_disk_t dir;if(rixfs_read_inode(f,d,&dir)||dir_append(f,&dir,ino,RIXFS_DIR_TYPE_DIR,name,nl)){free_inode_data(f,&in);rixfs_inode_disk_t z={0};rixfs_write_inode(f,ino,&z);return-6;}if(rixfs_write_inode(f,d,&dir))return-7;*out=ino;return 0;}
 int rixfs_create(rixfs_t*f,uint64_t d,const char*name,uint32_t mode,uint32_t uid,uint32_t gid,uint64_t*out){size_t nl;if(!f||!out||valid_name(name,&nl))return-1;uint64_t old;uint8_t t;if(rixfs_lookup_name(f,d,name,&old,&t)==0)return-2;uint64_t ino;if(alloc_inode(f,&ino))return-3;rixfs_inode_disk_t in={0};in.inode=ino;in.mode=RIXFS_IFREG|(mode&07777u);in.uid=uid;in.gid=gid;in.generation=1;in.links=1;if(rixfs_write_inode(f,ino,&in))return-4;rixfs_inode_disk_t dir;if(rixfs_read_inode(f,d,&dir)||dir_append(f,&dir,ino,RIXFS_DIR_TYPE_FILE,name,nl)){rixfs_inode_disk_t z={0};rixfs_write_inode(f,ino,&z);return-5;}if(rixfs_write_inode(f,d,&dir))return-6;*out=ino;return 0;}
 int rixfs_link(rixfs_t*f,uint64_t source,uint64_t d,const char*name,uint8_t type){size_t nl;if(!f||valid_name(name,&nl))return-1;uint64_t old;uint8_t t;if(rixfs_lookup_name(f,d,name,&old,&t)==0)return-2;rixfs_inode_disk_t in;if(rixfs_read_inode(f,source,&in)||!in.inode)return-3;if((in.mode&RIXFS_IFMT)==RIXFS_IFDIR)return-4;if(in.links==UINT32_MAX)return-5;rixfs_inode_disk_t dir;if(rixfs_read_inode(f,d,&dir)||dir_append(f,&dir,source,type,name,nl))return-6;if(rixfs_write_inode(f,d,&dir))return-7;in.links=in.links?in.links+1u:2u;return rixfs_write_inode(f,source,&in);}
+/* Phase S2: symlink creation. Target is stored as the file data of an
+ * IFMT=SYMLINK inode (mode 0777, conventionally ignored on traversal).
+ * Mirrors rixfs_create structure/error style; rollback frees data. */
+int rixfs_symlink(rixfs_t*f,uint64_t d,const char*name,const char*target,uint32_t uid,uint32_t gid,uint64_t*out){size_t nl;if(!f||!out||valid_name(name,&nl))return-1;if(!target||!target[0])return-1;size_t tl=0;while(target[tl]){if(++tl>RIXFS_SYMLINK_TARGET_MAX)return-1;}uint64_t old;uint8_t t;if(rixfs_lookup_name(f,d,name,&old,&t)==0)return-2;uint64_t ino;if(alloc_inode(f,&ino))return-3;rixfs_inode_disk_t in={0};in.inode=ino;in.mode=RIXFS_IFLNK|0777u;in.uid=uid;in.gid=gid;in.generation=1;in.links=1;if(rixfs_write_inode(f,ino,&in))return-4;if(rixfs_truncate(f,ino,(uint64_t)tl)||rixfs_write(f,ino,0,target,(uint64_t)tl)){free_inode_data(f,&in);rixfs_inode_disk_t z={0};rixfs_write_inode(f,ino,&z);return-5;}rixfs_inode_disk_t dir;if(rixfs_read_inode(f,d,&dir)||dir_append(f,&dir,ino,RIXFS_DIR_TYPE_SYMLINK,name,nl)){free_inode_data(f,&in);rixfs_inode_disk_t z={0};rixfs_write_inode(f,ino,&z);return-6;}if(rixfs_write_inode(f,d,&dir))return-7;*out=ino;return 0;}
 int rixfs_unlink(rixfs_t*f,uint64_t d,const char*name){size_t nl;if(!f||valid_name(name,&nl))return-1;uint64_t ino;uint8_t type;if(rixfs_lookup_name(f,d,name,&ino,&type))return-2;if(ino==f->super.root_inode)return-3;rixfs_inode_disk_t in;if(rixfs_read_inode(f,ino,&in))return-4;if((in.mode&RIXFS_IFMT)==RIXFS_IFDIR)return-5;if(rixfs_remove_name(f,d,name))return-6;if(in.links>1){in.links--;return rixfs_write_inode(f,ino,&in);}if(free_inode_data(f,&in))return-7;rixfs_inode_disk_t z={0};return rixfs_write_inode(f,ino,&z);}
 typedef struct {
     uint64_t sector;
@@ -128,6 +153,16 @@ static int rename_find_free_sector(rixfs_t *f, const rixfs_inode_disk_t *parent,
                 if (!used) { *out_sector = sector; return 0; }
             }
         }
+        /* Phase F1b: top-down fresh sectors before the bottom-up scan
+         * (segregated from file data; find-only, the caller sets the
+         * bit inside the transaction). */
+        uint64_t top = f->meta_hint;
+        if (!top || top > f->super.total_sectors) top = f->super.total_sectors;
+        for (uint64_t sector = top; sector-- > f->super.data_start_sector;) {
+            int used = 0;
+            if (bit_get(f, sector, &used)) return -2;
+            if (!used) { *out_sector = sector; return 0; }
+        }
     }
     uint64_t start = f->super.free_hint;
     if (start < f->super.data_start_sector) start = f->super.data_start_sector;
@@ -147,7 +182,7 @@ static int rename_find_free_sector(rixfs_t *f, const rixfs_inode_disk_t *parent,
 }
 
 static int rename_find_entry(rixfs_t *f, uint64_t dir_inode, const char *wanted,
-                             uint64_t *out_sector, rixfs_dirent_disk_t *out_entry) {
+                             uint64_t *out_sector, uint64_t *out_offset, rixfs_dirent_disk_t *out_entry) {
     rixfs_inode_disk_t dir;
     uint64_t offset = 0;
     char name[RIXFS_NAME_MAX + 1];
@@ -165,10 +200,12 @@ static int rename_find_entry(rixfs_t *f, uint64_t dir_inode, const char *wanted,
                 uint64_t start = offset - entry.record_size;
                 uint64_t logical = start / f->device->sector_size;
                 uint64_t physical = 0;
-                if (start % f->device->sector_size ||
-                    entry.record_size != f->device->sector_size ||
-                    dir_sector(&dir, logical, &physical)) return -3;
+                /* Phase F1c: entries may sit at any offset (compact
+                 * tails); the source is cleared in place, so only the
+                 * containing sector is needed. */
+                if (dir_sector(&dir, logical, &physical)) return -3;
                 *out_sector = physical;
+                if (out_offset) *out_offset = start;
                 if (out_entry) *out_entry = entry;
                 return 0;
             }
@@ -185,6 +222,7 @@ static int rename_find_empty_slot(rixfs_t *f, uint64_t dir_inode,
         dir.size % f->device->sector_size) return -1;
     uint64_t page = pmm_alloc_page();
     if (!page) return -2;
+    uint32_t ssz = f->device->sector_size;
     for (uint64_t logical = 0; logical < dir.size / f->device->sector_size; ++logical) {
         uint64_t physical = 0;
         if (dir_sector(&dir, logical, &physical) ||
@@ -192,13 +230,29 @@ static int rename_find_empty_slot(rixfs_t *f, uint64_t dir_inode,
             pmm_free_page(page);
             return -3;
         }
+        uint8_t *slot = (uint8_t *)(uintptr_t)page;
         uint64_t inode = 0;
         for (unsigned i = 0; i < 8; ++i)
-            inode |= (uint64_t)((uint8_t *)(uintptr_t)page)[i] << (8u * i);
+            inode |= (uint64_t)slot[i] << (8u * i);
+        /* Phase F1c: dest writes are full-sector, so only wholly-free
+         * sectors qualify: a whole-sector hole, or all-zero. A compact
+         * sector whose first entry was deleted still holds siblings. */
         if (!inode) {
-            *out_sector = physical;
-            pmm_free_page(page);
-            return 0;
+            uint16_t rrs = (uint16_t)slot[8] | ((uint16_t)slot[9] << 8);
+            if (rrs == ssz) {
+                *out_sector = physical;
+                pmm_free_page(page);
+                return 0;
+            }
+            int allz = 1;
+            for (uint32_t i = 0; i < ssz; ++i) {
+                if (slot[i]) { allz = 0; break; }
+            }
+            if (allz) {
+                *out_sector = physical;
+                pmm_free_page(page);
+                return 0;
+            }
         }
     }
     pmm_free_page(page);
@@ -277,6 +331,7 @@ int rixfs_rename(rixfs_t *f, uint64_t old_dir, const char *old_name,
     rixfs_rename_change_t changes[RIXFS_JOURNAL_TX_MAX_ENTRIES] = {{0, NULL}};
     size_t change_count = 0;
     uint64_t source_sector, destination_sector = 0, new_sector = 0;
+    uint64_t source_offset = 0, destination_offset = 0;
     int destination_exists = 0;
     int result = -1;
     if (!f || !f->mounted || valid_name(old_name, &old_length) ||
@@ -291,8 +346,8 @@ int rixfs_rename(rixfs_t *f, uint64_t old_dir, const char *old_name,
     }
     if (rixfs_lookup_name(f, old_dir, old_name, &source_inode, &source_type) ||
         rixfs_read_inode(f, source_inode, &source) ||
-        (source.mode & RIXFS_IFMT) != RIXFS_IFREG ||
-        rename_find_entry(f, old_dir, old_name, &source_sector, NULL))
+        ((source.mode & RIXFS_IFMT) != RIXFS_IFREG && (source.mode & RIXFS_IFMT) != RIXFS_IFLNK) ||
+        rename_find_entry(f, old_dir, old_name, &source_sector, &source_offset, NULL))
         return -2;
     int lookup_result = rixfs_lookup_name(f, new_dir, new_name,
                                           &destination_inode, &destination_type);
@@ -300,8 +355,8 @@ int rixfs_rename(rixfs_t *f, uint64_t old_dir, const char *old_name,
         destination_exists = 1;
         if (destination_inode == source_inode) return -17;
         if (!replace || rixfs_read_inode(f, destination_inode, &destination) ||
-            (destination.mode & RIXFS_IFMT) != RIXFS_IFREG) return -17;
-        if (rename_find_entry(f, new_dir, new_name, &destination_sector, NULL)) return -3;
+            ((destination.mode & RIXFS_IFMT) != RIXFS_IFREG && (destination.mode & RIXFS_IFMT) != RIXFS_IFLNK)) return -17;
+        if (rename_find_entry(f, new_dir, new_name, &destination_sector, &destination_offset, NULL)) return -3;
     } else if (lookup_result != -8) {
         return -4;
     }
@@ -312,29 +367,62 @@ int rixfs_rename(rixfs_t *f, uint64_t old_dir, const char *old_name,
         (new_parent.mode & RIXFS_IFMT) != RIXFS_IFDIR)
         return -5;
     rixfs_rename_change_t *change;
+    /* Phase F1c: entries are cleared in place (they may be compact
+     * entries sharing a sector with siblings); the replacement always
+     * goes through the whole-sector slot path below. */
     if (rename_change_get(f, changes, &change_count, source_sector, &change)) goto done;
-    rename_clear_sector(change->data, f->device->sector_size);
+    {
+        uint32_t soff = (uint32_t)(source_offset % f->device->sector_size);
+        for (unsigned j = 0; j < 8; ++j) change->data[soff + j] = 0;
+    }
     if (destination_exists) {
         if (rename_change_get(f, changes, &change_count, destination_sector, &change)) goto done;
-        if (rename_write_dirent(change->data, f->device->sector_size,
-                                source_inode, source_type, new_name)) goto done;
-    } else {
+        uint32_t doff = (uint32_t)(destination_offset % f->device->sector_size);
+        for (unsigned j = 0; j < 8; ++j) change->data[doff + j] = 0;
+    }
+    {
+        uint32_t ssz = f->device->sector_size;
+        int placed = 0;
+        /* Prefer the last sector's tail (no growth, like creates): the
+         * change cache already reflects the clears above, so freed
+         * space in the same dir is reused immediately. */
+        if (new_parent.size > 0 && !(new_parent.size % ssz)) {
+            uint64_t last_phys = 0;
+            if (!dir_sector(&new_parent, new_parent.size / ssz - 1, &last_phys) &&
+                !rename_change_get(f, changes, &change_count, last_phys, &change) &&
+                dir_tail_fit(change->data, ssz, source_inode, source_type, new_name, new_length) == 1)
+                placed = 1;
+        }
+        if (!placed) {
         int slot_result = rename_find_empty_slot(f, new_dir, &destination_sector);
         if (slot_result < 0) goto done;
         if (slot_result == 0) {
             if (rename_change_get(f, changes, &change_count, destination_sector, &change)) goto done;
         } else {
-            if (rename_find_free_sector(f, &new_parent, &new_sector) ||
-                rename_set_bitmap(f, changes, &change_count, new_sector, 1) ||
-                new_parent.size > UINT64_MAX - f->device->sector_size ||
-                append_extent(&new_parent, new_sector)) goto done;
-            new_parent.size += f->device->sector_size;
-            if (rename_change_inode(f, changes, &change_count, new_dir, &new_parent)) goto done;
-            destination_sector = new_sector;
-            if (rename_change_get(f, changes, &change_count, destination_sector, &change)) goto done;
+            uint64_t spare = 0;
+            /* A fresh dir (size 0) already owns one spare sector from
+             * mkdir; writing a fresh sector would land at logical 1,
+             * past size, and stay invisible. Use the spare instead. */
+            if (new_parent.size == 0 &&
+                dir_sector(&new_parent, 0, &spare) == 0) {
+                destination_sector = spare;
+                new_parent.size += f->device->sector_size;
+                if (rename_change_inode(f, changes, &change_count, new_dir, &new_parent) ||
+                    rename_change_get(f, changes, &change_count, destination_sector, &change)) goto done;
+            } else {
+                if (rename_find_free_sector(f, &new_parent, &new_sector) ||
+                    rename_set_bitmap(f, changes, &change_count, new_sector, 1) ||
+                    new_parent.size > UINT64_MAX - f->device->sector_size ||
+                    append_extent(&new_parent, new_sector)) goto done;
+                new_parent.size += f->device->sector_size;
+                if (rename_change_inode(f, changes, &change_count, new_dir, &new_parent)) goto done;
+                destination_sector = new_sector;
+                if (rename_change_get(f, changes, &change_count, destination_sector, &change)) goto done;
+            }
         }
-        if (rename_write_dirent(change->data, f->device->sector_size,
+        if (!placed && rename_write_dirent(change->data, f->device->sector_size,
                                 source_inode, source_type, new_name)) goto done;
+        }
     }
     if (destination_exists) {
         if (destination.links > 1u) {
@@ -361,7 +449,7 @@ done:
 }
 static int directory_empty(rixfs_t*f,uint64_t ino){uint64_t off=0;rixfs_dirent_disk_t e;char name[RIXFS_NAME_MAX+1];for(;;){int r=rixfs_readdir(f,ino,&off,&e,name,sizeof(name));if(r==1)return 0;if(r!=0)return -1;return -2;}}
 int rixfs_rmdir(rixfs_t*f,uint64_t d,const char*name){size_t nl;if(!f||valid_name(name,&nl))return-1;uint64_t ino;uint8_t type;if(rixfs_lookup_name(f,d,name,&ino,&type))return-2;if(ino==f->super.root_inode)return-3;rixfs_inode_disk_t in;if(rixfs_read_inode(f,ino,&in))return-4;if((in.mode&RIXFS_IFMT)!=RIXFS_IFDIR)return-5;if(directory_empty(f,ino))return-6;if(free_inode_data(f,&in))return-7;if(rixfs_remove_name(f,d,name))return-8;rixfs_inode_disk_t z={0};return rixfs_write_inode(f,ino,&z);}
-int rixfs_format(rix_block_device_t*d,uint64_t ic){if(!d||d->sector_size<512||d->sector_size>RIXFS_SECTOR_MAX||d->sector_count<128||ic<8)return-1;uint64_t is=(ic*RIXFS_INODE_SIZE+d->sector_size-1)/d->sector_size,bs=(d->sector_count+8*d->sector_size-1)/(8*d->sector_size),js=1+is+bs,ds=js+2;if(ds+1>=d->sector_count)return-2;uint64_t q=pmm_alloc_page();if(!q)return-3;uint8_t*b=(uint8_t*)(uintptr_t)q;for(uint32_t i=0;i<d->sector_size;i++)b[i]=0;rixfs_superblock_t sb={0};sb.magic=RIXFS_MAGIC;sb.version=RIXFS_VERSION;sb.header_size=sizeof(sb);sb.sector_size=d->sector_size;sb.total_sectors=d->sector_count;sb.inode_table_sector=1;sb.inode_count=ic;sb.bitmap_sector=1+is;sb.bitmap_sectors=bs;sb.journal_sector=js;sb.journal_sectors=RIXFS_JOURNAL_TX_MAX_ENTRIES+1u;sb.data_start_sector=ds;sb.root_inode=1;sb.generation=1;sb.free_hint=ds;sb.checksum=hash64(&sb,sizeof(sb));for(size_t i=0;i<sizeof(sb);i++)b[i]=((const uint8_t*)&sb)[i];if(wr(d,0,b)){pmm_free_page(q);return-4;}for(uint64_t s=1;s<ds;s++){for(uint32_t i=0;i<d->sector_size;i++)b[i]=0;if(wr(d,s,b)){pmm_free_page(q);return-5;}}rixfs_t f={.device=d,.super=sb,.mounted=1};for(uint64_t s=0;s<ds;s++)if(bit(&f,s,1)){pmm_free_page(q);return-6;}uint64_t root;if(alloc_sec(&f,&root)){pmm_free_page(q);return-7;}rixfs_inode_disk_t in={0};in.inode=1;in.mode=RIXFS_IFDIR|0755u;in.generation=1;in.extent_start[0]=root;in.extent_length[0]=1;if(rixfs_write_inode(&f,1,&in)){pmm_free_page(q);return-8;}for(uint32_t i=0;i<d->sector_size;i++)b[i]=0;if(wr(d,root,b)){pmm_free_page(q);return-9;}pmm_free_page(q);return 0;}
+int rixfs_format(rix_block_device_t*d,uint64_t ic){if(!d||d->sector_size<512||d->sector_size>RIXFS_SECTOR_MAX||d->sector_count<128||ic<8)return-1;uint64_t is=(ic*RIXFS_INODE_SIZE+d->sector_size-1)/d->sector_size,bs=(d->sector_count+8*d->sector_size-1)/(8*d->sector_size),js=1+is+bs,ds=js+RIXFS_JOURNAL_TX_MAX_ENTRIES+1u;if(ds+1>=d->sector_count)return-2;uint64_t q=pmm_alloc_page();if(!q)return-3;uint8_t*b=(uint8_t*)(uintptr_t)q;for(uint32_t i=0;i<d->sector_size;i++)b[i]=0;rixfs_superblock_t sb={0};sb.magic=RIXFS_MAGIC;sb.version=RIXFS_VERSION;sb.header_size=sizeof(sb);sb.sector_size=d->sector_size;sb.total_sectors=d->sector_count;sb.inode_table_sector=1;sb.inode_count=ic;sb.bitmap_sector=1+is;sb.bitmap_sectors=bs;sb.journal_sector=js;sb.journal_sectors=RIXFS_JOURNAL_TX_MAX_ENTRIES+1u;sb.data_start_sector=ds;sb.root_inode=1;sb.generation=1;sb.free_hint=ds;sb.checksum=hash64(&sb,sizeof(sb));for(size_t i=0;i<sizeof(sb);i++)b[i]=((const uint8_t*)&sb)[i];if(wr(d,0,b)){pmm_free_page(q);return-4;}for(uint64_t s=1;s<ds;s++){for(uint32_t i=0;i<d->sector_size;i++)b[i]=0;if(wr(d,s,b)){pmm_free_page(q);return-5;}}rixfs_t f={.device=d,.super=sb,.mounted=1};for(uint64_t s=0;s<ds;s++)if(bit(&f,s,1)){pmm_free_page(q);return-6;}uint64_t root;if(alloc_sec(&f,&root)){pmm_free_page(q);return-7;}rixfs_inode_disk_t in={0};in.inode=1;in.mode=RIXFS_IFDIR|0755u;in.generation=1;in.extent_start[0]=root;in.extent_length[0]=1;if(rixfs_write_inode(&f,1,&in)){pmm_free_page(q);return-8;}for(uint32_t i=0;i<d->sector_size;i++)b[i]=0;if(wr(d,root,b)){pmm_free_page(q);return-9;}pmm_free_page(q);return 0;}
 int rixfs_format_standard_tree(rix_block_device_t*d,uint64_t ic){if(rixfs_format(d,ic)!=0)return-1;rixfs_t f={0};if(rixfs_mount(d,&f)!=0)return-2;static const char*dirs[]={"boot","bin","sbin","lib","lib64","usr","etc","home","root","var","tmp","dev","proc","sys","run","opt","mnt","media"};for(size_t i=0;i<sizeof(dirs)/sizeof(dirs[0]);i++){uint64_t ino=0;if(rixfs_mkdir(&f,f.super.root_inode,dirs[i],0755,0,0,&ino)!=0){rixfs_unmount(&f);return-3;}}if(rixfs_sync(&f)!=0){rixfs_unmount(&f);return-4;}rixfs_unmount(&f);return 0;}
 
 

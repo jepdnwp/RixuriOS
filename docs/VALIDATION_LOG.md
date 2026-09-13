@@ -1100,3 +1100,37 @@ or photo from the owner (identity lines, `known-bad=`, `xHCI: port order`
 and `xHCI: attach failed ... PORTSC=`). The identity lines are also what
 settles the open ctl↔PCI-ID question: the earlier failing-port list
 implies an 18-port `ctl0`, which the bus-order prediction does not.
+
+## 2026-09-13 — F1c compact dirents + S2 real symlinks + 281229d revert
+
+RixFS writers used one sector per directory entry, so a handful of
+creates/renames exhausted the 4 direct extents on a nearly-empty disk
+(`cannot create`, cred `fail-create2`). Readers already walk by
+`record_size`, so entries are now packed into the last sector's tail
+(`dir_append`, rename dest via the TX change cache); `remove_name`
+and rename source/dest clears operate in place at the entry offset;
+rename's empty-slot scan requires a wholly-free sector. Two latent
+bugs fixed alongside: rename into a fresh size-0 dir wrote logical 1
+past size (now uses mkdir's spare sector), and every replacing rename
+grew a sector (now usually zero). Symlinks are real: `RIXFS_IFLNK`
+inodes carry the target as file data, VFS follows intermediate and
+final components with a depth cap (`ELOOP`), new syscalls 85/88 with
+libc wrappers and `ln -s`. `281229d` (kernel section permissions) was
+bisected guilty independently of the fs bug — with it the guest hangs
+before the first prompt, without it everything below is green; it
+remaps the early 2 MB-PS tables without splitting, so it is reverted
+until a PS-split implementation exists.
+
+Validation (`CROSS=x86_64-linux-gnu- HOST_CC=gcc`):
+
+```text
+make test   RC=0 (host symlink_test extended: 12 entries in 1 sector +
+            1 extent, remove/rename/replace/cross-dir, readdir count,
+            fsck clean)
+qemu auth / cp_mv / file_utils / phase20_cred / phase20  ALL PASS
+qemu powerloss / smp_boot / ring3                        ALL PASS
+```
+
+Renametest's full op sequence replays on host with zero directory
+growth. Not claimed: hardware keyboard (still `rc=7`/PED=0 on the
+ASUS board), >8-CPU AP bring-up, HW PASS/CI.

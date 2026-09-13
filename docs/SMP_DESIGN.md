@@ -228,6 +228,34 @@
 
 ## Phase H4 (spec 2026-09-12): per-controller protocol map + quirk IDs
 
+## Phase S2 (spec 2026-09-12): real symlinks (unblocks make test)
+
+- Owner direction: implement for real (not a negative test). Unblocks
+  the `symlink-test` gate that currently fails the whole `make test`.
+- Disk format: unchanged. Symlink = IFMT inode (`RIXFS_IFLNK`,
+  already defined) with the target path as file data. Target bound
+  1..4095 bytes (`RIX_VFS_PATH_MAX`-1); dangling targets allowed.
+- `rixfs_symlink()` (new, `rixfs_ops.c`): validate, miss-check,
+  alloc inode, write target, dir-append `TYPE_SYMLINK`. Mirrors
+  `rixfs_create` structure/error style.
+- VFS: `vfs_symlink` + `vfs_readlink` (no-follow read, returns count,
+  no NUL — POSIX). Traversal gains a follow flag + depth cap 8
+  (`RIX_VFS_ERR_LOOP` → `ELOOP 40` both sides). `unlink`/`rename`/
+  hard-`link` use no-follow for the final component (POSIX: they act
+  on the link); `open`/`exec`/`stat` follow. No `O_NOFOLLOW` flag and
+  no `lstat` syscall in v1 — documented, not silent.
+- Syscalls `RIX_SYS_SYMLINK 85`, `RIX_SYS_READLINK 88` (verified free;
+  avoids the 137-139 collision zone); libc `symlink()`/`readlink()`;
+  `/bin/ln -s`.
+- Host test (`tests/symlink_test.c`, same harness pattern as
+  rixfs_mount_test): format/mount fake disk, symlink create, raw
+  target readback, type check, dangling ok, double-create reject,
+  overlong-target reject. Traversal depth-cap is QEMU-proven (needs
+  VFS+process state — stated, not faked on host).
+- Acceptance: `make test` green incl. new target, QEMU: `ln -s`,
+  `cat` through link, `ls` shows it, cycle → clean ELOOP error,
+  dangling → clean error, `rm` removes link not target.
+
 ## Phase H5 (spec 2026-09-12): BIOS-ownership verdict logging
 
 - Field puzzle: all 4 controllers fail identically at reset/address
@@ -376,6 +404,41 @@
 - Acceptance: the bisect sequence (init/renametest/cp/mv) green +
   full cp_mv suite green + powerloss matrix re-run (allocator layout
   changed) + UP/SMP4 unchanged.
+
+## Phase F1c (done 2026-09-13): compact dirents (extent ceiling, for real)
+
+- F1b only delayed the 4-extent ceiling: segregated allocs still burn
+  one extent per dir growth, and 3 growths in `/` exhausted it again
+  (host dump proof: 4 extents, next create fails although the disk is
+  empty). The walk code already supports `record_size`-chained
+  entries — only the writers assume sector-per-entry. So: pack them.
+- `dir_append`: fit into the last sector's tail first (shrink the
+  last entry to true size, append if `16+len` fits, hole-split when
+  room), else the old whole-sector path (reuse scan now requires
+  whole-sector-hole or all-zero, so compact siblings are never
+  clobbered). `remove_name`: drop the sector-alignment requirement
+  (RMW the containing sector at the entry offset — the old code
+  zeroed the sector start, which the alignment check papered over;
+  holes keep their size and are skipped by walks). Rename: source
+  and replaced-dest cleared in place; dest placement prefers the
+  last-sector tail via the TX change cache (sees same-TX clears),
+  then whole-sector slot, then fresh sector. Two latent bugs fixed
+  along the way (both pre-existing, both found by the new host
+  test): rename into a fresh size-0 dir wrote logical 1 past size
+  (entry invisible — now uses mkdir's spare sector), and rename
+  always grew (one sector per replacing rename — now usually zero).
+  Format-compatible both ways (mixed layouts coexist; old images
+  read unchanged).
+- Validation 2026-09-13: host `symlink_test` extended (12 entries in
+  1 sector + 1 extent, remove/rename/replace/cross-dir, readdir
+  count, fsck clean); full renametest op sequence replays with ZERO
+  dir growth on host; `make test` RC=0; QEMU auth/cp_mv/file_utils/
+  cred/phase20 + powerloss + smp_boot + ring3 all PASS.
+- Note: `281229d` (kernel section permissions) bisected GUILTY
+  independently of this bug (guest hangs with it, all-green
+  without; it remaps the early 2 MB-PS tables without splitting,
+  corrupting paging) — reverted separately, hardening deferred
+  until a PS-split implementation exists.
 
 ## Phase U2 (done 2026-09-12): errno-convention family (test programs)
 

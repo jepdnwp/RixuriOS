@@ -64,6 +64,8 @@ int mkdir(const char *path, uint32_t mode);
 int rmdir(const char *path);
 int unlink(const char *path);
 int link(const char *old_path, const char *new_path);
+int symlink(const char *target, const char *path);
+rix_ssize_t readlink(const char *path, char *buffer, size_t capacity);
 int getdents(int fd, rix_dirent_t *entries, size_t capacity, size_t *count);
 int getdents64(int fd, rix_dirent_t *entries, size_t capacity, size_t *count);
 off_t lseek(int fd, off_t offset, int whence);
