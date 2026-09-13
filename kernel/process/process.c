@@ -1,6 +1,8 @@
 #include "process.h"
 #include "kernel.h"
 #include "../serial.h"
+#include "../sync/lock.h"
+#include "../sync/lockdep.h"
 #include "../arch/x86_64/cpu.h"
 #include "../elf/loader.h"
 #include "../mm/pmm.h"
@@ -16,6 +18,24 @@
 #define KERNEL_STACK_SIZE (KERNEL_STACK_PAGES * RIXURI_PAGE_SIZE)
 #define RIX_AUXV_AT_NULL 0ULL
 static rix_process_t table[RIX_PROCESS_MAX];static uint32_t supplementary_groups[RIX_PROCESS_MAX][RIX_PROCESS_GROUP_MAX];static uint32_t supplementary_counts[RIX_PROCESS_MAX];static uint32_t real_uids[RIX_PROCESS_MAX],saved_uids[RIX_PROCESS_MAX],real_gids[RIX_PROCESS_MAX],saved_gids[RIX_PROCESS_MAX];static uint32_t audit_uids[RIX_PROCESS_MAX];static rix_session_info_t sessions[RIX_SESSION_MAX];static pid_t current_pid;static pid_t next_pid;static size_t live_count;
+/* Big-table lock (irqsave spinlock, lockdep rank 4: nests inside VFS 6,
+ * VMM 10, heap 20, PMM 30; never reversed — permission fast paths stay
+ * lock-free single-word reads). No yields/sleeps anywhere below, so a
+ * spinlock (not a sleeping mutex) is correct. PROCESS_GUARD acquires
+ * (lockdep check first so a misnest warns instead of deadlocking) and
+ * releases on ANY scope exit, including early returns. Static helpers
+ * and process_lookup never take it; public mutators always do. */
+static rix_spinlock_t process_lock;
+static unsigned process_lockdep_class;
+typedef struct { uint64_t irq; int held; } process_guard_t;
+static inline void process_guard_release(process_guard_t *g){if(g->held)(void)rix_lockdep_release(process_lockdep_class);rix_spin_unlock_irqrestore(&process_lock,g->irq);}
+#define PROCESS_GUARD() process_guard_t _pg __attribute__((cleanup(process_guard_release))) = {0,0}; \
+    do { _pg.held = (rix_lockdep_acquire(process_lockdep_class) == 0); rix_spin_lock_irqsave(&process_lock, &_pg.irq); } while (0)
+/* Locked cores (assume the guard is held): internal use by nesting
+ * mutators only. Public wrappers below take the guard. */
+static int process_create_locked(const char *name, pid_t parent, pid_t *out_pid);
+static int process_exit_locked(pid_t pid, uint64_t status);
+static int process_activate_locked(pid_t pid);
 static int session_register(pid_t session,pid_t leader,uint32_t uid){if(!session)return-1;for(size_t i=0;i<RIX_SESSION_MAX;i++)if(sessions[i].session==session){sessions[i].leader=leader;sessions[i].uid=uid;sessions[i].flags=RIX_SESSION_ACTIVE;return 0;}for(size_t i=0;i<RIX_SESSION_MAX;i++)if(!sessions[i].session){sessions[i].session=session;sessions[i].leader=leader;sessions[i].uid=uid;sessions[i].controlling_tty=UINT32_MAX;sessions[i].flags=RIX_SESSION_ACTIVE;return 0;}return-1;}
 static void session_drop_if_empty(pid_t session){if(!session)return;for(size_t i=1;i<RIX_PROCESS_MAX;i++)if(table[i].state!=RIX_PROC_UNUSED&&table[i].state!=RIX_PROC_ZOMBIE&&table[i].session==session)return;for(size_t i=0;i<RIX_SESSION_MAX;i++)if(sessions[i].session==session){sessions[i].session=0;sessions[i].leader=0;sessions[i].uid=0;sessions[i].controlling_tty=UINT32_MAX;sessions[i].flags=0;return;}}
 static void session_refresh_tty(rix_session_info_t*info){if(!info||!info->session)return;info->controlling_tty=UINT32_MAX;for(unsigned tty=0;tty<RIX_TTY_COUNT;tty++){uint32_t session=0;int controlling=0;if(tty_get_session(tty,&session,&controlling)==0&&controlling&&session==info->session){info->controlling_tty=tty;break;}}}
@@ -25,35 +45,36 @@ static int copy_cwd(char*d,const char*s){size_t n=0;if(!d||!s)return -1;while(n+
 static pid_t allocate_pid(void){for(size_t n=0;n<RIX_PROCESS_MAX-1;n++){pid_t candidate=next_pid;if(++next_pid>=RIX_PROCESS_MAX)next_pid=1;if(candidate&& !process_lookup(candidate))return candidate;}return 0;}
 static void clear_process(rix_process_t*p){p->pid=0;p->parent=0;p->process_group=0;p->session=0;p->state=RIX_PROC_UNUSED;p->uid=0;p->gid=0;p->capabilities=0;p->address_space.pml4_phys=0;p->heap_base=0;p->heap_break=0;p->kernel_stack=0;p->kernel_stack_size=0;p->exit_status=0;p->fd_bitmap=0;p->signal_pending=0;p->signal_mask=0;rix_net_socket_table_init(&p->sockets);p->name[0]=0;p->cwd[0]='/';p->cwd[1]=0;}
 static void zero_page(uint64_t pa){uint8_t*p=(uint8_t*)(uintptr_t)pa;for(size_t i=0;i<4096;i++)p[i]=0;}
-int process_init(void){for(size_t i=0;i<RIX_PROCESS_MAX;i++){clear_process(&table[i]);supplementary_counts[i]=0;audit_uids[i]=0;real_uids[i]=saved_uids[i]=real_gids[i]=saved_gids[i]=0;for(size_t g=0;g<RIX_PROCESS_GROUP_MAX;g++)supplementary_groups[i][g]=0;}for(size_t i=0;i<RIX_SESSION_MAX;i++){sessions[i].session=0;sessions[i].leader=0;sessions[i].uid=0;sessions[i].controlling_tty=UINT32_MAX;sessions[i].flags=0;}current_pid=0;next_pid=1;live_count=1;
+int process_init(void){rix_lockdep_register("process",4u,&process_lockdep_class);for(size_t i=0;i<RIX_PROCESS_MAX;i++){clear_process(&table[i]);supplementary_counts[i]=0;audit_uids[i]=0;real_uids[i]=saved_uids[i]=real_gids[i]=saved_gids[i]=0;for(size_t g=0;g<RIX_PROCESS_GROUP_MAX;g++)supplementary_groups[i][g]=0;}for(size_t i=0;i<RIX_SESSION_MAX;i++){sessions[i].session=0;sessions[i].leader=0;sessions[i].uid=0;sessions[i].controlling_tty=UINT32_MAX;sessions[i].flags=0;}current_pid=0;next_pid=1;live_count=1;
 table[0].pid=0;table[0].process_group=0;table[0].session=0;table[0].state=RIX_PROC_RUNNING;table[0].capabilities=RIX_CAP_ALL;copy_name(table[0].name,"kernel");return 0;}
 pid_t process_current(void){return current_pid;}rix_process_t*process_lookup(pid_t pid){for(size_t i=0;i<RIX_PROCESS_MAX;i++)if(table[i].state!=RIX_PROC_UNUSED&&table[i].pid==pid)return &table[i];return NULL;}size_t process_count(void){return live_count;}
 int process_getcwd(pid_t pid,char*out,size_t capacity){rix_process_t*p=process_lookup(pid);if(!p||!out||capacity==0)return -1;size_t n=0;while(p->cwd[n]){if(n+1>=capacity)return -1;out[n]=p->cwd[n];++n;}out[n]=0;return 0;}
-int process_setcwd(pid_t pid,const char*path){rix_process_t*p=process_lookup(pid);uint64_t va=(uint64_t)(uintptr_t)path;/* Only kernel buffers may reach this internal API. */if(!p||!path||va<0x100000ULL||va>=0x10000000ULL||!vmm_translate(va))return -1;if(!path[0])return -1;return copy_cwd(p->cwd,path);}
+int process_setcwd(pid_t pid,const char*path){PROCESS_GUARD();rix_process_t*p=process_lookup(pid);uint64_t va=(uint64_t)(uintptr_t)path;/* Only kernel buffers may reach this internal API. */if(!p||!path||va<0x100000ULL||va>=0x10000000ULL||!vmm_translate(va))return -1;if(!path[0])return -1;return copy_cwd(p->cwd,path);}
 uint32_t process_uid(pid_t pid){rix_process_t*p=process_lookup(pid);return p?p->uid:UINT32_MAX;}
 uint32_t process_gid(pid_t pid){rix_process_t*p=process_lookup(pid);return p?p->gid:UINT32_MAX;}
-int process_setuid(pid_t pid,uint32_t uid){rix_process_t*p=process_lookup(pid);size_t index=(size_t)pid;if(!p||index>=RIX_PROCESS_MAX)return -1;if(p->uid==0&&((p->capabilities&RIX_CAP_SETUID)==0))return -1;if(p->uid==0){real_uids[index]=uid;saved_uids[index]=uid;p->uid=uid;if(uid!=0)p->capabilities=0;return 0;}
+int process_setuid(pid_t pid,uint32_t uid){PROCESS_GUARD();rix_process_t*p=process_lookup(pid);size_t index=(size_t)pid;if(!p||index>=RIX_PROCESS_MAX)return -1;if(p->uid==0&&((p->capabilities&RIX_CAP_SETUID)==0))return -1;if(p->uid==0){real_uids[index]=uid;saved_uids[index]=uid;p->uid=uid;if(uid!=0)p->capabilities=0;return 0;}
 if(uid==real_uids[index]||uid==saved_uids[index]){p->uid=uid;return 0;}return -1;}
-int process_setgid(pid_t pid,uint32_t gid){rix_process_t*p=process_lookup(pid);size_t index=(size_t)pid;if(!p||index>=RIX_PROCESS_MAX)return -1;if(p->uid==0&&((p->capabilities&RIX_CAP_SETGID)==0))return -1;if(p->uid==0){real_gids[index]=gid;saved_gids[index]=gid;p->gid=gid;return 0;}
+int process_setgid(pid_t pid,uint32_t gid){PROCESS_GUARD();rix_process_t*p=process_lookup(pid);size_t index=(size_t)pid;if(!p||index>=RIX_PROCESS_MAX)return -1;if(p->uid==0&&((p->capabilities&RIX_CAP_SETGID)==0))return -1;if(p->uid==0){real_gids[index]=gid;saved_gids[index]=gid;p->gid=gid;return 0;}
 if(gid==real_gids[index]||gid==saved_gids[index]){p->gid=gid;return 0;}return -1;}
 int process_in_group(pid_t pid,uint32_t gid){rix_process_t*p=process_lookup(pid);if(!p)return 0;if(p->gid==gid)return 1;size_t index=(size_t)p->pid;if(index<RIX_PROCESS_MAX)for(size_t i=0;i<supplementary_counts[index];i++)if(supplementary_groups[index][i]==gid)return 1;return 0;}
-int process_getgroups(pid_t pid,uint32_t*groups,size_t capacity,size_t*count){rix_process_t*p=process_lookup(pid);size_t index=(size_t)pid;if(!p||!count||index>=RIX_PROCESS_MAX||(capacity&&capacity<supplementary_counts[index])||(!groups&&capacity))return -1;if(groups&&capacity)for(size_t i=0;i<supplementary_counts[index];i++)groups[i]=supplementary_groups[index][i];*count=supplementary_counts[index];return 0;}
-int process_setgroups(pid_t pid,const uint32_t*groups,size_t count){rix_process_t*p=process_lookup(pid);size_t index=(size_t)pid;if(!p||p->uid!=0||(p->capabilities&RIX_CAP_SETGID)==0||index>=RIX_PROCESS_MAX||count>RIX_PROCESS_GROUP_MAX||(count&&!groups))return -1;
+int process_getgroups(pid_t pid,uint32_t*groups,size_t capacity,size_t*count){PROCESS_GUARD();rix_process_t*p=process_lookup(pid);size_t index=(size_t)pid;if(!p||!count||index>=RIX_PROCESS_MAX||(capacity&&capacity<supplementary_counts[index])||(!groups&&capacity))return -1;if(groups&&capacity)for(size_t i=0;i<supplementary_counts[index];i++)groups[i]=supplementary_groups[index][i];*count=supplementary_counts[index];return 0;}
+int process_setgroups(pid_t pid,const uint32_t*groups,size_t count){PROCESS_GUARD();rix_process_t*p=process_lookup(pid);size_t index=(size_t)pid;if(!p||p->uid!=0||(p->capabilities&RIX_CAP_SETGID)==0||index>=RIX_PROCESS_MAX||count>RIX_PROCESS_GROUP_MAX||(count&&!groups))return -1;
 for(size_t i=0;i<count;i++){
         supplementary_groups[index][i]=groups[i];
     }
     supplementary_counts[index]=(uint32_t)count;
     return 0;
 }
-int process_apply_exec_credentials(pid_t pid,uint32_t uid,uint32_t gid,int setuid_bit,int setgid_bit){rix_process_t*p=process_lookup(pid);size_t index=(size_t)pid;if(!p||index>=RIX_PROCESS_MAX)return -1;if(setuid_bit){p->uid=uid;saved_uids[index]=uid;}if(setgid_bit){p->gid=gid;saved_gids[index]=gid;}if(setuid_bit||setgid_bit)p->capabilities=0;return 0;}
-int process_create(const char*name,pid_t parent,pid_t*out_pid){if(!name||!name[0]||(parent&& !process_lookup(parent)))return -1;for(size_t i=1;i<RIX_PROCESS_MAX;i++)if(table[i].state==RIX_PROC_UNUSED){pid_t pid=allocate_pid();if(!pid)return -1;clear_process(&table[i]);supplementary_counts[i]=0;audit_uids[i]=0;real_uids[i]=saved_uids[i]=real_gids[i]=saved_gids[i]=0;table[i].pid=pid;table[i].parent=parent;rix_process_t*pp=parent?process_lookup(parent):NULL;table[i].process_group=pp?pp->process_group:pid;table[i].session=pp?pp->session:pid;if(pp){copy_cwd(table[i].cwd,pp->cwd);table[i].uid=pp->uid;table[i].gid=pp->gid;size_t parent_index=(size_t)parent;if(parent_index<RIX_PROCESS_MAX){real_uids[i]=real_uids[parent_index];saved_uids[i]=saved_uids[parent_index];real_gids[i]=real_gids[parent_index];saved_gids[i]=saved_gids[parent_index];audit_uids[i]=audit_uids[parent_index];supplementary_counts[i]=supplementary_counts[parent_index];for(size_t g=0;g<supplementary_counts[i];g++)supplementary_groups[i][g]=supplementary_groups[parent_index][g];}}else audit_uids[i]=table[i].uid;table[i].state=RIX_PROC_SLEEPING;table[i].capabilities=pp?pp->capabilities:(parent==0?RIX_CAP_ALL:0);if(parent&&vfs_clone_fds(parent,pid)!=0){(void)vfs_close_all(pid);clear_process(&table[i]);return -1;}copy_name(table[i].name,name);live_count++;if(out_pid)*out_pid=pid;return 0;}return -1;}
-int process_create_user(const char*name,pid_t parent,const void*image,uint64_t image_size,pid_t*out_pid,uint64_t*out_entry,uint64_t*out_user_stack){
+int process_apply_exec_credentials(pid_t pid,uint32_t uid,uint32_t gid,int setuid_bit,int setgid_bit){PROCESS_GUARD();rix_process_t*p=process_lookup(pid);size_t index=(size_t)pid;if(!p||index>=RIX_PROCESS_MAX)return -1;if(setuid_bit){p->uid=uid;saved_uids[index]=uid;}if(setgid_bit){p->gid=gid;saved_gids[index]=gid;}if(setuid_bit||setgid_bit)p->capabilities=0;return 0;}
+static int process_create_locked(const char*name,pid_t parent,pid_t*out_pid){if(!name||!name[0]||(parent&& !process_lookup(parent)))return -1;for(size_t i=1;i<RIX_PROCESS_MAX;i++)if(table[i].state==RIX_PROC_UNUSED){pid_t pid=allocate_pid();if(!pid)return -1;clear_process(&table[i]);supplementary_counts[i]=0;audit_uids[i]=0;real_uids[i]=saved_uids[i]=real_gids[i]=saved_gids[i]=0;table[i].pid=pid;table[i].parent=parent;rix_process_t*pp=parent?process_lookup(parent):NULL;table[i].process_group=pp?pp->process_group:pid;table[i].session=pp?pp->session:pid;if(pp){copy_cwd(table[i].cwd,pp->cwd);table[i].uid=pp->uid;table[i].gid=pp->gid;size_t parent_index=(size_t)parent;if(parent_index<RIX_PROCESS_MAX){real_uids[i]=real_uids[parent_index];saved_uids[i]=saved_uids[parent_index];real_gids[i]=real_gids[parent_index];saved_gids[i]=saved_gids[parent_index];audit_uids[i]=audit_uids[parent_index];supplementary_counts[i]=supplementary_counts[parent_index];for(size_t g=0;g<supplementary_counts[i];g++)supplementary_groups[i][g]=supplementary_groups[parent_index][g];}}else audit_uids[i]=table[i].uid;table[i].state=RIX_PROC_SLEEPING;table[i].capabilities=pp?pp->capabilities:(parent==0?RIX_CAP_ALL:0);if(parent&&vfs_clone_fds(parent,pid)!=0){(void)vfs_close_all(pid);clear_process(&table[i]);return -1;}copy_name(table[i].name,name);live_count++;if(out_pid)*out_pid=pid;return 0;}return -1;}
+int process_create(const char*name,pid_t parent,pid_t*out_pid){PROCESS_GUARD();return process_create_locked(name,parent,out_pid);}
+int process_create_user(const char*name,pid_t parent,const void*image,uint64_t image_size,pid_t*out_pid,uint64_t*out_entry,uint64_t*out_user_stack){PROCESS_GUARD();
  /* Staged diagnostics: distinct rc per stage (-1 args, -2 process-create,
   * -3 session/lookup, -4 address-space, -5 user-stack alloc, -6 user-stack
   * map, -7 image, -8 kernel-stack). Callers only test !=0. */
  if(!name||!name[0]||!image||!image_size||!out_pid||!out_entry||!out_user_stack||(parent&&!process_lookup(parent))){kernel_log("DEBUG: process_create_user fail stage=args\r\n");return -1;}
- pid_t pid;if(process_create(name,parent,&pid)!=0){kernel_log("DEBUG: process_create_user fail stage=process-create\r\n");return -2;}
- if(parent==0&&session_register(pid,pid,0)!=0){kernel_log("DEBUG: process_create_user fail stage=session pid=");kernel_log_dec(pid);kernel_log("\r\n");(void)process_exit(pid,127);return -3;}
+ pid_t pid;if(process_create_locked(name,parent,&pid)!=0){kernel_log("DEBUG: process_create_user fail stage=process-create\r\n");return -2;}
+ if(parent==0&&session_register(pid,pid,0)!=0){kernel_log("DEBUG: process_create_user fail stage=session pid=");kernel_log_dec(pid);kernel_log("\r\n");(void)process_exit_locked(pid,127);return -3;}
  rix_process_t*p=process_lookup(pid);if(!p){kernel_log("DEBUG: process_create_user fail stage=lookup\r\n");return -3;}
  kernel_log("DEBUG: process_create success pid=");kernel_log_dec(pid);kernel_log("\r\n");
  kernel_log("DEBUG: address space create begin\r\n");
@@ -78,10 +99,10 @@ int process_create_user(const char*name,pid_t parent,const void*image,uint64_t i
  kernel_log("DEBUG: process_create_user success pid=");kernel_log_dec(pid);kernel_log(" pml4=");kernel_log_hex(p->address_space.pml4_phys);kernel_log(" entry=");kernel_log_hex(elf.entry);kernel_log("\r\n");
  *out_pid=pid;*out_entry=elf.entry;*out_user_stack=USER_STACK_TOP;return 0;
 fail_user:(void)vfs_close_all(pid);address_space_destroy(&p->address_space);if(p->kernel_stack)pmm_free_page_range(p->kernel_stack,KERNEL_STACK_PAGES);clear_process(p);if(live_count)live_count--;return urc;}
-int process_fork(pid_t parent,uint64_t user_rip,uint64_t user_rsp,pid_t *out_pid){
+int process_fork(pid_t parent,uint64_t user_rip,uint64_t user_rsp,pid_t *out_pid){PROCESS_GUARD();
     if (!out_pid || !user_rip || !user_rsp) return -1;
     rix_process_t *pp=process_lookup(parent);if(!pp||!pp->address_space.pml4_phys)return -1;
-    pid_t child;if(process_create("fork-child",parent,&child)!=0)return -1;
+    pid_t child;if(process_create_locked("fork-child",parent,&child)!=0)return -1;
     rix_process_t *cp=process_lookup(child);if(!cp)return -1;
     if(address_space_clone(&pp->address_space,&cp->address_space)!=0)goto fail;
     uint64_t ks=pmm_alloc_pages(KERNEL_STACK_PAGES);if(!ks)goto fail;
@@ -171,7 +192,7 @@ static int stack_build_args(const rix_address_space_t *as, uint64_t *out_sp,
 int process_exec_user_with_args(pid_t pid, const void *image, uint64_t image_size,
                                 const char *const *argv, size_t argc,
                                 const char *const *envp, size_t envc,
-                                uint64_t *out_entry, uint64_t *out_user_stack) {
+                                uint64_t *out_entry, uint64_t *out_user_stack) {PROCESS_GUARD();
     if (!image || !image_size || !out_entry || !out_user_stack ||
         argc > RIX_PROCESS_ARG_MAX || envc > RIX_PROCESS_ARG_MAX ||
         (argc && !argv) ||
@@ -207,7 +228,7 @@ fail:
 }
 
 int process_exec_user(pid_t pid, const void *image, uint64_t image_size,
-                      uint64_t *out_entry, uint64_t *out_user_stack) {
+                      uint64_t *out_entry, uint64_t *out_user_stack) {PROCESS_GUARD();
     const char *argv[] = { "program" };
     return process_exec_user_with_args(pid, image, image_size, argv, 1u,
                                        NULL, 0u, out_entry, out_user_stack);
@@ -306,7 +327,7 @@ static int cr3_probe_root(uint64_t np){
 }
 static volatile int process_user_entry_deferred;
 int process_activate_user_entry(pid_t pid){process_user_entry_deferred=1;int rc=process_activate(pid);process_user_entry_deferred=0;return rc;}
-int process_activate(pid_t pid){if(pid==0){uint64_t kb=vmm_kernel_pml4();cr3trace_push(1,0,kb,read_cr3_hw());current_pid=0;vmm_switch_pml4(kb);cr3trace_push(2,0,kb,read_cr3_hw());return 0;}{static unsigned n=0;if(n<2){kernel_log("DEBUG: process_activate begin\r\n");n++;}}rix_process_t*p=process_lookup(pid);{static unsigned n=0;if(n<2){kernel_log("DEBUG: process lookup done\r\n");n++;}}if(!p||p->state==RIX_PROC_UNUSED||p->state==RIX_PROC_ZOMBIE||!p->address_space.pml4_phys||!p->kernel_stack)return -1;{static unsigned n=0;if(n<1){kernel_log("DEBUG: address space found pid=");kernel_log_dec(p->pid);kernel_log(" pml4=");kernel_log_hex(p->address_space.pml4_phys);kernel_log(" kstack=");kernel_log_hex(p->kernel_stack);kernel_log("\r\nDEBUG: current process=");kernel_log_dec(process_current());kernel_log(" current cr3=");kernel_log_hex(read_cr3_hw());kernel_log(" kernel pml4=");kernel_log_hex(vmm_kernel_pml4());kernel_log("\r\nDEBUG: target pml4=");kernel_log_hex(p->address_space.pml4_phys);kernel_log("\r\n");serial_drain();n++;}}{static unsigned n=0;if(n<1){uint64_t oc=read_cr3_hw();if(cr3_diagnose_target(p,oc)!=0){kernel_log("DEBUG: process_activate REFUSED invalid target CR3\r\n");serial_drain();return -1;}n++;}}current_pid=pid;tss_set_rsp0(p->kernel_stack+p->kernel_stack_size);{static unsigned n=0;if(n<2){kernel_log("DEBUG: switching CR3\r\n");serial_drain();n++;}}
+static int process_activate_locked(pid_t pid){if(pid==0){uint64_t kb=vmm_kernel_pml4();cr3trace_push(1,0,kb,read_cr3_hw());current_pid=0;vmm_switch_pml4(kb);cr3trace_push(2,0,kb,read_cr3_hw());return 0;}{static unsigned n=0;if(n<2){kernel_log("DEBUG: process_activate begin\r\n");n++;}}rix_process_t*p=process_lookup(pid);{static unsigned n=0;if(n<2){kernel_log("DEBUG: process lookup done\r\n");n++;}}if(!p||p->state==RIX_PROC_UNUSED||p->state==RIX_PROC_ZOMBIE||!p->address_space.pml4_phys||!p->kernel_stack)return -1;{static unsigned n=0;if(n<1){kernel_log("DEBUG: address space found pid=");kernel_log_dec(p->pid);kernel_log(" pml4=");kernel_log_hex(p->address_space.pml4_phys);kernel_log(" kstack=");kernel_log_hex(p->kernel_stack);kernel_log("\r\nDEBUG: current process=");kernel_log_dec(process_current());kernel_log(" current cr3=");kernel_log_hex(read_cr3_hw());kernel_log(" kernel pml4=");kernel_log_hex(vmm_kernel_pml4());kernel_log("\r\nDEBUG: target pml4=");kernel_log_hex(p->address_space.pml4_phys);kernel_log("\r\n");serial_drain();n++;}}{static unsigned n=0;if(n<1){uint64_t oc=read_cr3_hw();if(cr3_diagnose_target(p,oc)!=0){kernel_log("DEBUG: process_activate REFUSED invalid target CR3\r\n");serial_drain();return -1;}n++;}}current_pid=pid;tss_set_rsp0(p->kernel_stack+p->kernel_stack_size);{static unsigned n=0;if(n<2){kernel_log("DEBUG: switching CR3\r\n");serial_drain();n++;}}
 #if RIX_DEBUG_NO_CR3_SWITCH
 {static unsigned n=0;if(n<2){kernel_log("DEBUG: process_activate CR3 SWITCH SKIPPED\r\n");kernel_log("DEBUG: CR3 switch skipped\r\n");serial_drain();n++;}}
 #else
@@ -423,30 +444,32 @@ loadval=read_cr3_hw();
  vmm_track_pml4(loadval);cr3trace_push(2,(uint64_t)pid,loadval,read_cr3_hw());{static unsigned n=0;if(n<2){kernel_log("DEBUG: C3 after-track-trace\r\n");serial_drain();n++;}}{static unsigned n=0;if(n<2){uint64_t hw=read_cr3_hw();kernel_log("DEBUG: SW#");kernel_log_dec(cr3_switch_seq);kernel_log(" CR3 load returned cur=");kernel_log_hex(hw);kernel_log(hw==loadval?" SW=SYNC\r\n":" SW=MISMATCH\r\n");kernel_log("DEBUG: CR3 switched\r\n");serial_drain();n++;}}}
 #endif
 {static unsigned n=0;if(n<2){kernel_log("DEBUG: CR3 switched cur=");kernel_log_hex(read_cr3_hw());kernel_log("\r\n");serial_drain();n++;}}{static unsigned m=0;if(m<2){kernel_log("DEBUG: process_activate done\r\n");serial_drain();m++;}}return 0;}
-int process_set_state(pid_t pid,rix_process_state_t state){rix_process_t*p=process_lookup(pid);if(!p||state==RIX_PROC_UNUSED)return -1;rix_process_state_t old=p->state;p->state=state;if(state==RIX_PROC_RUNNING&&process_activate(pid)!=0){p->state=old;return -1;}return 0;}
-int process_exit(pid_t pid,uint64_t status){rix_process_t*p=process_lookup(pid);pid_t session;if(!p||pid==0||p->state==RIX_PROC_ZOMBIE)return -1;session=p->session;(void)vfs_close_all(pid);p->exit_status=status;p->state=RIX_PROC_ZOMBIE;if(current_pid==pid)current_pid=0;session_drop_if_empty(session);return 0;}
-int process_set_group(pid_t pid,pid_t process_group){rix_process_t*p=process_lookup(pid);if(!p||!process_group)return -1;p->process_group=process_group;return 0;}
-int process_set_session(pid_t pid,pid_t session){rix_process_t*p=process_lookup(pid);if(!p||!session)return -1;p->session=session;return 0;}
+int process_activate(pid_t pid){PROCESS_GUARD();return process_activate_locked(pid);}
+int process_set_state(pid_t pid,rix_process_state_t state){PROCESS_GUARD();rix_process_t*p=process_lookup(pid);if(!p||state==RIX_PROC_UNUSED)return -1;rix_process_state_t old=p->state;p->state=state;if(state==RIX_PROC_RUNNING&&process_activate_locked(pid)!=0){p->state=old;return -1;}return 0;}
+static int process_exit_locked(pid_t pid,uint64_t status){rix_process_t*p=process_lookup(pid);pid_t session;if(!p||pid==0||p->state==RIX_PROC_ZOMBIE)return -1;session=p->session;(void)vfs_close_all(pid);p->exit_status=status;p->state=RIX_PROC_ZOMBIE;if(current_pid==pid)current_pid=0;session_drop_if_empty(session);return 0;}
+int process_exit(pid_t pid,uint64_t status){PROCESS_GUARD();return process_exit_locked(pid,status);}
+int process_set_group(pid_t pid,pid_t process_group){PROCESS_GUARD();rix_process_t*p=process_lookup(pid);if(!p||!process_group)return -1;p->process_group=process_group;return 0;}
+int process_set_session(pid_t pid,pid_t session){PROCESS_GUARD();rix_process_t*p=process_lookup(pid);if(!p||!session)return -1;p->session=session;return 0;}
 int process_get_session(pid_t pid,pid_t*session){rix_process_t*p=process_lookup(pid);if(!p||!session||p->state==RIX_PROC_UNUSED)return -1;*session=p->session;return 0;}
 int process_is_session_leader(pid_t pid){rix_process_t*p=process_lookup(pid);return p&&p->state!=RIX_PROC_UNUSED&&p->state!=RIX_PROC_ZOMBIE&&p->session==pid;}
-int process_create_session(pid_t pid,pid_t*session){rix_process_t*p=process_lookup(pid);pid_t old_session,old_group;if(!p||p->state==RIX_PROC_UNUSED||p->state==RIX_PROC_ZOMBIE||p->process_group==pid)return -1;old_session=p->session;old_group=p->process_group;p->session=pid;p->process_group=pid;if(session_register(pid,pid,p->uid)!=0){p->session=old_session;p->process_group=old_group;return -1;}if(session)*session=pid;return 0;}
-int process_logout_session(pid_t pid,uint64_t status){rix_process_t*p=process_lookup(pid);if(!p||p->state==RIX_PROC_UNUSED||p->state==RIX_PROC_ZOMBIE||!p->session)return -1;pid_t session=p->session;for(size_t i=1;i<RIX_PROCESS_MAX;i++){rix_process_t*q=&table[i];if(q->state!=RIX_PROC_UNUSED&&q->state!=RIX_PROC_ZOMBIE&&q->pid!=pid&&q->session==session)(void)process_exit(q->pid,status);}return 0;}
-int process_leave_session(pid_t pid){rix_process_t*p=process_lookup(pid);pid_t session;if(!p||p->state==RIX_PROC_UNUSED||p->state==RIX_PROC_ZOMBIE)return -1;session=p->session;p->session=0;p->process_group=pid;session_drop_if_empty(session);return 0;}
-int process_list_sessions(rix_session_info_t*out,size_t capacity,size_t*count){size_t total=0,index=0;if(!count||(!out&&capacity))return-1;for(size_t i=0;i<RIX_SESSION_MAX;i++)if(sessions[i].session)total++;if(capacity<total)return-1;for(size_t i=0;i<RIX_SESSION_MAX;i++)if(sessions[i].session){session_refresh_tty(&sessions[i]);out[index++]=sessions[i];}*count=total;return 0;}
-int process_list_processes(rix_process_info_t*out,size_t capacity,size_t*count){size_t total=0,index=0;if(!count||(!out&&capacity))return-1;for(size_t i=0;i<RIX_PROCESS_MAX;i++)if(table[i].state!=RIX_PROC_UNUSED)total++;if(capacity<total)return-1;for(size_t i=0;i<RIX_PROCESS_MAX;i++){rix_process_t*p=&table[i];if(p->state==RIX_PROC_UNUSED)continue;rix_process_info_t*slot=&out[index++];slot->pid=p->pid;slot->parent=p->parent;slot->uid=p->uid;slot->gid=p->gid;slot->state=(uint32_t)p->state;slot->session=p->session;size_t n=bounded_strlen(p->name);for(size_t k=0;k<n;k++)slot->name[k]=p->name[k];slot->name[n]=0;}*count=total;return 0;}
-int process_signal_group(pid_t process_group,unsigned signal){if(!process_group||signal<1u||signal>64u)return -1;uint64_t bit=1ULL<<(signal-1u);int sent=0;for(size_t i=0;i<RIX_PROCESS_MAX;i++){rix_process_t*p=&table[i];if(p->state!=RIX_PROC_UNUSED&&p->state!=RIX_PROC_ZOMBIE&&p->process_group==process_group){p->signal_pending|=bit;if(p->state==RIX_PROC_SLEEPING&&(p->signal_mask&bit)==0)p->state=RIX_PROC_RUNNING;sent++;}}return sent?0:-1;}
-int process_wait(pid_t parent,pid_t wanted,uint64_t*status,pid_t*child_pid){if(!status||!child_pid)return -1;rix_process_t*match=NULL;int has_child=0;for(size_t i=1;i<RIX_PROCESS_MAX;i++){rix_process_t*p=&table[i];if(p->state!=RIX_PROC_UNUSED&&p->parent==parent&&(wanted==(pid_t)-1||p->pid==wanted)){has_child=1;if(p->state==RIX_PROC_ZOMBIE){match=p;break;}}}if(!has_child)return 2;if(!match)return 1;pid_t session=match->session;*status=match->exit_status;*child_pid=match->pid;(void)vfs_close_all(match->pid);address_space_destroy(&match->address_space);if(match->kernel_stack)pmm_free_page_range(match->kernel_stack,KERNEL_STACK_PAGES);clear_process(match);audit_uids[(size_t)match->pid]=0;if(live_count)live_count--;session_drop_if_empty(session);return 0;}
+int process_create_session(pid_t pid,pid_t*session){PROCESS_GUARD();rix_process_t*p=process_lookup(pid);pid_t old_session,old_group;if(!p||p->state==RIX_PROC_UNUSED||p->state==RIX_PROC_ZOMBIE||p->process_group==pid)return -1;old_session=p->session;old_group=p->process_group;p->session=pid;p->process_group=pid;if(session_register(pid,pid,p->uid)!=0){p->session=old_session;p->process_group=old_group;return -1;}if(session)*session=pid;return 0;}
+int process_logout_session(pid_t pid,uint64_t status){PROCESS_GUARD();rix_process_t*p=process_lookup(pid);if(!p||p->state==RIX_PROC_UNUSED||p->state==RIX_PROC_ZOMBIE||!p->session)return -1;pid_t session=p->session;for(size_t i=1;i<RIX_PROCESS_MAX;i++){rix_process_t*q=&table[i];if(q->state!=RIX_PROC_UNUSED&&q->state!=RIX_PROC_ZOMBIE&&q->pid!=pid&&q->session==session)(void)process_exit_locked(q->pid,status);}return 0;}
+int process_leave_session(pid_t pid){PROCESS_GUARD();rix_process_t*p=process_lookup(pid);pid_t session;if(!p||p->state==RIX_PROC_UNUSED||p->state==RIX_PROC_ZOMBIE)return -1;session=p->session;p->session=0;p->process_group=pid;session_drop_if_empty(session);return 0;}
+int process_list_sessions(rix_session_info_t*out,size_t capacity,size_t*count){PROCESS_GUARD();size_t total=0,index=0;if(!count||(!out&&capacity))return-1;for(size_t i=0;i<RIX_SESSION_MAX;i++)if(sessions[i].session)total++;if(capacity<total)return-1;for(size_t i=0;i<RIX_SESSION_MAX;i++)if(sessions[i].session){session_refresh_tty(&sessions[i]);out[index++]=sessions[i];}*count=total;return 0;}
+int process_list_processes(rix_process_info_t*out,size_t capacity,size_t*count){PROCESS_GUARD();size_t total=0,index=0;if(!count||(!out&&capacity))return-1;for(size_t i=0;i<RIX_PROCESS_MAX;i++)if(table[i].state!=RIX_PROC_UNUSED)total++;if(capacity<total)return-1;for(size_t i=0;i<RIX_PROCESS_MAX;i++){rix_process_t*p=&table[i];if(p->state==RIX_PROC_UNUSED)continue;rix_process_info_t*slot=&out[index++];slot->pid=p->pid;slot->parent=p->parent;slot->uid=p->uid;slot->gid=p->gid;slot->state=(uint32_t)p->state;slot->session=p->session;size_t n=bounded_strlen(p->name);for(size_t k=0;k<n;k++)slot->name[k]=p->name[k];slot->name[n]=0;}*count=total;return 0;}
+int process_signal_group(pid_t process_group,unsigned signal){PROCESS_GUARD();if(!process_group||signal<1u||signal>64u)return -1;uint64_t bit=1ULL<<(signal-1u);int sent=0;for(size_t i=0;i<RIX_PROCESS_MAX;i++){rix_process_t*p=&table[i];if(p->state!=RIX_PROC_UNUSED&&p->state!=RIX_PROC_ZOMBIE&&p->process_group==process_group){p->signal_pending|=bit;if(p->state==RIX_PROC_SLEEPING&&(p->signal_mask&bit)==0)p->state=RIX_PROC_RUNNING;sent++;}}return sent?0:-1;}
+int process_wait(pid_t parent,pid_t wanted,uint64_t*status,pid_t*child_pid){PROCESS_GUARD();if(!status||!child_pid)return -1;rix_process_t*match=NULL;int has_child=0;for(size_t i=1;i<RIX_PROCESS_MAX;i++){rix_process_t*p=&table[i];if(p->state!=RIX_PROC_UNUSED&&p->parent==parent&&(wanted==(pid_t)-1||p->pid==wanted)){has_child=1;if(p->state==RIX_PROC_ZOMBIE){match=p;break;}}}if(!has_child)return 2;if(!match)return 1;pid_t session=match->session;*status=match->exit_status;*child_pid=match->pid;(void)vfs_close_all(match->pid);address_space_destroy(&match->address_space);if(match->kernel_stack)pmm_free_page_range(match->kernel_stack,KERNEL_STACK_PAGES);clear_process(match);audit_uids[(size_t)match->pid]=0;if(live_count)live_count--;session_drop_if_empty(session);return 0;}
 
 int capability_valid(uint64_t mask){return mask!=0u&&(mask&~RIX_CAP_ALL)==0u;}
 int process_has_capability(pid_t pid,uint64_t capability){rix_process_t*p=process_lookup(pid);return p&&capability_valid(capability)&&((p->capabilities&capability)==capability);}
 int process_get_capabilities(pid_t pid,uint64_t*out){rix_process_t*p=process_lookup(pid);if(!p||!out)return -1;*out=p->capabilities;return 0;}
-int process_drop_capabilities(pid_t pid,uint64_t mask){rix_process_t*p=process_lookup(pid);if(!p||!capability_valid(mask))return -1;p->capabilities&=~mask;return 0;}
-int process_delegate_capabilities(pid_t parent,pid_t child,uint64_t mask){rix_process_t*p=process_lookup(parent),*c=process_lookup(child);if(!p||!c||parent==child||c->state==RIX_PROC_UNUSED||c->state==RIX_PROC_ZOMBIE||c->parent!=parent||!capability_valid(mask)||!process_has_capability(parent,RIX_CAP_DELEGATE)||!process_has_capability(parent,mask)||(mask&RIX_CAP_DELEGATE)||(c->capabilities&mask))return -1;c->capabilities|=mask;p->capabilities&=~mask;return 0;}
+int process_drop_capabilities(pid_t pid,uint64_t mask){PROCESS_GUARD();rix_process_t*p=process_lookup(pid);if(!p||!capability_valid(mask))return -1;p->capabilities&=~mask;return 0;}
+int process_delegate_capabilities(pid_t parent,pid_t child,uint64_t mask){PROCESS_GUARD();rix_process_t*p=process_lookup(parent),*c=process_lookup(child);if(!p||!c||parent==child||c->state==RIX_PROC_UNUSED||c->state==RIX_PROC_ZOMBIE||c->parent!=parent||!capability_valid(mask)||!process_has_capability(parent,RIX_CAP_DELEGATE)||!process_has_capability(parent,mask)||(mask&RIX_CAP_DELEGATE)||(c->capabilities&mask))return -1;c->capabilities|=mask;p->capabilities&=~mask;return 0;}
 int process_get_audit_uid(pid_t pid,uint32_t*out){rix_process_t*p=process_lookup(pid);size_t index=(size_t)pid;if(!p||!out||index>=RIX_PROCESS_MAX)return -1;*out=audit_uids[index];return 0;}
-int process_set_audit_uid(pid_t pid,uint32_t uid){rix_process_t*p=process_lookup(pid);size_t index=(size_t)pid;if(!p||index>=RIX_PROCESS_MAX||!process_has_capability(pid,RIX_CAP_AUDIT_ADMIN))return -1;audit_uids[index]=uid;return 0;}
+int process_set_audit_uid(pid_t pid,uint32_t uid){PROCESS_GUARD();rix_process_t*p=process_lookup(pid);size_t index=(size_t)pid;if(!p||index>=RIX_PROCESS_MAX||!process_has_capability(pid,RIX_CAP_AUDIT_ADMIN))return -1;audit_uids[index]=uid;return 0;}
 
 
-int process_brk(pid_t pid, uint64_t requested, uint64_t *out_break) {
+int process_brk(pid_t pid, uint64_t requested, uint64_t *out_break) {PROCESS_GUARD();
     rix_process_t *p = process_lookup(pid);
     if (!p || !p->address_space.pml4_phys || !p->heap_base || !out_break) return -1;
     if (requested == 0) { *out_break = p->heap_break; return 0; }

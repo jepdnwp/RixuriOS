@@ -357,17 +357,21 @@ __attribute__((noreturn)) void scheduler_ap_idle(void){
         /* E2 cooperative pick (plain lock: no IRQ-context caller takes
          * sched_lock — PIT only ticks, IPI handlers only ack/EOI, faults
          * halt — so IF=1 here is safe; see P1-revert for the full story). */
-        rix_spin_lock(&sched_lock);
+        /* E2 cooperative pick. sched_lock via irqsave (not plain): a PIT
+         * tick may preempt this window once timer preemption lands, and
+         * a plain spin here would deadlock against it. */
+        uint64_t ap_irq;
+        rix_spin_lock_irqsave(&sched_lock, &ap_irq);
         uint32_t old=cpu_current[me];
         uint32_t next=sched_select_locked(me,old);
         if(next==old||tasks[next].state!=TASK_RUNNABLE){
-            rix_spin_unlock(&sched_lock);
+            rix_spin_unlock_irqrestore(&sched_lock, ap_irq);
             __asm__ volatile("hlt" ::: "memory");
             continue;
         }
         tasks[next].state=TASK_RUNNING;cpu_current[me]=next;
         cr3trace_push(3,(uint64_t)tasks[old].id,(uint64_t)tasks[next].id,0);
-        rix_spin_unlock(&sched_lock);
+        rix_spin_unlock_irqrestore(&sched_lock, ap_irq);
         rix_context_switch(&cpu_idle_rsp[me],tasks[next].rsp);
     }
 }
