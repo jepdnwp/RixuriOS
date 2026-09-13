@@ -70,6 +70,11 @@ x86_enter_user:
 .Luser_post_cr3:
     .asciz "BOOT: USER ENTRY C post-cr3\r\n"
 
+/* NOTE: code below must stay in .text. The .rodata section above is only
+ * for the log strings; entry trampolines execute with NX enforced on
+ * .rodata once kernel section permissions apply, so they must never
+ * fall through into a data section. */
+.text
 .global x86_enter_user_return
 .type x86_enter_user_return,@function
 x86_enter_user_return:
