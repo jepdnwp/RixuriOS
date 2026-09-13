@@ -40,5 +40,21 @@ int main(void) {
     assert(pmm_is_in_use(page));
     pmm_free_page(page);
     assert(pmm_free_pages() == free_before);
+    /* Double free is a harmless no-op; counts stay stable. */
+    pmm_free_page(page);
+    assert(pmm_free_pages() == free_before);
+
+    /* Contiguous multi-page alloc, range free, and edge rejections. */
+    uint64_t base = pmm_alloc_pages(4u);
+    assert(base != 0u && (base & 0xFFFu) == 0u);
+    for (size_t i = 0; i < 4u; ++i)
+        assert(pmm_is_in_use(base + i * 0x1000u));
+    assert(pmm_free_pages() == free_before - 4u);
+    pmm_free_page_range(base, 4u);
+    assert(pmm_free_pages() == free_before);
+    assert(pmm_alloc_pages(0u) == 0u);
+    assert(pmm_alloc_pages(1u << 30) == 0u);
+    assert(pmm_alloc_page_below(0x1000u) == 0u);
+    assert(pmm_free_pages() == free_before);
     return 0;
 }

@@ -1,6 +1,13 @@
 #include "pmm.h"
+#include "../sync/lock.h"
 #include <stddef.h>
 #include <stdint.h>
+
+/* Locking: all mutators and counter/predicate readers take pmm_lock
+ * with IRQs saved (PMM is reached from process context today, but
+ * allocator paths must stay IRQ-safe by construction). The heap sits
+ * ABOVE this lock (heap -> pmm); PMM never calls back into the heap,
+ * so no nesting exists. pmm_init runs single-threaded pre-SMP. */
 
 #define PMM_MAX_PHYS RIXURI_MAX_PHYS_BYTES
 #define PMM_MAX_PAGES RIXURI_MAX_PAGES
@@ -13,6 +20,7 @@ static uint64_t managed_bitmap[RIXURI_BITMAP_WORDS];
 static uint64_t reserved_bitmap[RIXURI_BITMAP_WORDS];
 static uint64_t total_pages_count;
 static uint64_t free_pages_count;
+static rix_spinlock_t pmm_lock;
 /* Saved UEFI map for post-init region queries (buffer is reserved at init
  * so it stays intact; identity-mapped low memory, readable under any CR3
  * that shares the low identity window). */
@@ -50,7 +58,7 @@ static void mark_range(uint64_t base,uint64_t pages,int freeable){
 }
 void pmm_init(const void*memory_map,uint64_t memory_map_size,uint64_t descriptor_size,uint64_t kernel_base,uint64_t kernel_end,uint64_t boot_info,uint64_t boot_info_size){
     for(size_t i=0;i<RIXURI_BITMAP_WORDS;i++){page_bitmap[i]=UINT64_MAX;managed_bitmap[i]=0;reserved_bitmap[i]=0;}
-    total_pages_count=free_pages_count=0;
+    total_pages_count=free_pages_count=0;rix_spin_init(&pmm_lock);
     if(!memory_map||descriptor_size<EFI_DESCRIPTOR_MIN_SIZE||descriptor_size>4096||memory_map_size<descriptor_size)return;
     saved_map=(const unsigned char*)memory_map;saved_map_size=memory_map_size;saved_desc_size=descriptor_size;
     uint64_t offset=0;
@@ -74,8 +82,9 @@ void pmm_init(const void*memory_map,uint64_t memory_map_size,uint64_t descriptor
     mark_range((uint64_t)(uintptr_t)memory_map,(memory_map_size+RIXURI_PAGE_SIZE-1ULL)/RIXURI_PAGE_SIZE,0);
 }
 uint64_t pmm_alloc_page_below(uint64_t max_exclusive){
+    uint64_t irq;rix_spin_lock_irqsave(&pmm_lock,&irq);
     if(max_exclusive>PMM_MAX_PHYS)max_exclusive=PMM_MAX_PHYS;
-    if(max_exclusive<RIXURI_PAGE_SIZE)return 0;
+    if(max_exclusive<RIXURI_PAGE_SIZE){rix_spin_unlock_irqrestore(&pmm_lock,irq);return 0;}
     uint64_t limit=(max_exclusive-1ULL)/RIXURI_PAGE_SIZE;
     for(uint64_t w=0;w<RIXURI_BITMAP_WORDS;w++){
         uint64_t first=w*64ULL;if(first>limit)break;
@@ -84,13 +93,15 @@ uint64_t pmm_alloc_page_below(uint64_t max_exclusive){
         if(!candidates)continue;
         unsigned bit=(unsigned)__builtin_ctzll(candidates);uint64_t page=first+bit;
         if(page>=PMM_MAX_PAGES||page>limit)continue;
-        page_bitmap[w]|=1ULL<<bit;if(free_pages_count)--free_pages_count;return page*RIXURI_PAGE_SIZE;
+        page_bitmap[w]|=1ULL<<bit;if(free_pages_count)--free_pages_count;
+        rix_spin_unlock_irqrestore(&pmm_lock,irq);return page*RIXURI_PAGE_SIZE;
     }
-    return 0;
+    rix_spin_unlock_irqrestore(&pmm_lock,irq);return 0;
 }
 uint64_t pmm_alloc_page(void){return pmm_alloc_page_below(PMM_MAX_PHYS);}
 uint64_t pmm_alloc_pages(size_t count){
     if(!count||count>PMM_MAX_PAGES)return 0;
+    uint64_t irq;rix_spin_lock_irqsave(&pmm_lock,&irq);
     for(uint64_t start=0;start+count<=PMM_MAX_PAGES;start++){
         int available=1;
         for(size_t i=0;i<count;i++){
@@ -103,9 +114,9 @@ uint64_t pmm_alloc_pages(size_t count){
             page_bitmap[word]|=bit;
         }
         free_pages_count-=count;
-        return start*RIXURI_PAGE_SIZE;
+        rix_spin_unlock_irqrestore(&pmm_lock,irq);return start*RIXURI_PAGE_SIZE;
     }
-    return 0;
+    rix_spin_unlock_irqrestore(&pmm_lock,irq);return 0;
 }
 void pmm_free_page_range(uint64_t physical_address,size_t count){
     if(!count||(physical_address&(RIXURI_PAGE_SIZE-1ULL))!=0)return;
@@ -114,34 +125,44 @@ void pmm_free_page_range(uint64_t physical_address,size_t count){
 void pmm_reserve_page(uint64_t physical_address){
     if((physical_address&(RIXURI_PAGE_SIZE-1ULL))!=0)return;
     uint64_t page=physical_address/RIXURI_PAGE_SIZE;if(page>=PMM_MAX_PAGES)return;
+    uint64_t irq;rix_spin_lock_irqsave(&pmm_lock,&irq);
     uint64_t*managed=&managed_bitmap[page>>6],*used=&page_bitmap[page>>6],*reserved=&reserved_bitmap[page>>6],bit=1ULL<<(page&63ULL);
-    if(!(*managed&bit))return;
+    if(!(*managed&bit)){rix_spin_unlock_irqrestore(&pmm_lock,irq);return;}
     *reserved |= bit;
     if(!(*used&bit)){*used|=bit;if(free_pages_count)--free_pages_count;}
+    rix_spin_unlock_irqrestore(&pmm_lock,irq);
 }
 void pmm_free_page(uint64_t physical_address){
     if((physical_address&(RIXURI_PAGE_SIZE-1ULL))!=0)return;
     uint64_t page=physical_address/RIXURI_PAGE_SIZE;if(page>=PMM_MAX_PAGES)return;
+    uint64_t irq;rix_spin_lock_irqsave(&pmm_lock,&irq);
     uint64_t*managed=&managed_bitmap[page>>6],*used=&page_bitmap[page>>6],*reserved=&reserved_bitmap[page>>6],bit=1ULL<<(page&63ULL);
-    if(!(*managed&bit)||!(*used&bit)||(*reserved&bit))return;
+    if(!(*managed&bit)||!(*used&bit)||(*reserved&bit)){rix_spin_unlock_irqrestore(&pmm_lock,irq);return;}
     *used&=~bit;++free_pages_count;
+    rix_spin_unlock_irqrestore(&pmm_lock,irq);
 }
-uint64_t pmm_total_pages(void){return total_pages_count;}
-uint64_t pmm_free_pages(void){return free_pages_count;}
+uint64_t pmm_total_pages(void){uint64_t irq;rix_spin_lock_irqsave(&pmm_lock,&irq);uint64_t n=total_pages_count;rix_spin_unlock_irqrestore(&pmm_lock,irq);return n;}
+uint64_t pmm_free_pages(void){uint64_t irq;rix_spin_lock_irqsave(&pmm_lock,&irq);uint64_t n=free_pages_count;rix_spin_unlock_irqrestore(&pmm_lock,irq);return n;}
 int pmm_is_managed(uint64_t physical_address){
     if((physical_address&(RIXURI_PAGE_SIZE-1ULL))!=0)return 0;
     uint64_t page=physical_address/RIXURI_PAGE_SIZE;if(page>=PMM_MAX_PAGES)return 0;
-    return (managed_bitmap[page>>6]&(1ULL<<(page&63ULL)))!=0;
+    uint64_t irq;rix_spin_lock_irqsave(&pmm_lock,&irq);
+    int r=(managed_bitmap[page>>6]&(1ULL<<(page&63ULL)))!=0;
+    rix_spin_unlock_irqrestore(&pmm_lock,irq);return r;
 }
 int pmm_is_in_use(uint64_t physical_address){
     if((physical_address&(RIXURI_PAGE_SIZE-1ULL))!=0)return 0;
     uint64_t page=physical_address/RIXURI_PAGE_SIZE;if(page>=PMM_MAX_PAGES)return 0;
-    return (page_bitmap[page>>6]&(1ULL<<(page&63ULL)))!=0;
+    uint64_t irq;rix_spin_lock_irqsave(&pmm_lock,&irq);
+    int r=(page_bitmap[page>>6]&(1ULL<<(page&63ULL)))!=0;
+    rix_spin_unlock_irqrestore(&pmm_lock,irq);return r;
 }
 int pmm_is_reserved(uint64_t physical_address){
     if((physical_address&(RIXURI_PAGE_SIZE-1ULL))!=0)return 0;
     uint64_t page=physical_address/RIXURI_PAGE_SIZE;if(page>=PMM_MAX_PAGES)return 0;
-    return (reserved_bitmap[page>>6]&(1ULL<<(page&63ULL)))!=0;
+    uint64_t irq;rix_spin_lock_irqsave(&pmm_lock,&irq);
+    int r=(reserved_bitmap[page>>6]&(1ULL<<(page&63ULL)))!=0;
+    rix_spin_unlock_irqrestore(&pmm_lock,irq);return r;
 }
 int pmm_region_info(uint64_t physical_address,uint64_t *out_base,uint64_t *out_end,uint32_t *out_type,int *out_usable){
     if(out_base){*out_base=0;}if(out_end){*out_end=0;}if(out_type){*out_type=0;}if(out_usable){*out_usable=0;}

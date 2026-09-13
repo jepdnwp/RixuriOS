@@ -247,10 +247,10 @@ gdt-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/gdt_test.c kernel/arch/x86_64/gdt.c -o build/gdt_test
 		build/gdt_test
 pmm-test: | build
-	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/pmm_test.c kernel/mm/pmm.c -o build/pmm_test
+	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -DRIX_HOST_TEST -I. tests/pmm_test.c kernel/mm/pmm.c kernel/sync/lock.c -o build/pmm_test
 		build/pmm_test
 heap-test: | build
-	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/heap_test.c kernel/mm/heap.c kernel/mm/pmm.c -o build/heap_test
+	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -DRIX_HOST_TEST -I. tests/heap_test.c kernel/mm/heap.c kernel/mm/pmm.c kernel/sync/lock.c -o build/heap_test
 		build/heap_test
 xhci-caps-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/xhci_caps_test.c kernel/usb/xhci_caps.c -o build/xhci_caps_test
