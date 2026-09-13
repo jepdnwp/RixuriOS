@@ -59,6 +59,30 @@ def drain_output(duration: float = 0.25) -> None:
         output.extend(chunk)
 
 
+def drain_quiet(idle: float = 2.0, cap: float = 15.0) -> None:
+    """Wait until the guest goes quiet before snapshotting.
+
+    Prompt matching can succeed while a slow child (loaded host, serial
+    backlog) still has output in flight; killing QEMU at that point
+    loses the evidence and fails assertions on the last command. Waiting
+    for a full idle window keeps every existing assertion intact while
+    making the observation complete.
+    """
+    deadline = time.monotonic() + cap
+    while time.monotonic() < deadline:
+        quiet_until = time.monotonic() + idle
+        while time.monotonic() < quiet_until:
+            ready, _, _ = select.select([proc.stdout], [], [], 0.05)
+            if not ready:
+                continue
+            chunk = os.read(proc.stdout.fileno(), 4096)
+            if not chunk:
+                return
+            output.extend(chunk)
+            quiet_until = time.monotonic() + idle
+        return
+
+
 def command(line: bytes) -> None:
     for byte in line + b"\n":
         proc.stdin.write(bytes((byte,)))
@@ -78,6 +102,7 @@ try:
     command(b"/bin/pwd")
     command(b"/usr/bin/which echo")
     command(b"/usr/bin/which absent-command")
+    drain_quiet()
 finally:
     LOG.write_bytes(output)
     proc.terminate()
