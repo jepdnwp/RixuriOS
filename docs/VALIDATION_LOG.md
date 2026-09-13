@@ -1212,3 +1212,37 @@ full 26-suite QEMU matrix  ALL PASS, zero LOCKDEP lines in all logs
 Still open in Phase 05: true task blocking/wakeup, timeout/
 cancellation integration, mutex/RW/sem P3 backends, subsystem-wide
 lockdep wiring (needs the per-subsystem audit), SMP stress.
+
+## 2026-09-13 — P3 slice A: yield syscall, churn/fair evidence, stdio fd reservation
+
+`RIX_SYS_YIELD` (24, Linux-compatible number, additive ABI) plus
+libc `sched_yield()` give cooperative programs an explicit yield
+primitive. New `/usr/bin/schedtest`: `churn N` (40 spawn/exit
+cycles, task-slot retirement regression net) and `fair` (two
+yield-per-byte children must interleave A/B on a pipe, max run 8 —
+round-robin/no-starvation evidence). New `qemu_sched_test.py`
+harness syncs on the first interactive prompt (never attributes it
+to a command) and drains to quiescence.
+
+Root-cause fix found through this work: shell-spawned processes
+start with fds 0,1 closed, so `pipe()`/`open()` returned 0/1 and a
+program's own stdout silently diverted into its new object (first
+pipe byte read back was `f`, the start of its own diagnostic).
+`vfs_open`/`vfs_pipe` now reserve 0..2 for stdio (explicit `dup2`
+still binds them; real TTY-backed stdio fds are Phase-36 work).
+`killtest` only ever survived this by luck (its marker emits after
+its pipes close). A planned exit-parking redesign was rejected on
+analysis: parking would halt scheduling, and DEAD-slot recycling is
+already safe (no resume + fresh `cpu_current` reads, churn-proven).
+
+Validation (`CROSS=x86_64-linux-gnu- HOST_CC=gcc`):
+
+```text
+make all/test/image RC=0
+full 27-suite QEMU matrix (incl. new sched)  ALL PASS
+```
+
+Next: P2b process/VFS locking, then involuntary switch points;
+threads/TIDs, per-CPU runqueues and preempt-disable land with that
+work. A never-yielding hog still monopolizes a CPU (documented,
+blocked on the same sequence).
