@@ -11,6 +11,7 @@ IMAGE = ROOT / "build" / "rixfs-external-net.img"
 ESP = ROOT / "build" / "uefi" / "esp-external-net"
 DUMP = ROOT / "build" / "phase21-external-net.pcap"
 shutil.copyfile(ROOT / "build" / "rixfs.img", IMAGE)
+shutil.rmtree(ESP, ignore_errors=True)
 shutil.copytree(ROOT / "build" / "uefi" / "esp", ESP)
 DUMP.unlink(missing_ok=True)
 env = os.environ.copy()

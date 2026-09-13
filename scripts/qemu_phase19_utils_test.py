@@ -3,7 +3,7 @@ import os, select, shutil, subprocess, sys, time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parent.parent
 IMAGE=ROOT/'build/rixfs-phase19.img'; ESP=ROOT/'build/uefi/esp-phase19'; LOG=ROOT/'build/qemu-phase19-utils.log'
-shutil.copyfile(ROOT/'build/rixfs.img',IMAGE); shutil.copytree(ROOT/'build/uefi/esp',ESP)
+shutil.copyfile(ROOT/'build/rixfs.img',IMAGE); shutil.rmtree(ESP,ignore_errors=True); shutil.copytree(ROOT/'build/uefi/esp',ESP)
 env=os.environ.copy(); env['RIXURI_RIXFS_IMAGE']=str(IMAGE); env['RIXURI_ESP']=str(ESP)
 proc=subprocess.Popen(['bash','./scripts/run-qemu.sh'],cwd=ROOT,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,env=env)
 out=bytearray(); cursor=0

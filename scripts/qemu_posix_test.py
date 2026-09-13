@@ -20,6 +20,7 @@ ESP = ROOT / "build" / "uefi" / "esp-posix"
 LOG = ROOT / "build" / "qemu-posix.log"
 PROMPT = b"\x1b[1;37m:\x1b[0m "
 shutil.copyfile(ROOT / "build" / "rixfs.img", IMAGE)
+shutil.rmtree(ESP, ignore_errors=True)
 shutil.copytree(ROOT / "build" / "uefi" / "esp", ESP)
 env = os.environ.copy()
 env["RIXURI_RIXFS_IMAGE"] = str(IMAGE)

@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parent.parent
 IMAGE = ROOT / "build" / "rixfs-ping.img"
 ESP = ROOT / "build" / "uefi" / "esp-ping"
 shutil.copyfile(ROOT / "build" / "rixfs.img", IMAGE)
+shutil.rmtree(ESP, ignore_errors=True)
 shutil.copytree(ROOT / "build" / "uefi" / "esp", ESP)
 env = os.environ.copy()
 env["RIXURI_RIXFS_IMAGE"] = str(IMAGE)

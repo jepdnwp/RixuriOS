@@ -12,6 +12,7 @@ IMAGE = ROOT / "build" / "rixfs-text-utils.img"
 ESP = ROOT / "build" / "uefi" / "esp-text-utils"
 LOG = ROOT / "build" / "qemu-text-utils.log"
 shutil.copyfile(ROOT / "build" / "rixfs.img", IMAGE)
+shutil.rmtree(ESP, ignore_errors=True)
 shutil.copytree(ROOT / "build" / "uefi" / "esp", ESP)
 env = os.environ.copy()
 env["RIXURI_RIXFS_IMAGE"] = str(IMAGE)

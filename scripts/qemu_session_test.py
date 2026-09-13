@@ -15,6 +15,7 @@ with tempfile.TemporaryDirectory(prefix="rixurios-session-") as temporary:
     test_image = temporary_root / "rixfs.img"
     test_esp = temporary_root / "esp"
     shutil.copy2(ROOT / "build/rixfs.img", test_image)
+    shutil.rmtree(test_esp, ignore_errors=True)
     shutil.copytree(ROOT / "build/uefi/esp", test_esp)
     environment = os.environ.copy()
     environment["RIXURI_RIXFS_IMAGE"] = str(test_image)

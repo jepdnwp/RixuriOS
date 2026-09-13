@@ -36,6 +36,7 @@ def run_scenario(name, control):
     image = ROOT / "build" / f"rixfs-signal-{name}.img"
     esp = ROOT / "build" / "uefi" / f"esp-signal-{name}"
     shutil.copyfile(ROOT / "build" / "rixfs.img", image)
+    shutil.rmtree(esp, ignore_errors=True)
     shutil.copytree(ROOT / "build" / "uefi" / "esp", esp)
     env = os.environ.copy()
     env["RIXURI_RIXFS_IMAGE"] = str(image)
