@@ -34,29 +34,7 @@ static void reserve_table_range(uint64_t start, size_t bytes){
  uint64_t last=(start+(uint64_t)bytes+0xfffULL)&~0xfffULL;
  for(uint64_t page=first;page<last;page+=0x1000ULL)pmm_reserve_page(page);
 }
-extern uint8_t __text_start[], __text_end[], __rodata_start[], __rodata_end[];
-extern uint8_t __data_start[], __bss_end[];
-
-static int protect_kernel_range(uintptr_t start, uintptr_t end, uint64_t flags) {
-    if (end <= start) return 0;
-    start &= ~0xFFFULL;
-    end = (end + 0xFFFULL) & ~0xFFFULL;
-    for (uintptr_t va = start; va < end; va += 0x1000ULL)
-        if (vmm_map_page_in_pml4(kernel_pml4_phys, va, va, flags) != 0) return -1;
-    return 0;
-}
-
-static int protect_kernel_sections(void) {
-    if (protect_kernel_range((uintptr_t)__text_start, (uintptr_t)__text_end,
-                             RIXURI_PTE_PRESENT) != 0) return -1;
-    if (protect_kernel_range((uintptr_t)__rodata_start, (uintptr_t)__rodata_end,
-                             RIXURI_PTE_PRESENT | RIXURI_PTE_NX) != 0) return -1;
-    if (protect_kernel_range((uintptr_t)__data_start, (uintptr_t)__bss_end,
-                             RIXURI_PTE_PRESENT | RIXURI_PTE_WRITE | RIXURI_PTE_NX) != 0) return -1;
-    return 0;
-}
-
-void vmm_early_init(void){for(size_t i=0;i<TABLE_ENTRIES;i++)early_pml4[i]=0;for(size_t n=0;n<IDENTITY_PML4_COUNT;n++){for(size_t i=0;i<TABLE_ENTRIES;i++)early_pdpt[n][i]=0;}for(size_t n=0;n<IDENTITY_PDPT_COUNT;n++)for(size_t i=0;i<TABLE_ENTRIES;i++)early_pd[n][i]=0;for(uint64_t p=0;p<IDENTITY_PML4_COUNT;p++){early_pml4[p]=(uint64_t)(uintptr_t)early_pdpt[p]|RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE;for(uint64_t n=0;n<TABLE_ENTRIES;n++){uint64_t pd_index=p*TABLE_ENTRIES+n;early_pdpt[p][n]=(uint64_t)(uintptr_t)early_pd[pd_index]|RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE;for(uint64_t i=0;i<TABLE_ENTRIES;i++){uint64_t pa=(pd_index*TABLE_ENTRIES+i)*0x200000ULL;early_pd[pd_index][i]=pa|RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE|PTE_PS;}}}reserve_table_range((uint64_t)(uintptr_t)early_pml4,sizeof(early_pml4));reserve_table_range((uint64_t)(uintptr_t)early_pdpt,sizeof(early_pdpt));reserve_table_range((uint64_t)(uintptr_t)early_pd,sizeof(early_pd));kernel_pml4_phys=(uint64_t)(uintptr_t)early_pml4;current_pml4_phys=kernel_pml4_phys;if(protect_kernel_sections()!=0)serial_write("VMM: kernel section permissions unavailable\r\n");uint64_t cr4=read_cr4()|CR4_PAE;/* SMEP/SMAP/PKE/PGE and PCIDE are not yet handled by the uaccess/TLB code. Firmware may leave them set on physical CPUs; clear them before the first user transition. PGE matters: with PGE=1 MOV CR3 keeps stale firmware global entries, so the first user CR3 on real AMI firmware can fetch through a stale global TLB entry while QEMU (PGE=0) works. */cr4&=~(CR4_LA57|CR4_PGE|(1ULL<<17)|(1ULL<<20)|(1ULL<<21)|(1ULL<<22));/* The kernel builds without -mno-sse, so GCC may emit SSE for copies/loops. OVMF leaves FXSR/XMMEXCPT on; physical firmware may not. Enable both and clear EM/TS so SSE never raises #UD/#NM on real silicon. QEMU-safe: already set there. */cr4|=CR4_OSFXSR|CR4_OSXMMEXCPT;write_cr4(cr4);uint64_t cr0=read_cr0()&~(CR0_EM|CR0_TS);write_cr0(cr0|CR0_WP);/* Every user mapping carries the NX bit; firmware is not required to leave EFER.NXE on (OVMF does, physical boards may not). Without it the first Ring-3 touch of an NX page raises #PF(RSVD). Enable unconditionally: already-set is a no-op. */write_efer(read_efer()|EFER_NXE);write_cr3(current_pml4_phys);}
+void vmm_early_init(void){for(size_t i=0;i<TABLE_ENTRIES;i++)early_pml4[i]=0;for(size_t n=0;n<IDENTITY_PML4_COUNT;n++){for(size_t i=0;i<TABLE_ENTRIES;i++)early_pdpt[n][i]=0;}for(size_t n=0;n<IDENTITY_PDPT_COUNT;n++)for(size_t i=0;i<TABLE_ENTRIES;i++)early_pd[n][i]=0;for(uint64_t p=0;p<IDENTITY_PML4_COUNT;p++){early_pml4[p]=(uint64_t)(uintptr_t)early_pdpt[p]|RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE;for(uint64_t n=0;n<TABLE_ENTRIES;n++){uint64_t pd_index=p*TABLE_ENTRIES+n;early_pdpt[p][n]=(uint64_t)(uintptr_t)early_pd[pd_index]|RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE;for(uint64_t i=0;i<TABLE_ENTRIES;i++){uint64_t pa=(pd_index*TABLE_ENTRIES+i)*0x200000ULL;early_pd[pd_index][i]=pa|RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE|PTE_PS;}}}reserve_table_range((uint64_t)(uintptr_t)early_pml4,sizeof(early_pml4));reserve_table_range((uint64_t)(uintptr_t)early_pdpt,sizeof(early_pdpt));reserve_table_range((uint64_t)(uintptr_t)early_pd,sizeof(early_pd));kernel_pml4_phys=(uint64_t)(uintptr_t)early_pml4;current_pml4_phys=kernel_pml4_phys;uint64_t cr4=read_cr4()|CR4_PAE;/* SMEP/SMAP/PKE/PGE and PCIDE are not yet handled by the uaccess/TLB code. Firmware may leave them set on physical CPUs; clear them before the first user transition. PGE matters: with PGE=1 MOV CR3 keeps stale firmware global entries, so the first user CR3 on real AMI firmware can fetch through a stale global TLB entry while QEMU (PGE=0) works. */cr4&=~(CR4_LA57|CR4_PGE|(1ULL<<17)|(1ULL<<20)|(1ULL<<21)|(1ULL<<22));/* The kernel builds without -mno-sse, so GCC may emit SSE for copies/loops. OVMF leaves FXSR/XMMEXCPT on; physical firmware may not. Enable both and clear EM/TS so SSE never raises #UD/#NM on real silicon. QEMU-safe: already set there. */cr4|=CR4_OSFXSR|CR4_OSXMMEXCPT;write_cr4(cr4);uint64_t cr0=read_cr0()&~(CR0_EM|CR0_TS);write_cr0(cr0|CR0_WP);/* Every user mapping carries the NX bit; firmware is not required to leave EFER.NXE on (OVMF does, physical boards may not). Without it the first Ring-3 touch of an NX page raises #PF(RSVD). Enable unconditionally: already-set is a no-op. */write_efer(read_efer()|EFER_NXE);write_cr3(current_pml4_phys);}
 uint64_t vmm_kernel_pml4(void){return kernel_pml4_phys;}
 uint64_t vmm_current_pml4(void){return current_pml4_phys;}
 void *vmm_phys_ptr(uint64_t physical_address){if(!physical_address||(physical_address&0xFFFULL)||physical_address>=RIXURI_MAX_PHYS_BYTES)return NULL;return(void *)(uintptr_t)physical_address;}
