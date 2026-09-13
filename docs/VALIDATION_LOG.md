@@ -1246,3 +1246,30 @@ Next: P2b process/VFS locking, then involuntary switch points;
 threads/TIDs, per-CPU runqueues and preempt-disable land with that
 work. A never-yielding hog still monopolizes a CPU (documented,
 blocked on the same sequence).
+
+## 2026-09-13 — P3-B slice 1: process/VFS/NVMe locking (preemption groundwork)
+
+Process table mutations and VFS entries are now serialized by two
+ordered irqsave spinlocks (process rank 4 inside VFS rank 6, verified
+against NVMe 8 / VMM 10 / heap 20 / PMM 30 across real workloads):
+RAII-style guard macros acquire (lockdep check first, so a misnest
+warns instead of deadlocking) and release on any scope exit.
+`_locked` cores cover the three genuine nestings
+(create/fork, exit/logout, activate/set_state, lookup ×3, close);
+pure readers (lookup, capabilities, permission fast paths) stay
+lock-free single-word by design. NVMe submit+poll is per-controller
+serialized (shared cid/tail/head). AP scheduler lock moved to
+irqsave (a PIT tick preempting that window would deadlock it).
+Deleted dead `kernel/vfs/vfs_file.c` (unlinked divergent VFS with
+colliding symbols; it also independently reserved fds from 3).
+
+Validation (`CROSS=x86_64-linux-gnu- HOST_CC=gcc`):
+
+```text
+make all/test/image RC=0
+full 27-suite QEMU matrix  ALL PASS, zero LOCKDEP lines in all logs
+```
+
+Next: preempt-disable nesting + quantum + PIT need-resched + the
+EOI-first IRQ yield + hog test. Process-struct lifetime (refcounted
+activation) and VFS granularity refinement stay sequenced after.
