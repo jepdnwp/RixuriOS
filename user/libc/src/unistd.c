@@ -37,6 +37,7 @@ int access(const char *path,int mode){if(!path||mode<0||(mode&~(R_OK|W_OK|X_OK))
 int fcntl(int fd,int command,...){long argument=0;va_list arguments;va_start(arguments,command);if(command==F_DUPFD||command==F_SETFD||command==F_SETFL)argument=va_arg(arguments,int);va_end(arguments);return(int)rix_int_result(rix_sys(143,fd,command,argument));}
 int close(int fd){return(int)rix_int_result(rix_sys(3,fd,0,0));}
 int pipe(int fds[2]){return(int)rix_int_result(rix_sys(22,(long)fds,0,0));}
+int sched_yield(void){return(int)rix_int_result(rix_sys(24,0,0,0));}
 int dup(int old_fd){return(int)rix_int_result(rix_sys(32,old_fd,0,0));}
 int dup2(int old_fd,int new_fd){return(int)rix_int_result(rix_sys(33,old_fd,new_fd,0));}
 int close_pipes_except(int keep_fd0,int keep_fd1){return(int)rix_int_result(rix_sys(248,keep_fd0,keep_fd1,0));}

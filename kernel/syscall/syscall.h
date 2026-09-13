@@ -30,6 +30,9 @@
 #define RIX_SYS_BRK 12
 #define RIX_SYS_IOCTL 16
 #define RIX_SYS_NANOSLEEP 35
+/* Cooperative yield (Linux-compatible number). Additive ABI extension;
+ * ABI version stays 1 (no breaking change). */
+#define RIX_SYS_YIELD 24
 #define RIX_SYS_CLOCK_GETTIME 13
 #define RIX_SYS_GETCWD 79
 #define RIX_SYS_CHDIR 80

@@ -82,6 +82,7 @@ unsigned sleep(unsigned seconds);
 int usleep(unsigned usec);
 rix_pid_t wait(rix_pid_t child, uint64_t *status);
 rix_pid_t waitpid(rix_pid_t child, uint64_t *status, uint32_t options);
+int sched_yield(void);
 long sysconf(int name);
 int getpagesize(void);
 extern char *optarg;
