@@ -1,5 +1,6 @@
 #include "vmm.h"
 #include "pmm.h"
+#include "../sync/lock.h"
 #include "../serial.h"
 #include "kernel.h"
 #include <stddef.h>
@@ -22,6 +23,15 @@
 #define EFER_MSR 0xC0000080u
 #define EFER_NXE (1ULL<<11)
 #define LEAF_FLAGS (RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE|RIXURI_PTE_USER|RIXURI_PTE_PWT|RIXURI_PTE_PCD|RIXURI_PTE_NX|RIXURI_PTE_OWNED)
+/* Table-mutation lock (irqsave): serializes ensure/split/install so two
+ * CPUs cannot double-allocate a table or interleave a split. Ordering
+ * is vmm -> pmm (table allocs); never reversed. Static zero-init is
+ * the unlocked state, so protect_kernel_sections() inside early init
+ * may already use it. current_pml4_phys discipline (per-CPU writer +
+ * scheduler lock in practice) is systematized with the scheduler
+ * work; the MMIO registry above this layer still needs its own lock
+ * (kept separate to avoid nesting with this one). */
+static rix_spinlock_t vmm_map_lock;
 static uint64_t early_pml4[512] __attribute__((aligned(4096)));static uint64_t early_pdpt[IDENTITY_PML4_COUNT][512] __attribute__((aligned(4096)));static uint64_t early_pd[IDENTITY_PDPT_COUNT][512] __attribute__((aligned(4096)));static uint64_t kernel_pml4_phys;uint64_t current_pml4_phys;
 static inline void write_cr3(uint64_t v){__asm__ volatile("mov %0,%%cr3"::"r"(v):"memory");}static inline void invlpg(uint64_t va){__asm__ volatile("invlpg (%0)"::"r"(va):"memory");}static inline uint64_t read_cr0(void){uint64_t v;__asm__ volatile("mov %%cr0,%0":"=r"(v));return v;}static inline void write_cr0(uint64_t v){__asm__ volatile("mov %0,%%cr0"::"r"(v):"memory");}static inline uint64_t read_cr4(void){uint64_t v;__asm__ volatile("mov %%cr4,%0":"=r"(v));return v;}static inline void write_cr4(uint64_t v){__asm__ volatile("mov %0,%%cr4"::"r"(v):"memory");}
 static inline uint64_t read_efer(void){uint32_t lo,hi;__asm__ volatile("rdmsr":"=a"(lo),"=d"(hi):"c"(EFER_MSR));return((uint64_t)hi<<32)|(uint64_t)lo;}
@@ -78,8 +88,8 @@ uint64_t vmm_current_pml4(void){return current_pml4_phys;}
 void *vmm_phys_ptr(uint64_t physical_address){if(!physical_address||(physical_address&0xFFFULL)||physical_address>=RIXURI_MAX_PHYS_BYTES)return NULL;return(void *)(uintptr_t)physical_address;}
 void vmm_switch_pml4(uint64_t pml4_phys){if(!pml4_phys)return;current_pml4_phys=pml4_phys;write_cr3(pml4_phys);}
 void vmm_track_pml4(uint64_t pml4_phys){if(!pml4_phys)return;current_pml4_phys=pml4_phys;}
-int vmm_map_page_in_pml4(uint64_t pml4_phys,uint64_t va,uint64_t pa,uint64_t flags){if(!pml4_phys||!canonical48(va)||(va&0xFFFULL)||(pa&0xFFFULL)||(pa&~PAGE_MASK))return -1;uint64_t*pml4=(uint64_t *)(uintptr_t)pml4_phys;uint64_t*pdpt=ensure_table(pml4,(va>>39)&0x1FFULL,flags);if(!pdpt)return -1;uint64_t*pd=ensure_table(pdpt,(va>>30)&0x1FFULL,flags);if(!pd)return -1;uint64_t*pt=split_pd_huge_page(pd,(va>>21)&0x1FFULL,flags);if(!pt)return -1;size_t idx=(size_t)((va>>12)&0x1FFULL);pt[idx]=(pa&PAGE_MASK)|(flags&LEAF_FLAGS);if(pml4_phys==current_pml4_phys)invlpg(va);return 0;}
-int vmm_unmap_page_in_pml4(uint64_t pml4_phys,uint64_t va){if(!pml4_phys||!canonical48(va)||(va&0xFFFULL))return -1;uint64_t*pml4=(uint64_t *)(uintptr_t)pml4_phys;uint64_t e=pml4[(va>>39)&0x1FFULL];if(!(e&RIXURI_PTE_PRESENT))return 0;uint64_t*pdpt=entry_table(e);e=pdpt[(va>>30)&0x1FFULL];if(!(e&RIXURI_PTE_PRESENT))return 0;uint64_t*pd=entry_table(e);e=pd[(va>>21)&0x1FFULL];if(!(e&RIXURI_PTE_PRESENT)||(e&PTE_PS))return 0;uint64_t*pt=entry_table(e);pt[(va>>12)&0x1FFULL]=0;if(pml4_phys==current_pml4_phys)invlpg(va);return 0;}
+int vmm_map_page_in_pml4(uint64_t pml4_phys,uint64_t va,uint64_t pa,uint64_t flags){if(!pml4_phys||!canonical48(va)||(va&0xFFFULL)||(pa&0xFFFULL)||(pa&~PAGE_MASK))return -1;uint64_t irq;rix_spin_lock_irqsave(&vmm_map_lock,&irq);uint64_t*pml4=(uint64_t *)(uintptr_t)pml4_phys;uint64_t*pdpt=ensure_table(pml4,(va>>39)&0x1FFULL,flags);if(!pdpt){rix_spin_unlock_irqrestore(&vmm_map_lock,irq);return -1;}uint64_t*pd=ensure_table(pdpt,(va>>30)&0x1FFULL,flags);if(!pd){rix_spin_unlock_irqrestore(&vmm_map_lock,irq);return -1;}uint64_t*pt=split_pd_huge_page(pd,(va>>21)&0x1FFULL,flags);if(!pt){rix_spin_unlock_irqrestore(&vmm_map_lock,irq);return -1;}size_t idx=(size_t)((va>>12)&0x1FFULL);pt[idx]=(pa&PAGE_MASK)|(flags&LEAF_FLAGS);if(pml4_phys==current_pml4_phys)invlpg(va);rix_spin_unlock_irqrestore(&vmm_map_lock,irq);return 0;}
+int vmm_unmap_page_in_pml4(uint64_t pml4_phys,uint64_t va){if(!pml4_phys||!canonical48(va)||(va&0xFFFULL))return -1;uint64_t irq;rix_spin_lock_irqsave(&vmm_map_lock,&irq);uint64_t*pml4=(uint64_t *)(uintptr_t)pml4_phys;uint64_t e=pml4[(va>>39)&0x1FFULL];if(!(e&RIXURI_PTE_PRESENT)){rix_spin_unlock_irqrestore(&vmm_map_lock,irq);return 0;}uint64_t*pdpt=entry_table(e);e=pdpt[(va>>30)&0x1FFULL];if(!(e&RIXURI_PTE_PRESENT)){rix_spin_unlock_irqrestore(&vmm_map_lock,irq);return 0;}uint64_t*pd=entry_table(e);e=pd[(va>>21)&0x1FFULL];if(!(e&RIXURI_PTE_PRESENT)||(e&PTE_PS)){rix_spin_unlock_irqrestore(&vmm_map_lock,irq);return 0;}uint64_t*pt=entry_table(e);pt[(va>>12)&0x1FFULL]=0;if(pml4_phys==current_pml4_phys)invlpg(va);rix_spin_unlock_irqrestore(&vmm_map_lock,irq);return 0;}
 /* NOTE (Phase D2): this flushes only the local TLB. Unmapping a page that
  * other CPUs may hold (shared kernel mappings) additionally requires
  * smp_shootdown(va); see address_space_unmap for the established pattern.
