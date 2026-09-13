@@ -432,13 +432,15 @@
 - Validation 2026-09-13: host `symlink_test` extended (12 entries in
   1 sector + 1 extent, remove/rename/replace/cross-dir, readdir
   count, fsck clean); full renametest op sequence replays with ZERO
-  dir growth on host; `make test` RC=0; QEMU auth/cp_mv/file_utils/
-  cred/phase20 + powerloss + smp_boot + ring3 all PASS.
-- Note: `281229d` (kernel section permissions) bisected GUILTY
-  independently of this bug (guest hangs with it, all-green
-  without; it remaps the early 2 MB-PS tables without splitting,
-  corrupting paging) — reverted separately, hardening deferred
-  until a PS-split implementation exists.
+  dir growth on host; `make test` RC=0; full 26-suite QEMU matrix
+  PASS (auth through xhci_probe).
+- Correction: `281229d` (kernel section permissions) was first
+  bisected GUILTY, but serial forensics proved it innocent — the
+  user-entry trampolines lived in `.rodata` (`user_entry.S`
+  emitted code after a `.section .rodata` directive), and NX
+  correctly refused to execute them. Trampolines moved to `.text`,
+  hardening re-landed with a boot-time `R-X/R--/RW-` self-check,
+  matrix green WITH protections (see VALIDATION_LOG 2026-09-13).
 
 ## Phase U2 (done 2026-09-12): errno-convention family (test programs)
 

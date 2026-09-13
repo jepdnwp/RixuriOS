@@ -22,7 +22,7 @@ cross-test, cred `fail-create2`).
 |---|---|---|
 | 00 | PARTIAL | Build green, no CI/pinning/repro/SBOM. |
 | 01 | PARTIAL | QEMU boot ok; no fault-injection harness, no HW boot log. |
-| 02 | HARDENING REQUIRED | Reclaim gate not met: `kfree` no-op, no reserved-bit setting, no sync, W^X unenforced (281229d reverted with cause). pmm/heap host tests exist. |
+| 02 | HARDENING REQUIRED | W^X now enforced+verified in QEMU (R-X/R--/RW-, boot self-check); reclaim gate still open: heap interior reuse, PMM/VMM locking, pressure runs. pmm/heap host tests exist. |
 | 03 | PARTIAL / HARDENING | Fail-stop only; no vector matrix, no user-fault recovery. |
 | 04 | PARTIAL | smp_boot PASS QEMU; PIT-only, no HPET/APIC-timer, no HW topology. |
 | 05 | PARTIAL / HARDENING | No mutex/RW/sem; waitqueue is metadata-only; no lockdep. |

@@ -1115,11 +1115,17 @@ past size (now uses mkdir's spare sector), and every replacing rename
 grew a sector (now usually zero). Symlinks are real: `RIXFS_IFLNK`
 inodes carry the target as file data, VFS follows intermediate and
 final components with a depth cap (`ELOOP`), new syscalls 85/88 with
-libc wrappers and `ln -s`. `281229d` (kernel section permissions) was
-bisected guilty independently of the fs bug — with it the guest hangs
-before the first prompt, without it everything below is green; it
-remaps the early 2 MB-PS tables without splitting, so it is reverted
-until a PS-split implementation exists.
+libc wrappers and `ln -s`.
+
+Correction (same day, supersedes the `281229d` paragraph drafted
+below): the hardening was first reverted as guilty, but serial
+forensics (`RIP=CR2=0x4034d6d error=0x11` in the first exec'd child)
+proved the culprit was `x86_enter_user_context` living in `.rodata`
+(`user_entry.S` emitted code after a `.section .rodata` directive).
+Trampolines moved back to `.text` (guard comment added), hardening
+re-landed with a boot-time `VMM: section perms verified R-X/R--/RW-`
+self-check queried from the live tables, and the whole matrix
+re-ran green WITH protections active — no revert remains in effect.
 
 Validation (`CROSS=x86_64-linux-gnu- HOST_CC=gcc`):
 
@@ -1129,8 +1135,19 @@ make test   RC=0 (host symlink_test extended: 12 entries in 1 sector +
             fsck clean)
 qemu auth / cp_mv / file_utils / phase20_cred / phase20  ALL PASS
 qemu powerloss / smp_boot / ring3                        ALL PASS
+qemu iso / ping / curl / ln / stat / touch /
+     head_tail / text_utils / env_utils / process_utils /
+     posix / phase19_utils / phase19_extended /
+     pipe_stress / signal / session / external_net /
+     xhci_probe                                          ALL PASS
+readelf: text R E / rodata R / data RW (no RWE, no X on rodata)
+boot marker: VMM: section perms verified R-X/R--/RW-, 0 faults
 ```
 
 Renametest's full op sequence replays on host with zero directory
-growth. Not claimed: hardware keyboard (still `rc=7`/PED=0 on the
-ASUS board), >8-CPU AP bring-up, HW PASS/CI.
+growth. One flake noted honestly: `env_utils` failed twice with a
+missing `which: not found` string under host load, then passed 3/3
+on the identical build — serial-timing race in the harness window,
+not a kernel regression (direct probes print the string reliably).
+Not claimed: hardware keyboard (still `rc=7`/PED=0 on the ASUS
+board), >8-CPU AP bring-up, HW PASS/CI.

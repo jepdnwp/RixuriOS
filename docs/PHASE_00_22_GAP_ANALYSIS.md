@@ -1528,12 +1528,19 @@ Nothing below promotes untested scopes to PASS.
    entry). The "full suite and UP/SMP4 sanity pending" note is
    closed for this subset; the full 28-suite matrix re-run and all
    physical evidence remain pending.
-5. **`281229d` reverted with cause (`1d1a204`).** The kernel
-   section-permission hardening hangs the guest before the first
-   shell prompt with it applied, all-green without — bisected
-   independently of the filesystem extent bug fixed alongside.
-   Root cause: it remaps the early 2 MB-PS identity tables
-   page-by-page without splitting PS entries, corrupting paging.
-   The Phase 02 "text is read/execute, data is writable/NX" exit
-   criterion therefore stays open until a PS-split implementation
-   exists. Runtime W^X remains incomplete, as audited.
+5. **`281229d` verdict CORRECTED (was: guilty; is: innocent).**
+   Serial forensics on a failing run proved the hardening itself
+   was never the bug: the first exec'd child faulted with
+   `RIP=CR2=0x4034d6d error=0x11`, and that address is
+   `x86_enter_user_context` — the user-entry trampoline, which
+   `user_entry.S` had placed in `.rodata` (code emitted after a
+   `.section .rodata` directive meant for log strings). The NX bit
+   correctly refused to execute a data section. Fix-forward:
+   trampolines moved back to `.text` with a guard comment, and the
+   hardening re-landed with a boot-time `VMM: section perms
+   verified R-X/R--/RW-` self-check queried from the live tables.
+   The full QEMU matrix re-ran green WITH protections active. The
+   Phase 02 W^X exit criterion is now MET in QEMU (PHDR `R E` /
+   `R` / `RW`, no `RWE`; runtime flags verified); HW and pressure
+   runs remain open. The `1d1a204` revert stays in history as the
+   honest record of the misdiagnosis.
