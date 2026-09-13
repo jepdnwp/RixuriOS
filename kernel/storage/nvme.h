@@ -1,6 +1,7 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
+#include "../sync/lock.h"
 
 #define RIX_NVME_MAX_NAMESPACES 32
 
@@ -41,6 +42,11 @@ typedef struct {
     uint64_t io_sq_phys;
     uint64_t io_cq_phys;
     uint16_t io_queue_depth;
+    /* Serializes submit+poll per controller (shared cid/tail/head/phase).
+     * The poll loop never yields, so holding across completion is safe.
+     * Zero-init is the unlocked state (controllers[] is zeroed at
+     * discovery before use). */
+    rix_spinlock_t io_lock;
     char serial[21];
     char model[41];
     char firmware[9];
