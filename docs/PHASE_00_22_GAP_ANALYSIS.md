@@ -1497,3 +1497,43 @@ Phases 00–22 are done only when all of the following are true:
 [49]: `user/libc/src/libc.c`, `user/libc/src/unistd.c`, `user/libc/include/`, `tests/libc_test.c`, `scripts/qemu_posix_test.py` — static libc implementation, stubs and tests.  
 [50]: `docs/HARDWARE_TARGET.md`, `docs/HW_ASUS_PRIME_B650M_R.md` — target inventory and explicit detection-versus-support boundary.  
 [51]: `docs/HARDWARE_FAILURE_AUDIT_2026-09-10.md` — physical risks and prescribed marker/forensics tests.
+
+## Addendum 2026-09-13 (HEAD `2960c35`; audit base `cf77432` unchanged above)
+
+The audit record above is preserved as written. The following deltas
+landed after the audited revision and change five of its findings.
+Nothing below promotes untested scopes to PASS.
+
+1. **Phase 00 / Phase 15 build-integrity blocker — RESOLVED.**
+   `kernel/usb/xhci_profile.{c,h}` and `tests/xhci_profile_test.c`
+   were restored (`d0198f0`); `make test` is RC=0 including
+   `xhci-profile-test`. A clean tree now builds from checkout.
+2. **Phase 13 symlinks — IMPLEMENTED (bounded scope).** Real
+   symlinks shipped (`2960c35`): `RIXFS_IFLNK` inodes carry the
+   target as file data, VFS follows intermediate and final
+   components with a depth cap surfacing as `ELOOP`, new syscalls
+   85/88 with libc wrappers and `ln -s`. Host coverage plus QEMU
+   traversal/loop/dangle evidence. The "implement symlinks or
+   remove declarations" required-work item is closed on the
+   implement side; vnode refcounting, CLOEXEC, repair-fsck and the
+   rest of the Phase 13 gaps stand.
+3. **Phase 02 host tests — PARTIAL, no longer empty.**
+   `tests/pmm_test.c` and `tests/heap_test.c` exist and run in
+   `make test`. VMM/address-space targets, reclaimability gate,
+   poisoning, guard pages and pressure runs remain missing.
+4. **Fresh execution evidence at `2960c35`.** `make test` RC=0;
+   QEMU `auth`, `cp_mv`, `file_utils`, `phase20_cred`,
+   `phase20` (incl. session+auth), `powerloss`, `smp_boot` and
+   `ring3` all PASS (see `docs/VALIDATION_LOG.md` 2026-09-13
+   entry). The "full suite and UP/SMP4 sanity pending" note is
+   closed for this subset; the full 28-suite matrix re-run and all
+   physical evidence remain pending.
+5. **`281229d` reverted with cause (`1d1a204`).** The kernel
+   section-permission hardening hangs the guest before the first
+   shell prompt with it applied, all-green without — bisected
+   independently of the filesystem extent bug fixed alongside.
+   Root cause: it remaps the early 2 MB-PS identity tables
+   page-by-page without splitting PS entries, corrupting paging.
+   The Phase 02 "text is read/execute, data is writable/NX" exit
+   criterion therefore stays open until a PS-split implementation
+   exists. Runtime W^X remains incomplete, as audited.
