@@ -1178,7 +1178,6 @@ soak runs, HW evidence. The reclaim gate is closer (empty pages
 return AND interior blocks reuse) but not claimed closed.
 
 ## 2026-09-13 — VMM map lock + env_utils quiescence fix
-
 VMM table mutations (`map/unmap_page_in_pml4`) take an irqsave
 spinlock (order vmm -> pmm). An `env_utils` intermittent
 (`which: not found` missing) was chased to ground: A/B cleared the
@@ -1187,3 +1186,29 @@ emits all bytes correctly and the harness's 0.25s-drain-plus-kill
 cut slow-child output off under load. Fix is harness-side
 (`drain_quiet`: 2s idle window, cap 15s, assertions unchanged),
 5/5 green after. Full matrix re-verified green with the lock.
+
+## 2026-09-13 — P2 sync primitives (mutex/RW/sem/refcount/lockdep)
+
+New `kernel/sync` primitives with ownership tracking: mutex
+(recursive/non-owner fail instead of deadlocking, irqsave variant),
+writer-preferring RW lock, counting semaphore with monotonic-deadline
+timeout, atomic refcount with zero-resurrection refusal, and
+lockdep-lite (rank-order checking, per-CPU stacks, warn-only, serial
+report + counter). Waitqueue reworked to generation-counted handles
+(no stale-pointer aliasing) with exact-once wakeup consumption; it
+still tracks state only — scheduler-backed blocking is P3. Blocking
+variants yield-spin (task context only, matching the cooperative
+kernel); P3 converts the backend without API change. Lockdep wired
+into pmm (30) / heap (20) / vmm-map (10) paths with the smp.c CPU
+override; pmm/heap host tests additionally assert zero warnings.
+
+Validation (`CROSS=x86_64-linux-gnu- HOST_CC=gcc`):
+
+```text
+make all/test/image RC=0 (new sync_test in matrix)
+full 26-suite QEMU matrix  ALL PASS, zero LOCKDEP lines in all logs
+```
+
+Still open in Phase 05: true task blocking/wakeup, timeout/
+cancellation integration, mutex/RW/sem P3 backends, subsystem-wide
+lockdep wiring (needs the per-subsystem audit), SMP stress.
