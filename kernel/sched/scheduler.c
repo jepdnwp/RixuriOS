@@ -11,7 +11,7 @@
 #define RIX_MAX_TASKS 32
 #define RIX_STACK_SIZE 16384
 
-typedef enum { TASK_UNUSED=0, TASK_RUNNABLE=1, TASK_RUNNING=2, TASK_DEAD=3 } task_state_t;
+typedef enum { TASK_UNUSED=0, TASK_RUNNABLE=1, TASK_RUNNING=2, TASK_DEAD=3, TASK_BLOCKED=4 } task_state_t;
 typedef struct {
     rix_task_id_t id;
     task_state_t state;
@@ -30,6 +30,12 @@ typedef struct {
     uint8_t ap_ok;
     rix_user_context_t user_context;
     uint8_t stack[RIX_STACK_SIZE] __attribute__((aligned(16)));
+    /* Phase P3 backend: wait binding. Set by scheduler_wait_prepare,
+     * cleared by take/done/abort or by the exit paths. A non-NULL wq
+     * always names a live waiter owned by this task (exit paths drop
+     * it, so slots never leak on blocked-task exit). */
+    rix_waitqueue_t *wait_wq;
+    rix_wait_handle_t wait_handle;
     /* Phase P3-B slice 2: per-task FPU image (fxsave area, 512 B).
      * rix_context_switch only preserves integer callee-saved state;
      * with involuntary preemption a tick can land mid-SSE-sequence in
@@ -86,6 +92,8 @@ static uint32_t sched_cpu(void){
     if(b>=0&&b<SMP_MAX_CPUS)return (uint32_t)b;
     return 0;
 }
+/* Forward: exit paths (below) drop live waiter bindings. */
+static void task_drop_waiter(rix_task_t *t);
 int scheduler_task_allow_ap(rix_task_id_t id){
     if(!id)return -1;
     uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);
@@ -135,7 +143,7 @@ static void sti(void){__asm__ volatile("sti" ::: "memory");}
 static volatile unsigned cpu_preempt_depth[SMP_MAX_CPUS];
 static volatile unsigned cpu_need_resched[SMP_MAX_CPUS];
 static volatile uint64_t cpu_quantum_left[SMP_MAX_CPUS];
-static __attribute__((noreturn)) void task_returned(void){ uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);tasks[cpu_current[sched_cpu()]].state=TASK_DEAD;rix_spin_unlock_irqrestore(&sched_lock,irq);for(;;) scheduler_yield(); }
+static __attribute__((noreturn)) void task_returned(void){ uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);tasks[cpu_current[sched_cpu()]].state=TASK_DEAD;task_drop_waiter(&tasks[cpu_current[sched_cpu()]]);rix_spin_unlock_irqrestore(&sched_lock,irq);for(;;) scheduler_yield(); }
 static void boot_user_entry_marker(void){serial_write("BOOT: USER ENTRY READY\r\n");}
 static void trace_yield_begin(void){}
 static void trace_flags(void){}
@@ -236,6 +244,70 @@ int scheduler_should_yield_from_irq(void){
 }
 rix_task_id_t scheduler_current_id(void){return tasks[cpu_current[sched_cpu()]].id;}
 uint32_t scheduler_runnable_count(void){uint32_t n=0;for(uint32_t i=0;i<RIX_MAX_TASKS;i++)if(tasks[i].state==TASK_RUNNABLE||tasks[i].state==TASK_RUNNING)n++;return n;}
+/* Phase P3 backend: true blocking. prepare() reserves a waiter slot
+ * (id = current task) and stashes the binding in the task; block()
+ * marks it BLOCKED (selection skips it from then on); take() consumes
+ * one wakeup and drops the waiter; abort() unwinds episodes that never
+ * consumed a wakeup (EINTR) without consuming; wake_queue() marks every
+ * task bound to wq RUNNABLE (spurious-safe: takers re-check). Exit
+ * paths drop live bindings so waiter slots never leak. */
+int scheduler_wait_prepare(rix_waitqueue_t *wq, rix_wait_handle_t *out){
+    if(!wq||!out)return -1;
+    uint32_t me=sched_cpu();
+    if(me>=SMP_MAX_CPUS)return -1;
+    rix_task_t *t=&tasks[cpu_current[me]];
+    if(rix_waitqueue_prepare(wq,(uint64_t)t->id,out)!=0)return -1;
+    t->wait_wq=wq;t->wait_handle=*out;
+    return 0;
+}
+void scheduler_block_current(void){
+    uint32_t me=sched_cpu();
+    if(me>=SMP_MAX_CPUS)return;
+    uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);
+    rix_task_t *t=&tasks[cpu_current[me]];
+    if(t->state==TASK_RUNNING||t->state==TASK_RUNNABLE)t->state=TASK_BLOCKED;
+    rix_spin_unlock_irqrestore(&sched_lock,irq);
+}
+int scheduler_wait_take(void){
+    uint32_t me=sched_cpu();
+    if(me>=SMP_MAX_CPUS)return 1;
+    rix_task_t *t=&tasks[cpu_current[me]];
+    if(!t->wait_wq)return 1;
+    int rc=rix_waitqueue_take_wakeup(t->wait_wq,t->wait_handle);
+    (void)rix_waitqueue_remove(t->wait_wq,t->wait_handle);
+    t->wait_wq=NULL;t->wait_handle=(rix_wait_handle_t){0,0};
+    return rc;
+}
+void scheduler_wait_abort(void){
+    uint32_t me=sched_cpu();
+    if(me>=SMP_MAX_CPUS)return;
+    uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);
+    rix_task_t *t=&tasks[cpu_current[me]];
+    if(t->wait_wq){(void)rix_waitqueue_remove(t->wait_wq,t->wait_handle);t->wait_wq=NULL;t->wait_handle=(rix_wait_handle_t){0,0};}
+    if(t->state==TASK_BLOCKED)t->state=TASK_RUNNABLE;
+    rix_spin_unlock_irqrestore(&sched_lock,irq);
+}
+void scheduler_wake_queue(rix_waitqueue_t *wq){
+    if(!wq)return;
+    (void)rix_waitqueue_wake_all(wq);
+    uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);
+    for(uint32_t i=0;i<RIX_MAX_TASKS;i++){
+        if(tasks[i].state==TASK_BLOCKED&&tasks[i].wait_wq==wq)tasks[i].state=TASK_RUNNABLE;
+    }
+    rix_spin_unlock_irqrestore(&sched_lock,irq);
+}
+void scheduler_wake_pid(uint64_t pid){
+    uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);
+    for(uint32_t i=0;i<RIX_MAX_TASKS;i++){
+        if(tasks[i].state==TASK_BLOCKED&&tasks[i].process_pid==pid)tasks[i].state=TASK_RUNNABLE;
+    }
+    rix_spin_unlock_irqrestore(&sched_lock,irq);
+}
+static void task_drop_waiter(rix_task_t *t){
+    if(!t||!t->wait_wq)return;
+    (void)rix_waitqueue_remove(t->wait_wq,t->wait_handle);
+    t->wait_wq=NULL;t->wait_handle=(rix_wait_handle_t){0,0};
+}
 void scheduler_dump_states(void){
  kernel_log("DEBUG: TASKS run=");kernel_log_dec(scheduler_runnable_count());kernel_log(" curidx=");
  kernel_log_dec(cpu_current[sched_cpu()]);kernel_log("\r\n");
@@ -248,7 +320,7 @@ void scheduler_dump_states(void){
 }
 
 static int task_alloc(rix_task_t **out){
-    for(uint32_t i=1;i<RIX_MAX_TASKS;i++){if(tasks[i].state==TASK_UNUSED||tasks[i].state==TASK_DEAD){*out=&tasks[i];return 0;}}
+    for(uint32_t i=1;i<RIX_MAX_TASKS;i++){if(tasks[i].state==TASK_UNUSED||tasks[i].state==TASK_DEAD){*out=&tasks[i];(*out)->wait_wq=NULL;(*out)->wait_handle=(rix_wait_handle_t){0,0};return 0;}}
     return -1;
 }
 static void task_init_stack(rix_task_t *t){
@@ -331,6 +403,7 @@ __attribute__((noreturn)) void scheduler_exit_current(void){
     cli();
     rix_spin_lock(&sched_lock);
     tasks[cpu_current[sched_cpu()]].state=TASK_DEAD;
+    task_drop_waiter(&tasks[cpu_current[sched_cpu()]]);
     rix_spin_unlock(&sched_lock);
     for(;;) scheduler_yield();
 }
@@ -419,7 +492,7 @@ void scheduler_yield(void){
        function. The address space must follow the resumed task, not the task
        that ran immediately before it. */
     rix_task_t*resumed=&tasks[cpu_current[sched_cpu()]];
-    if(resumed->process_pid){if(process_activate(resumed->process_pid)!=0){rix_spin_lock(&sched_lock);resumed->state=TASK_DEAD;rix_spin_unlock(&sched_lock);}}
+    if(resumed->process_pid){if(process_activate(resumed->process_pid)!=0){rix_spin_lock(&sched_lock);resumed->state=TASK_DEAD;task_drop_waiter(resumed);rix_spin_unlock(&sched_lock);}}
     else if(resumed->id==0){(void)process_activate(0);}
     if(flags&0x200ULL)sti();
 }

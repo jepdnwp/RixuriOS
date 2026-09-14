@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include "../sync/waitqueue.h"
 
 typedef uint64_t rix_task_id_t;
 typedef void (*rix_kernel_thread_fn)(void *arg);
@@ -33,7 +34,22 @@ int scheduler_should_yield_from_irq(void);
 void scheduler_yield(void);
 rix_task_id_t scheduler_current_id(void);
 uint32_t scheduler_runnable_count(void);
-/* Phase E2: mark a kernel-thread task AP-runnable (default BSP-only).
+/* Phase P3 backend slice 1: true task blocking on waitqueues.
+ * A task prepared on a queue, marked BLOCKED, is skipped by selection
+ * until a waker marks it RUNNABLE again; waiter lifetime is bound to
+ * the task (exit paths drop it). Spurious wakeups are safe: takers
+ * always re-check their condition. Protocol per episode: prepare ->
+ * block -> [woken] -> take -> done(remove). */
+int scheduler_wait_prepare(rix_waitqueue_t *wq, rix_wait_handle_t *out);
+void scheduler_block_current(void);
+int scheduler_wait_take(void);
+void scheduler_wait_abort(void);
+void scheduler_wake_queue(rix_waitqueue_t *wq);
+/* Wake tasks of one process (signal delivery): any BLOCKED task bound
+ * to pid becomes RUNNABLE so it re-checks (EINTR or spurious re-block
+ * are both correct outcomes). Spurious wakes are safe by the
+ * take-then-recheck protocol. */
+void scheduler_wake_pid(uint64_t pid);/* Phase E2: mark a kernel-thread task AP-runnable (default BSP-only).
  * 0 ok, -1 unknown id. Tasks[0], user tasks and unaudited workers stay
  * BSP-pinned; APs run only ap_ok kernel threads. */
 int scheduler_task_allow_ap(rix_task_id_t id);
