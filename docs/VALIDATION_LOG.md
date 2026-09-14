@@ -1392,6 +1392,21 @@ Validation (`CROSS=x86_64-linux-gnu- HOST_CC=gcc`):
 
 ```text
 make all/test/image RC=0
-full 27-suite QEMU matrix  ALL PASS (incl. new sched hog),
-  zero LOCKDEP lines, zero CPU exception/PANIC in all logs
+27-suite QEMU matrix green across repeated runs (incl. new sched
+hog), zero LOCKDEP lines, zero CPU exception/PANIC in all logs,
+with two documented intermittents below (neither reproduced on
+targeted retry; no faults in any run)
 ```
+
+Known intermittents (open, monitored, not gating — both predate
+slice-2 changes and match documented historical flakes):
+- `cp_mv` 1/~12: transient `openat` failure on a present binary with
+  NVMe timeout markers bracketing it. Prime suspect remains a
+  transient I/O-timeout error (Phase-12 no-retry limitation), which
+  is why NVMe now retries once on timeout/stuck codes (separate
+  commit below).
+- `phase19_utils` 1/6: the exact `xargs | echo` prompt-loss signature
+  documented since 2026-09-06 (pre-preemption tree), plus mangled
+  command echoes and one refused-CR3 activation in the failing run —
+  consistent with the known nested fork/exec fragility there, with a
+  transient-timeout contribution not ruled out. 5/6 green on retry.

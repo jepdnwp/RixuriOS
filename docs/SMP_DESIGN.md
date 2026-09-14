@@ -250,6 +250,14 @@ Three gaps in the above landed after it was written:
   initial-prompt sync + end-of-run quiescence in the harness (same
   pattern as sched/env_utils). Bounded NVMe read-retry is sequenced
   as explicit Phase-12 follow-up work, not bundled here.
+- **One `phase19_utils` flake in 6 runs** (the exact `xargs | echo`
+  prompt-loss signature documented since 2026-09-12 on the
+  pre-preemption tree, plus mangled command echoes and a refused-CR3
+  activation in that run; no faults/panics; 5/6 green on retry).
+  Consistent with the known nested fork/exec fragility there (still
+  open), with a transient-timeout contribution not ruled out. Suite
+  left as-is (no weakened assertions); keep-harness + image
+  preservation approach documented for any recurrence.
 
 ## Phase P1 (reverted 2026-09-12): timer preemption is premature
 
