@@ -43,7 +43,10 @@ void syscall_dispatch(rix_syscall_frame_t*frame){
   if(!len){result=0;break;}
   if(fd==0&&!vfs_fd_is_open(self,(int)fd)){
    uint8_t b[RIX_IO_CHUNK];size_t n=(size_t)(len>RIX_IO_CHUNK?RIX_IO_CHUNK:len),got=0;
-   for(;;){int rc=tty_read(0,b,n,&got);if(rc==0)break;if(rc==-3){if(syscall_interrupted(self)){result=-RIX_EINTR;break;}scheduler_yield();continue;}result=-RIX_EINVAL;break;}
+   /* Phase P3 backend: tty_read_blocking sleeps the task (TASK_BLOCKED)
+    * instead of yield-spinning; same yield/take/retry + EINTR/abort shape
+    * as the pipe path below. Signal wake arrives via scheduler_wake_pid. */
+   for(;;){int rc=tty_read_blocking(0,b,n,&got);if(rc==0)break;if(rc==-3&&got==0){if(syscall_interrupted(self)){scheduler_wait_abort();result=-RIX_EINTR;break;}scheduler_yield();(void)scheduler_wait_take();continue;}result=-RIX_EINVAL;break;}
    if(result==-RIX_EINVAL)break;
    if(got&&copy_to_user(dst,b,got)!=0){result=-RIX_EFAULT;break;}
    result=(int64_t)got;break;
@@ -62,7 +65,7 @@ void syscall_dispatch(rix_syscall_frame_t*frame){
   if(done==len||len==0||done>0)result=(int64_t)done;
   break;
  }
- case RIX_SYS_WRITE:{static unsigned ring3_write_trace;uint64_t fd=frame->rdi,src=frame->rsi,len=frame->rdx;if(len>RIX_MAX_IO){result=-RIX_EINVAL;break;}if((fd==1||fd==2)&&!vfs_fd_is_open(self,(int)fd)){uint8_t b[RIX_IO_CHUNK];uint64_t done=0;if(ring3_write_trace<8){kernel_log("RING3: write enter fd=");kernel_log_dec(fd);kernel_log(" len=");kernel_log_dec(len);kernel_log(" src=");kernel_log_hex(src);kernel_log("\r\n");}while(done<len){size_t n=(size_t)(len-done);if(n>RIX_IO_CHUNK)n=RIX_IO_CHUNK;if(copy_from_user(b,src+done,n)!=0){result=done?((int64_t)done):-(int64_t)RIX_EFAULT;break;}size_t wrote=0;if(tty_output(0,b,n,&wrote)!=0){result=done?((int64_t)done):-(int64_t)RIX_EINVAL;break;}serial_write_com1_n((const char*)b,wrote);done+=wrote;}if(done==len)result=(int64_t)done;if(ring3_write_trace<8){kernel_log("RING3: write exit result=");kernel_log_dec((uint64_t)(result<0?-result:result));kernel_log(result<0?" error\r\n":" ok\r\n");ring3_write_trace++;}break;}if(fd==0&&!vfs_fd_is_open(self,(int)fd)){result=-RIX_EINVAL;break;}uint8_t b[RIX_IO_CHUNK];size_t done=0;while(done<len){size_t n=(size_t)(len-done);if(n>RIX_IO_CHUNK)n=RIX_IO_CHUNK;if(copy_from_user(b,src+done,n)!=0){result=done?((int64_t)done):-(int64_t)RIX_EFAULT;break;}size_t wrote=0;if(vfs_write(self,(int)fd,b,n,&wrote)!=0){result=done?((int64_t)done):-(int64_t)RIX_EINVAL;break;}done+=wrote;if(wrote<n)break;}if(done==len||len==0)result=(int64_t)done;break;}
+ case RIX_SYS_WRITE:{static unsigned ring3_write_trace;uint64_t fd=frame->rdi,src=frame->rsi,len=frame->rdx;if(len>RIX_MAX_IO){result=-RIX_EINVAL;break;}if((fd==1||fd==2)&&!vfs_fd_is_open(self,(int)fd)){uint8_t b[RIX_IO_CHUNK];uint64_t done=0;if(ring3_write_trace<8){kernel_log("RING3: write enter fd=");kernel_log_dec(fd);kernel_log(" len=");kernel_log_dec(len);kernel_log(" src=");kernel_log_hex(src);kernel_log("\r\n");}while(done<len){size_t n=(size_t)(len-done);if(n>RIX_IO_CHUNK)n=RIX_IO_CHUNK;if(copy_from_user(b,src+done,n)!=0){result=done?((int64_t)done):-(int64_t)RIX_EFAULT;break;}size_t wrote=0;if(tty_output(0,b,n,&wrote)!=0){result=done?((int64_t)done):-(int64_t)RIX_EINVAL;break;}serial_write_com1_n((const char*)b,wrote);done+=wrote;}if(done==len)result=(int64_t)done;if(ring3_write_trace<8){kernel_log("RING3: write exit result=");kernel_log_dec((uint64_t)(result<0?-result:result));kernel_log(result<0?" error\r\n":" ok\r\n");ring3_write_trace++;}break;}if(fd==0&&!vfs_fd_is_open(self,(int)fd)){result=-RIX_EINVAL;break;}uint8_t b[RIX_IO_CHUNK];size_t done=0;while(done<len){size_t n=(size_t)(len-done);if(n>RIX_IO_CHUNK)n=RIX_IO_CHUNK;if(copy_from_user(b,src+done,n)!=0){result=done?((int64_t)done):-(int64_t)RIX_EFAULT;break;}size_t wrote=0;int wrc=vfs_write(self,(int)fd,b,n,&wrote);/* Phase P3 backend: a full pipe sleeps the writer (TASK_BLOCKED) instead of failing EINVAL; yield/take/retry + EINTR/abort like the read path. Partial progress keeps legacy short-write return. */if(wrc==-3&&wrote==0){if(syscall_interrupted(self)){scheduler_wait_abort();result=done?((int64_t)done):-(int64_t)RIX_EINTR;break;}scheduler_yield();(void)scheduler_wait_take();continue;}if(wrc!=0){result=done?((int64_t)done):-(int64_t)RIX_EINVAL;break;}done+=wrote;if(wrote<n)break;}if(done==len||len==0)result=(int64_t)done;break;}
  case RIX_SYS_DUP:{int new_fd;if(vfs_dup(self,(int)frame->rdi,&new_fd)!=0){result=-RIX_EINVAL;break;}result=new_fd;break;}
  case RIX_SYS_DUP2:if(vfs_dup_to(self,(int)frame->rdi,(int)frame->rsi)!=0)result=-RIX_EINVAL;else result=frame->rsi;break;
  case RIX_SYS_FCNTL:{int fd=(int)frame->rdi,command=(int)frame->rsi;uint32_t flags=0;int new_fd;if(command==0){if(vfs_dup_min(self,fd,(int)frame->rdx,&new_fd)!=0)result=-RIX_EINVAL;else result=new_fd;}else if(command==3){if(vfs_get_fd_flags(self,fd,&flags)!=0)result=-RIX_EINVAL;else result=flags;}else if(command==4){if(vfs_set_fd_flags(self,fd,(uint32_t)frame->rdx)!=0)result=-RIX_EINVAL;else result=0;}else result=-RIX_EINVAL;break;}
@@ -96,17 +99,20 @@ void syscall_dispatch(rix_syscall_frame_t*frame){
  case RIX_SYS_CHOWN:{char path[RIX_VFS_PATH_MAX];if(user_string(frame->rdi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}result=vfs_result(vfs_chown(path,(uint32_t)frame->rsi,(uint32_t)frame->rdx));break;}
  case RIX_SYS_RENAME:{char old_path[RIX_VFS_PATH_MAX],new_path[RIX_VFS_PATH_MAX];if(user_string(frame->rdi,old_path,sizeof(old_path))!=0||user_string(frame->rsi,new_path,sizeof(new_path))!=0){result=-RIX_EFAULT;break;}result=vfs_result(vfs_rename(old_path,new_path));break;}
  case RIX_SYS_EXIT:if(process_exit(self,frame->rdi)!=0)result=-RIX_EINVAL;else scheduler_exit_current();break;
- case RIX_SYS_WAIT:{
-  pid_t wanted=(pid_t)frame->rdi;uint64_t status=0;pid_t child=0;int rc;
-  for(;;){rc=process_wait(self,wanted,&status,&child);if(rc==1){if(syscall_interrupted(self)){result=-RIX_EINTR;break;}scheduler_yield();continue;}break;}
+  case RIX_SYS_WAIT:{
+   pid_t wanted=(pid_t)frame->rdi;uint64_t status=0;pid_t child=0;int rc;
+   /* Phase P3 backend: process_wait_blocking sleeps (TASK_BLOCKED) until
+    * a child exit wakes the parent pid; yield/take/retry + EINTR/abort
+    * like the pipe path. */
+   for(;;){rc=process_wait_blocking(self,wanted,&status,&child);if(rc==1){if(syscall_interrupted(self)){scheduler_wait_abort();result=-RIX_EINTR;break;}scheduler_yield();(void)scheduler_wait_take();continue;}break;}
   if(result==-(int64_t)RIX_EINTR)break;
   if(rc==2||rc<0){result=-RIX_EINVAL;break;}
   if(copy_to_user(frame->rsi,&status,sizeof(status))!=0){result=-RIX_EFAULT;break;}
   result=(int64_t)child;break;
  }
- case RIX_SYS_WAITPID:{
-  pid_t wanted=(pid_t)frame->rdi;uint64_t status=0;pid_t child=0;int rc=process_wait(self,wanted,&status,&child);
-  if(rc==1){if((uint32_t)frame->rdx&RIX_WAITPID_NOHANG){result=0;break;}for(;;){if(syscall_interrupted(self)){result=-RIX_EINTR;break;}scheduler_yield();rc=process_wait(self,wanted,&status,&child);if(rc!=1)break;}if(result==-(int64_t)RIX_EINTR)break;}
+  case RIX_SYS_WAITPID:{
+   pid_t wanted=(pid_t)frame->rdi;uint64_t status=0;pid_t child=0;int rc=process_wait_blocking(self,wanted,&status,&child);
+   if(rc==1){if((uint32_t)frame->rdx&RIX_WAITPID_NOHANG){result=0;break;}for(;;){if(syscall_interrupted(self)){scheduler_wait_abort();result=-RIX_EINTR;break;}scheduler_yield();(void)scheduler_wait_take();rc=process_wait_blocking(self,wanted,&status,&child);if(rc!=1)break;}if(result==-(int64_t)RIX_EINTR)break;}
   if(rc==2||rc<0){result=-RIX_EINVAL;break;}
   if(copy_to_user(frame->rsi,&status,sizeof(status))!=0){result=-RIX_EFAULT;break;}
   result=(int64_t)child;break;
@@ -142,7 +148,7 @@ pid_t session=p->session;for(unsigned tty=0;tty<RIX_TTY_COUNT;tty++)(void)tty_de
  case RIX_SYS_LIST_SESSIONS:{size_t capacity=(size_t)frame->rsi,total=0;rix_session_info_t snapshot[RIX_SESSION_MAX];if(capacity>RIX_SESSION_MAX||process_list_sessions(snapshot,capacity,&total)!=0){result=-RIX_EINVAL;break;}if(copy_to_user(frame->rdx,&total,sizeof(total))!=0||(total&&copy_to_user(frame->rdi,snapshot,total*sizeof(snapshot[0]))!=0))result=-RIX_EFAULT;else result=(int64_t)total;break;}
  case RIX_SYS_LIST_PROCESSES:{size_t capacity=(size_t)frame->rsi,total=0;rix_process_info_t snapshot[RIX_PROCESS_MAX];if(capacity>RIX_PROCESS_MAX||process_list_processes(snapshot,capacity,&total)!=0){result=-RIX_EINVAL;break;}if(copy_to_user(frame->rdx,&total,sizeof(total))!=0||(total&&copy_to_user(frame->rdi,snapshot,total*sizeof(snapshot[0]))!=0))result=-RIX_EFAULT;else result=(int64_t)total;break;}
  case RIX_SYS_CLOCK_GETTIME:{rix_timespec_t now;if(time_realtime(&now)!=0||copy_to_user(frame->rdi,&now,sizeof(now))!=0)result=-RIX_EINVAL;else result=0;break;}
- case RIX_SYS_NANOSLEEP:{rix_timespec_t request;if(copy_from_user(&request,frame->rdi,sizeof(request))!=0||request.nsec>=1000000000ULL){result=-RIX_EINVAL;break;}if(request.sec>UINT64_MAX/1000000000ULL||request.sec*1000000000ULL>UINT64_MAX-request.nsec){result=-RIX_EINVAL;break;}uint64_t duration=request.sec*1000000000ULL+request.nsec;uint64_t start=time_monotonic_ns();if(duration>UINT64_MAX-start){result=-RIX_EINVAL;break;}uint64_t deadline=start+duration;while(time_monotonic_ns()<deadline){if(syscall_interrupted(self)){result=-RIX_EINTR;break;}scheduler_yield();}if(result!=-(int64_t)RIX_EINTR)result=0;break;}
+  case RIX_SYS_NANOSLEEP:{rix_timespec_t request;if(copy_from_user(&request,frame->rdi,sizeof(request))!=0||request.nsec>=1000000000ULL){result=-RIX_EINVAL;break;}if(request.sec>UINT64_MAX/1000000000ULL||request.sec*1000000000ULL>UINT64_MAX-request.nsec){result=-RIX_EINVAL;break;}uint64_t duration=request.sec*1000000000ULL+request.nsec;uint64_t start=time_monotonic_ns();if(duration>UINT64_MAX-start){result=-RIX_EINVAL;break;}uint64_t deadline=start+duration;/* Phase P3 backend: sleep on the tick-driven queue instead of yield-spinning (same 10 ms granularity as the tick-based clock). Prepare -> recheck -> block: a tick in the window only costs one extra tick. Table-full falls back to legacy polling. */for(;;){if(time_monotonic_ns()>=deadline)break;if(syscall_interrupted(self)){scheduler_wait_abort();result=-RIX_EINTR;break;}rix_wait_handle_t swh={0,0};if(scheduler_wait_prepare(time_sleep_queue(),&swh)==0){if(time_monotonic_ns()>=deadline){scheduler_wait_abort();break;}scheduler_block_current();}scheduler_yield();(void)scheduler_wait_take();}if(result!=-(int64_t)RIX_EINTR)result=0;break;}
  case RIX_SYS_YIELD:{if(syscall_interrupted(self)){result=-RIX_EINTR;break;}scheduler_yield();result=0;break;}
  case RIX_SYS_SHM_CREATE:{uint32_t id;if(shm_create(frame->rdi,(rix_shm_id_t*)&id)!=0){result=-RIX_EINVAL;break;}if(copy_to_user(frame->rsi,&id,sizeof(id))!=0){(void)shm_destroy(id);result=-RIX_EFAULT;break;}result=0;break;}
  case RIX_SYS_SHM_MAP:{uint32_t id=(uint32_t)frame->rdi;uint64_t va=frame->rsi,flags=frame->rdx;if(shm_map(id,self,va,flags)!=0)result=-RIX_EINVAL;else result=0;break;}

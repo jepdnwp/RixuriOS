@@ -259,6 +259,66 @@ Three gaps in the above landed after it was written:
   left as-is (no weakened assertions); keep-harness + image
   preservation approach documented for any recurrence.
 
+## Phase E7 (done 2026-09-14): symmetric AP preemption
+
+BSP-only quanta (P3-B slice 2) left APs cooperative: an AP running a
+never-yielding task never switched, and a hlt-parked AP could sleep
+through a wake (no periodic AP timer exists — PIT IRQ0 is BSP-routed).
+E7 makes preemption symmetric without a new timer or vector:
+
+- **Quanta for all CPUs, driven by the PIT owner.** `pit_irq` already
+  calls `scheduler_preempt_tick()` on the BSP; the tick now pets every
+  ONLINE CPU's quantum row (cross-CPU plain volatile stores, benign
+  under TSO — worst case one quantum slips one tick). On an AP row
+  expiry with AP-eligible work RUNNABLE (same rule as AP selection:
+  idx!=0, `process_pid==0`, `ap_ok`), the AP is armed and kicked with
+  a targeted WAKEUP IPI (`smp_wakeup`, fire-and-forget, bounded send).
+  Rate is quantum-bounded (<=10 Hz per AP) and gated on eligible work
+  plus online>1: UP boots and idle systems send zero IPIs.
+- **IPI-return yield.** `x86_ipi_dispatch` EOIs, then runs the same
+  `scheduler_should_yield_from_irq()` → `scheduler_yield()` check as
+  `x86_irq_dispatch` (P1 lesson kept: EOI before any switch; the stub
+  frame discipline is identical, so the switch is equally transparent).
+  The WAKEUP IPI is thus both the hlt-breaker and the spinner-preempter.
+  `lapic_send_ipi` is bounded-MMIO with no locks, so kicks are safe
+  from IRQ-context wakers (e.g. ps2-IRQ `tty_input`).
+- **Yield gates against stale AP context (the load-bearing audit).** A
+  hlt-parked AP's `cpu_current` is whatever ran last — possibly a slot
+  recycled by another CPU. Yielding there would switch with a foreign
+  task (clobbering its saved RSP, flipping a live task RUNNABLE,
+  activating a foreign address space). Two gates in
+  `scheduler_should_yield_from_irq`, both lock-free: skip while the
+  local `cpu_in_idle` hlt flag is set, and unless the local current
+  slot is genuinely RUNNING. The flag is set under the AP's pick lock
+  (IF masked — no IPI slips between mark and hlt) and cleared after
+  hlt. A skipped pickup only delays AP work: the BSP runs every ap_ok
+  task too, so liveness never depends on the gates. BSP behavior is
+  unchanged (never parked; current always RUNNING when it matters —
+  the transient BLOCKED-on-CPU window between mark and voluntary yield
+  simply consumes the flag at the imminent yield).
+- **Cross-CPU wakeup.** `scheduler_wake_queue`/`scheduler_wake_pid`
+  broadcast `smp_wakeup_aps()` after unlock when a woken task is
+  AP-eligible (prompt pickup; the 10 Hz quantum arm remains as the
+  staleness bound). E2's never-hold-sched_lock-across-IPI rule kept.
+- **Bounded APREEMPT trace.** `scheduler_yield` logs the first 3 AP
+  quantum consumptions (`APREEMPT cpu=N`): mechanism proof, not
+  time-sharing proof (a voluntary AP yield also consumes).
+- **Proof workload + harness.** Three never-yielding ap_ok spinners
+  (main.c, SMP boots only — UP stays byte-identical) spin ~400 guest
+  ticks each with 8 tick-paced reports, then exit. Tick pacing keeps
+  the window quantum-meaningful on any host speed. New
+  `scripts/qemu_smp_preempt_test.py` (-smp 2) requires APREEMPT plus
+  an INTERLEAVED A/B/C-on-cpu-1 sequence (max same-spinner run <=4):
+  mere presence would also pass on a cooperative tree (spinners exit,
+  so even a cooperative AP runs all three sequentially — eight A-on-1
+  in a row). Observed steady state round-robins in pairs.
+- Acceptance: `make all/test/image` RC=0; UP identical; -smp 2 harness
+  PASS; full matrix green with zero fault/LOCKDEP lines. Revert bar:
+  any AP fault, wedged boot, or grouped cpu-1 sequence.
+- Explicitly NOT in E7: per-CPU runqueues (global scan under one lock
+  stays), thread/TID/clone (P25), worker migration beyond serial (E5
+  still deferred), LAPIC timer, IPI-ack protocols for wakeup.
+
 ## Phase P1 (reverted 2026-09-12): timer preemption is premature
 
 ## Phase H1 (done 2026-09-12): hardware xHCI port-reset recovery

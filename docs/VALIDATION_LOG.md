@@ -1438,3 +1438,130 @@ new pipetest (close-EOF + write-then-close determinism) PASS
 pipe-stress (blocked-reader preservation) PASS
 full 28-suite QEMU matrix  ALL PASS, zero LOCKDEP/fault lines
 ```
+
+## 2026-09-14 — P3 backend slice 2: true blocking TTY (console) reads
+
+The last yield-spin in the hot path is gone: fd-0 console reads now
+sleep (TASK_BLOCKED) via tty_read_blocking instead of spinning on
+tty_read == -3. The reader holds tty_input_lock (irqsave: depositors
+run in ps2-IRQ, serial-worker and USB-poll contexts) across
+check+prepare+block, so a byte is either observed by the check or
+wakes the registered waiter; tty_input wakes after releasing the lock
+(the waker holds nothing, so no new nesting against blocked readers).
+Wake is unconditional on rc (spurious-safe: readers re-check under the
+lock); signal wake arrives via the existing pid-wide
+scheduler_wake_pid. Table-full falls back to legacy polling; the host
+build maps tty_read_blocking to plain tty_read (no scheduler) with the
+real waitqueue.c and lock.c linked into tty-test (the test-local lock
+stubs were removed).
+
+Validation (CROSS=x86_64-linux-gnu- HOST_CC=gcc):
+
+```text
+make all/test/image RC=0 (-Werror; only pre-existing font_psf note)
+host tty-test PASS (real wq init), full host suite PASS
+qemu_sched_test PASS (hog first_ms=130 total_ms=2420, PREEMPT live)
+qemu_pipe_close_test + qemu_signal_test PASS (incl. ctrl-c/z/backslash)
+run-all-tests.sh RESULT: 30 PASS, 0 FAIL; zero LOCKDEP/violation lines
+```
+
+Still polling (sequenced next): nanosleep, waitpid, pipe writers.
+
+## 2026-09-14 — P3 backend slices 3-5: nanosleep, waitpid, pipe writers
+
+All remaining yield-spins now truly block. Three independent slices,
+one shared shape (check+prepare+block atomic under the owning guard,
+yield/take/retry + EINTR/abort in the syscall loop, table-full falls
+back to legacy polling):
+
+- nanosleep: new tick-driven sleep queue owned by time.c
+  (time_sleep_queue/time_sleep_tick, 10 ms granularity identical to
+  the tick-based monotonic clock, so no precision is lost). The PIT
+  tick wakes it, gated by a lock-free occupancy peek (stale-zero
+  skips one wake and self-heals next tick; stale-nonzero costs one
+  redundant wake). No shared guard with IRQ context exists, so the
+  syscall uses prepare -> recheck-deadline -> block; a tick in the
+  window only costs one extra tick because ticks are perpetual.
+- waitpid (WAIT + WAITPID): new process_wait_blocking shares a scan
+  core with process_wait; the 1 case marks TASK_BLOCKED under
+  PROCESS_GUARD. process_exit_locked (the single ZOMBIE choke point)
+  publishes ZOMBIE then wakes the parent pid under the same guard —
+  set-then-wake, pid-wide and spurious-safe like the signal path.
+  Lock audit: sched_lock is never held across process_activate
+  (RIX_DEBUG_NO_CTX_SWITCH is 0; yield unlocks before switch and
+  re-activates after), process_lookup is lock-free, and sched_lock is
+  lockdep-untracked, so PROC -> sched adds no tracked nesting and no
+  reverse edge exists.
+- pipe writers: new per-slot write_wq. Full-with-zero-progress (and
+  reader still open; pipe_write itself returns -1 once the read end
+  closes) prepares+blocks under VFS_GUARD; readers wake writers on
+  every drain, and every pipe-end closure wakes both queues (EOF for
+  readers, error re-check for writers). Partial writes keep legacy
+  short-write return. The syscall write loop retries -3/zero exactly
+  like the read path. Full-pipe write previously failed EINVAL; a
+  same-task write past capacity with no concurrent drain now blocks
+  instead (POSIX-correct) — all in-tree pipe users were audited
+  (small forked payloads only).
+
+Caught by testing, fixed in-slice: the new 8KB backpressure case
+initially used one 8192-byte write(), which the syscall layer rejects
+(RIX_MAX_IO 4096) — a test bug, not a kernel bug. Chunked to 32x256B
+(32 sequential writes still exceed capacity and force blocking).
+
+Validation (CROSS=x86_64-linux-gnu- HOST_CC=gcc):
+
+```text
+make all RC=0 (-Werror; only pre-existing font_psf note)
+qemu_pipe_stress PASS, qemu_session PASS, qemu_phase20_cred PASS
+(kill=PASS: blocked gate-read + signal + reap under new wait path)
+qemu_sched PASS (hog first_ms=120 total_ms=2220: nanosleep-calibrated
+hog still preempted; 10 ms sleep granularity intact)
+qemu_pipe_close PASS with new pipe-backpressure=PASS (8KB byte-exact
+through the 4KB channel — closes the Phase D blocked-writer item)
+run-all-tests.sh RESULT: 30 PASS, 0 FAIL (log
+build/test-logs/all-tests-20260914T062317Z.log); zero CPU-exception
+and zero LOCKDEP/violation lines
+```
+
+No polling sleeps remain in syscall paths. Next: AP-symmetric
+preemption, thread/TID, per-CPU runqueues (still locked).
+
+## 2026-09-14 — Phase E7: symmetric AP preemption
+
+APs were cooperative (BSP-only quanta): an AP running a
+never-yielding task never switched, and a hlt-parked AP could sleep
+through a wake. E7 preempts APs with no new timer or vector: the PIT
+tick pets every ONLINE CPU's quantum row, and on AP-row expiry with
+AP-eligible work runnable the AP is armed and kicked with a targeted
+WAKEUP IPI (<=10 Hz per AP, gated on work and online>1 — UP/idle send
+zero IPIs). `x86_ipi_dispatch` EOIs then runs the same
+should-yield/yield check as the IRQ path, so the IPI both breaks hlt
+and preempts spinners. `scheduler_wake_queue`/`wake_pid` broadcast a
+kick when AP-eligible work becomes runnable (after unlock, E2 rule
+kept). Load-bearing audit: the yield gate skips hlt-parked APs
+(`cpu_in_idle`, set under the pick lock before unlock) and requires
+the local current slot to be RUNNING — yielding with a stale
+cpu_current (possibly recycled by another CPU) would corrupt live
+scheduler state; a skipped pickup only delays AP work (BSP backstops
+every ap_ok task). Bounded APREEMPT trace proves arm consumption;
+three ap_ok never-yielding spinners (SMP boots only, ~400 guest ticks
+each, then exit) prove time-sharing. Design in docs/SMP_DESIGN.md.
+
+Validation (CROSS=x86_64-linux-gnu- HOST_CC=gcc):
+
+```text
+make all/test/image RC=0 (-Werror; only pre-existing font_psf note)
+qemu_smp_preempt_test (-smp 2): PASS — APREEMPT cpu=1 plus
+  INTERLEAVED A/B/C-on-cpu-1 (steady state round-robins in pairs),
+  SHELL READY, zero fault markers
+A/B negative control (mechanism stashed, spinners kept): harness
+  FAILs as required, and the cpu-1 subsequence groups A-x8/B-x2/C-x1 —
+  proving mere presence cannot discriminate and the interleave bound
+  (max run <=4) is load-bearing. Mechanism restored afterwards.
+run-all-tests.sh RESULT: 31 PASS, 0 FAIL (auto-includes the new
+  harness); zero CPU-exception and zero LOCKDEP/violation lines
+```
+
+Explicitly NOT in E7: per-CPU runqueues, thread/TID/clone, worker
+migration beyond serial, LAPIC timer. Next: per-CPU runqueues, then
+threads.

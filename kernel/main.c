@@ -238,6 +238,32 @@ static void smp_e2_probe_worker(void *arg){
  scheduler_yield();
  {static unsigned n=0;if(n<1){klog_write("SMP: E2 probe done\r\n");n++;}}
 }
+/* Phase E7 symmetric-preemption proof: three never-yielding spinners
+ * (A/B/C), ap_ok so any CPU may run them. Each spins on its own counter
+ * for ~400 guest ticks (~4 s, ~40 quanta), reporting its CPU every 50
+ * ticks (8 bounded lines), then exits (also exercising the AP
+ * idle-return path under load). Tick pacing (not iteration pacing) keeps
+ * the window quantum-meaningful on any host speed: on fast silicon 8
+ * iteration-paced reports would fire inside one quantum and prove
+ * nothing. Discrimination (QEMU -smp 2): a cooperative AP runs its
+ * first spinner forever, so at most one spinner is ever observed on
+ * cpu 1; with tick quanta + WAKEUP-IPI preemption the AP round-robins
+ * all three, so A, B and C each log cpu=1 (plus APREEMPT arm lines).
+ * The bounded window returns the machine to normal afterwards. */
+#define E7_SPIN_REPORT_TICKS 50u
+#define E7_SPIN_REPORT_MAX 8u
+static volatile uint64_t e7_spin_a, e7_spin_b, e7_spin_c;
+static void smp_e7_spinner(const char *tag, volatile uint64_t *ctr){
+ unsigned n=0;uint64_t last=scheduler_ticks();
+ for(;;){
+  (*ctr)++;
+  uint64_t now=scheduler_ticks();
+  if(now-last>=E7_SPIN_REPORT_TICKS&&n<E7_SPIN_REPORT_MAX){int c=smp_cpu_id();klog_write("SMP: E7 ");klog_write(tag);klog_write(" on cpu=");klog_write_dec((uint64_t)(c<0?99:c));klog_write("\r\n");last=now;if(++n>=E7_SPIN_REPORT_MAX)return;}
+ }
+}
+static void smp_e7_spinner_a(void *arg){(void)arg;smp_e7_spinner("A",&e7_spin_a);}
+static void smp_e7_spinner_b(void *arg){(void)arg;smp_e7_spinner("B",&e7_spin_b);}
+static void smp_e7_spinner_c(void *arg){(void)arg;smp_e7_spinner("C",&e7_spin_c);}
 static const char *vfs_mount_rc_string(int rc){switch(rc){case 0:return "ok";case -1:return "bad device";case -2:return "no memory";case -3:return "superblock read IO error";case -4:return "superblock too small";case -5:return "not a RixFS superblock";case -6:return "superblock geometry inconsistent";case -7:return "inode table overflow";case -8:return "superblock layout overlap";case -9:return "journal replay failed";default:return "unknown";}}
 static void try_mount_root(void){const char *names[]={"nvme0n1","nvme0n1p1","nvme1n1","nvme1n1p1"};for(size_t b=0;b<block_device_count();b++){const rix_block_device_t*bd=block_device_at(b);if(!bd)continue;klog_write("BLOCK: ");klog_write(bd->name);klog_write(" sectors=");klog_write_dec(bd->sector_count);klog_write(" sector_size=");klog_write_dec(bd->sector_size);klog_write("\r\n");}for(size_t c=0;c<nvme_controller_count();c++){const rix_nvme_controller_t*nc=nvme_controller(c);if(!nc)continue;for(uint32_t ns=0;ns<32u;ns++){if(!nc->namespaces[ns].used)continue;klog_write("NVMe: ctrl=");klog_write_dec(c);klog_write(" ns=");klog_write_dec(nc->namespaces[ns].nsid);klog_write(" sectors=");klog_write_dec(nc->namespaces[ns].size_lba);klog_write(" sector_size=");klog_write_dec(nc->namespaces[ns].lba_size);klog_write("\r\n");}}int last_rc=0,tried=0;for(size_t i=0;i<sizeof(names)/sizeof(names[0]);i++){rix_block_device_t*d=block_find(names[i]);if(!d)continue;tried=1;int rc=vfs_mount_root(d);last_rc=rc;klog_write("VFS: mount ");klog_write(names[i]);klog_write(" rc=");klog_write_dec((uint64_t)(rc<0?-rc:rc));klog_write("\r\n");if(rc==0)return;}if(!tried)klog_write("VFS: no candidate block devices present (embedded init continues)\r\n");else if(last_rc!=0){klog_write("VFS: disk root unavailable (");klog_write(vfs_mount_rc_string(last_rc));klog_write("); using embedded init\r\n");}}
 
@@ -340,6 +366,16 @@ void kernel_main(const rixuri_boot_info_t *boot){
  rix_task_id_t e2_probe_task=0;
  if(scheduler_create_kernel_thread(smp_e2_probe_worker,0,&e2_probe_task)!=0)panic("failed to create E2 probe worker");
  if(scheduler_task_allow_ap(e2_probe_task)!=0)panic("failed to flag E2 probe AP-runnable");
+ /* Phase E7: symmetric-preemption proof trio, SMP boots only (UP boot
+  * stays byte-identical: no extra tasks, zero IPIs). Created after the
+  * probe so boot-order evidence is stable. */
+ if(smp_online_count()>1){
+  rix_task_id_t e7_a=0,e7_b=0,e7_c=0;
+  if(scheduler_create_kernel_thread(smp_e7_spinner_a,0,&e7_a)!=0)panic("failed to create E7 spinner A");
+  if(scheduler_create_kernel_thread(smp_e7_spinner_b,0,&e7_b)!=0)panic("failed to create E7 spinner B");
+  if(scheduler_create_kernel_thread(smp_e7_spinner_c,0,&e7_c)!=0)panic("failed to create E7 spinner C");
+  if(scheduler_task_allow_ap(e7_a)!=0||scheduler_task_allow_ap(e7_b)!=0||scheduler_task_allow_ap(e7_c)!=0)panic("failed to flag E7 spinners AP-runnable");
+ }
 	 klog_write("USER: embedded init prepared, pid=");klog_write_dec(user_pid);klog_write(" task=");klog_write_dec(user_task);klog_write("\r\n");
 	 klog_write("BOOT: ps2 init begin\r\n");
 	 ps2_keyboard_init();

@@ -196,6 +196,14 @@ void x86_ipi_dispatch(const void *raw) {
         }
     }
     lapic_eoi();
+    /* Phase E7: an IPI is an IRQ-return boundary like any other. EOI is
+     * done (P1 lesson), so a tick-armed quantum may yield now — this is
+     * what preempts an AP spinner (the BSP tick armed it, this WAKEUP
+     * IPI delivers the boundary). scheduler_should_yield_from_irq is
+     * lock-free and carries the hlt-park/recycled-slot gates, and yield
+     * runs on the interrupted task's stack exactly like the irq.c path;
+     * sched_lock is never held with IF=1 anywhere, so no self-deadlock. */
+    if (scheduler_should_yield_from_irq()) scheduler_yield();
 }
 
 int smp_ping(size_t index) {

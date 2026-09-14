@@ -212,7 +212,7 @@ hid-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -DHID_PARSER_HOST_TEST -I. tests/hid_report_test.c kernel/usb/hid.c -o build/hid_report_test
 	build/hid_report_test
 tty-test: | build
-		$(HOST_CC) -std=c17 -Wall -Wextra -Werror -DRIX_HOST_TEST -I. tests/tty_test.c kernel/tty/tty.c -o build/tty_test
+		$(HOST_CC) -std=c17 -Wall -Wextra -Werror -DRIX_HOST_TEST -I. tests/tty_test.c kernel/tty/tty.c kernel/sync/waitqueue.c kernel/sync/lock.c -o build/tty_test
 	build/tty_test
 shell-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/shell_test.c user/shell/shell.c -o build/shell_test

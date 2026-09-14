@@ -1,6 +1,7 @@
 #include "pit.h"
 #include "irq.h"
 #include "../../sched/scheduler.h"
+#include "../../time/time.h"
 #include <stdint.h>
 #define PIT_HZ 1193182u
 static volatile uint64_t ticks;
@@ -15,6 +16,9 @@ int pit_init(uint32_t hz){if(!hz||hz>PIT_HZ)return -1;uint32_t div=PIT_HZ/hz;if(
  * three arms so a boot log proves the quantum path fired. */
 void pit_irq(unsigned irq,const struct interrupt_frame *frame){
     (void)irq;(void)frame;ticks++;scheduler_tick();
+    /* Phase P3 backend: wake nanosleep sleepers (no-op when the sleep
+     * queue is empty; irqsave-safe, leaves no state behind). */
+    time_sleep_tick();
     /* Pre-init safe: scheduler maps sched_cpu() to BSP/0 before init
      * and runnable<2 short-circuits the arm, so early ticks only cost
      * a counter decrement. */

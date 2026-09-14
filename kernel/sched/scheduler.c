@@ -143,6 +143,13 @@ static void sti(void){__asm__ volatile("sti" ::: "memory");}
 static volatile unsigned cpu_preempt_depth[SMP_MAX_CPUS];
 static volatile unsigned cpu_need_resched[SMP_MAX_CPUS];
 static volatile uint64_t cpu_quantum_left[SMP_MAX_CPUS];
+/* Phase E7: AP hlt-park flag (own-CPU writes). scheduler_ap_idle sets it
+ * around hlt; the IRQ/IPI-return yield gate reads it. Without this, an
+ * IPI landing on a hlt-parked AP would yield with a stale cpu_current
+ * slot (whatever ran last, possibly recycled by another CPU) and corrupt
+ * scheduler state. A missed pickup from the gate's races only delays an
+ * AP (the BSP backstops every ap_ok task), never hangs. */
+static volatile uint8_t cpu_in_idle[SMP_MAX_CPUS];
 static __attribute__((noreturn)) void task_returned(void){ uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);tasks[cpu_current[sched_cpu()]].state=TASK_DEAD;task_drop_waiter(&tasks[cpu_current[sched_cpu()]]);rix_spin_unlock_irqrestore(&sched_lock,irq);for(;;) scheduler_yield(); }
 static void boot_user_entry_marker(void){serial_write("BOOT: USER ENTRY READY\r\n");}
 static void trace_yield_begin(void){}
@@ -191,7 +198,7 @@ int scheduler_init(void){
      * (vmm_early_init), and CR0.TS/EM are clear, so fxsave/fxrstor are
      * legal from the first switch on. Rows/tasks copy this template. */
     __asm__ volatile("fninit; fxsave %0" : "=m"(fpu_template) :: "memory");
-    for(uint32_t c=0;c<SMP_MAX_CPUS;c++){cpu_current[c]=0;cpu_idle_rsp[c]=0;cpu_idle_valid[c]=0;cpu_idle_tmp[c]=0;cpu_preempt_depth[c]=0;cpu_need_resched[c]=0;cpu_quantum_left[c]=RIX_PREEMPT_QUANTUM_TICKS;for(unsigned i=0;i<512;i++)cpu_idle_fpu[c][i]=fpu_template[i];}
+    for(uint32_t c=0;c<SMP_MAX_CPUS;c++){cpu_current[c]=0;cpu_idle_rsp[c]=0;cpu_idle_valid[c]=0;cpu_idle_tmp[c]=0;cpu_preempt_depth[c]=0;cpu_need_resched[c]=0;cpu_quantum_left[c]=RIX_PREEMPT_QUANTUM_TICKS;cpu_in_idle[c]=0;for(unsigned i=0;i<512;i++)cpu_idle_fpu[c][i]=fpu_template[i];}
     for(uint32_t i=0;i<RIX_MAX_TASKS;i++){
         tasks[i].id=0;tasks[i].state=TASK_UNUSED;tasks[i].rsp=0;tasks[i].entry=NULL;tasks[i].arg=NULL;
         tasks[i].process_pid=0;tasks[i].user_entry=0;tasks[i].user_stack=0;tasks[i].user_return=UINT64_MAX;
@@ -214,31 +221,59 @@ void scheduler_preempt_enable(void){uint32_t me=sched_cpu();if(me<SMP_MAX_CPUS&&
 int scheduler_preempt_is_disabled(void){uint32_t me=sched_cpu();return me<SMP_MAX_CPUS&&cpu_preempt_depth[me]!=0;}
 int scheduler_need_resched(void){uint32_t me=sched_cpu();return me<SMP_MAX_CPUS&&cpu_need_resched[me]!=0;}
 void scheduler_clear_need_resched(void){uint32_t me=sched_cpu();if(me<SMP_MAX_CPUS)cpu_need_resched[me]=0;}
-/* PIT quantum arm (IRQ context, BSP-only for this slice). Decrements
- * the per-CPU quantum; on expiry and with another task runnable,
- * sets need-resched and reloads. Depth-gated: a disabled CPU still
- * consumes its quantum (time passes) but the flag waits until enable.
- * Never switches stacks, never takes locks (plain volatile stores);
- * rmb/wmb pairing is unnecessary: the consumer runs on the same CPU
- * at the next yield/IRQ-return with IF=0. */
+/* Phase E7: symmetric quanta. Only the PIT owner drives (APs have no
+ * PIT; if IRQ0 ever reached an AP it safely no-ops). The tick pets every
+ * ONLINE CPU's quantum row, not just the BSP's: cross-CPU plain volatile
+ * stores, benign under x86 TSO (a stale read delays one quantum by one
+ * tick at worst). On an AP row expiry with AP-eligible work runnable, the
+ * AP is armed and kicked with a targeted WAKEUP IPI: the IPI both breaks
+ * hlt and, via the IPI-return yield, preempts a never-yielding spinner.
+ * Rate is bounded by the quantum (<=10 Hz per AP) and gated on eligible
+ * work and online>1, so UP boots and idle systems send zero IPIs. */
+static int ap_eligible_runnable(void){
+    for(uint32_t i=1;i<RIX_MAX_TASKS;i++)
+        if(tasks[i].state==TASK_RUNNABLE&&tasks[i].process_pid==0&&tasks[i].ap_ok)return 1;
+    return 0;
+}
+static void preempt_arm_cpu(uint32_t c,int is_ap){
+    if(cpu_preempt_depth[c])return;
+    if(scheduler_runnable_count()<2)return;
+    cpu_need_resched[c]=1;
+    if(is_ap)(void)smp_wakeup((size_t)c);
+}
 void scheduler_preempt_tick(void){
     uint32_t me=sched_cpu();
     if(me>=(uint32_t)SMP_MAX_CPUS)return;
-    if(me!=(uint32_t)smp_bsp_index())return;
+    if((int)me!=smp_bsp_index())return;
     if(cpu_quantum_left[me])cpu_quantum_left[me]--;
-    if(cpu_quantum_left[me])return;
-    cpu_quantum_left[me]=RIX_PREEMPT_QUANTUM_TICKS;
-    if(cpu_preempt_depth[me])return;
-    if(scheduler_runnable_count()<2)return;
-    cpu_need_resched[me]=1;
+    if(!cpu_quantum_left[me]){cpu_quantum_left[me]=RIX_PREEMPT_QUANTUM_TICKS;preempt_arm_cpu(me,0);}
+    if(smp_online_count()<=1)return;
+    if(!ap_eligible_runnable())return;
+    for(uint32_t c=0;c<(uint32_t)SMP_MAX_CPUS;c++){
+        if((int)c==smp_bsp_index())continue;
+        if(smp_cpu_state((size_t)c)!=SMP_CPU_ONLINE)continue;
+        if(cpu_quantum_left[c])cpu_quantum_left[c]--;
+        if(cpu_quantum_left[c])continue;
+        cpu_quantum_left[c]=RIX_PREEMPT_QUANTUM_TICKS;
+        preempt_arm_cpu(c,1);
+    }
 }
-/* IRQ-return helper: call AFTER EOI, before iret. Returns 1 when the
+/* IRQ/IPI-return helper: call AFTER EOI, before iret. Returns 1 when the
  * caller should perform a voluntary yield now (flag set, preemption
  * enabled, still more than one runnable task). Keeps the EOI-first
- * order so the APIC ISR bit is clear across the switch. */
+ * order so the APIC ISR bit is clear across the switch.
+ * Phase E7 gates: skip while this CPU is hlt-parked (its cpu_current is
+ * a stale slot — yielding would switch with a foreign task context) and
+ * unless the local current slot is genuinely RUNNING (a recycled slot
+ * could otherwise corrupt another CPU's live task). A skipped pickup
+ * only delays AP work (BSP backstops it), never hangs. BSP behavior is
+ * unchanged (never parked, current always RUNNING when it matters). */
 int scheduler_should_yield_from_irq(void){
     uint32_t me=sched_cpu();
     if(me>=SMP_MAX_CPUS||cpu_preempt_depth[me]||!cpu_need_resched[me])return 0;
+    if(cpu_in_idle[me])return 0;
+    uint32_t cur=cpu_current[me];
+    if(cur>=RIX_MAX_TASKS||tasks[cur].state!=TASK_RUNNING)return 0;
     if(scheduler_runnable_count()<2){cpu_need_resched[me]=0;cpu_quantum_left[me]=RIX_PREEMPT_QUANTUM_TICKS;return 0;}
     return 1;
 }
@@ -290,18 +325,27 @@ void scheduler_wait_abort(void){
 void scheduler_wake_queue(rix_waitqueue_t *wq){
     if(!wq)return;
     (void)rix_waitqueue_wake_all(wq);
+    int ap_work=0;
     uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);
     for(uint32_t i=0;i<RIX_MAX_TASKS;i++){
-        if(tasks[i].state==TASK_BLOCKED&&tasks[i].wait_wq==wq)tasks[i].state=TASK_RUNNABLE;
+        if(tasks[i].state==TASK_BLOCKED&&tasks[i].wait_wq==wq){tasks[i].state=TASK_RUNNABLE;if(i!=0&&tasks[i].process_pid==0&&tasks[i].ap_ok)ap_work=1;}
     }
     rix_spin_unlock_irqrestore(&sched_lock,irq);
+    /* Phase E7: an AP parked in hlt sleeps through state flips, and the
+     * 10 Hz quantum arm is only prompt to 100 ms — kick APs when
+     * AP-eligible work just became runnable (broadcast after unlock,
+     * never holding the lock across IPI send; no-op when online<=1). */
+    if(ap_work)smp_wakeup_aps();
 }
 void scheduler_wake_pid(uint64_t pid){
+    int ap_work=0;
     uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);
     for(uint32_t i=0;i<RIX_MAX_TASKS;i++){
-        if(tasks[i].state==TASK_BLOCKED&&tasks[i].process_pid==pid)tasks[i].state=TASK_RUNNABLE;
+        if(tasks[i].state==TASK_BLOCKED&&tasks[i].process_pid==pid){tasks[i].state=TASK_RUNNABLE;if(i!=0&&tasks[i].process_pid==0&&tasks[i].ap_ok)ap_work=1;}
     }
     rix_spin_unlock_irqrestore(&sched_lock,irq);
+    /* Phase E7: same cross-CPU kick as wake_queue (signal/exit wakes). */
+    if(ap_work)smp_wakeup_aps();
 }
 static void task_drop_waiter(rix_task_t *t){
     if(!t||!t->wait_wq)return;
@@ -426,7 +470,11 @@ void scheduler_yield(void){
     trace_flags();
     cli();
     uint32_t self=sched_cpu();
-    if(self<SMP_MAX_CPUS){cpu_need_resched[self]=0;cpu_quantum_left[self]=RIX_PREEMPT_QUANTUM_TICKS;}
+    /* Phase E7: bounded AP-quantum consumption proof. Fires when an AP
+     * enters a yield with its tick-armed flag set (voluntary or
+     * IPI-return): the mechanism is live on that CPU. It does not by
+     * itself prove time-sharing — the spinner-trio placement lines do. */
+    if(self<SMP_MAX_CPUS){int bsp=(int)self==smp_bsp_index();int ap_armed=!bsp&&cpu_need_resched[self];cpu_need_resched[self]=0;cpu_quantum_left[self]=RIX_PREEMPT_QUANTUM_TICKS;{static unsigned n=0;if(ap_armed&&n<3){kernel_log("APREEMPT cpu=");kernel_log_dec(self);kernel_log("\r\n");n++;}}}
     trace_yield_begin();
     /* E1: selection + publish under the scheduler lock (IRQs already off,
      * so plain lock/unlock; IRQ posture across the switch is unchanged).
@@ -523,10 +571,18 @@ __attribute__((noreturn)) void scheduler_ap_idle(void){
         uint32_t old=cpu_current[me];
         uint32_t next=sched_select_locked(me,old);
         if(next==old||tasks[next].state!=TASK_RUNNABLE){
+            /* Phase E7: mark the hlt window BEFORE unlock (IF is masked
+             * here, so no IPI can slip between the mark and the hlt
+             * with the gate seeing a stale clear). A kick landing after
+             * the mark is seen as parked and skipped — it only delays
+             * AP work to the next quantum arm (the BSP backstops it). */
+            cpu_in_idle[me]=1;
             rix_spin_unlock_irqrestore(&sched_lock, ap_irq);
             __asm__ volatile("hlt" ::: "memory");
+            cpu_in_idle[me]=0;
             continue;
         }
+        cpu_in_idle[me]=0;
         tasks[next].state=TASK_RUNNING;cpu_current[me]=next;
         cr3trace_push(3,(uint64_t)tasks[old].id,(uint64_t)tasks[next].id,0);
         rix_spin_unlock_irqrestore(&sched_lock, ap_irq);

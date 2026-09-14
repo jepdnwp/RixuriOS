@@ -3,6 +3,7 @@
 #include "../serial.h"
 #include "../sync/lock.h"
 #include "../sync/lockdep.h"
+#include "../sched/scheduler.h"
 #include "../arch/x86_64/cpu.h"
 #include "../elf/loader.h"
 #include "../mm/pmm.h"
@@ -446,7 +447,7 @@ loadval=read_cr3_hw();
 {static unsigned n=0;if(n<2){kernel_log("DEBUG: CR3 switched cur=");kernel_log_hex(read_cr3_hw());kernel_log("\r\n");serial_drain();n++;}}{static unsigned m=0;if(m<2){kernel_log("DEBUG: process_activate done\r\n");serial_drain();m++;}}return 0;}
 int process_activate(pid_t pid){PROCESS_GUARD();return process_activate_locked(pid);}
 int process_set_state(pid_t pid,rix_process_state_t state){PROCESS_GUARD();rix_process_t*p=process_lookup(pid);if(!p||state==RIX_PROC_UNUSED)return -1;rix_process_state_t old=p->state;p->state=state;if(state==RIX_PROC_RUNNING&&process_activate_locked(pid)!=0){p->state=old;return -1;}return 0;}
-static int process_exit_locked(pid_t pid,uint64_t status){rix_process_t*p=process_lookup(pid);pid_t session;if(!p||pid==0||p->state==RIX_PROC_ZOMBIE)return -1;session=p->session;(void)vfs_close_all(pid);p->exit_status=status;p->state=RIX_PROC_ZOMBIE;if(current_pid==pid)current_pid=0;session_drop_if_empty(session);return 0;}
+static int process_exit_locked(pid_t pid,uint64_t status){rix_process_t*p=process_lookup(pid);pid_t session;if(!p||pid==0||p->state==RIX_PROC_ZOMBIE)return -1;session=p->session;(void)vfs_close_all(pid);p->exit_status=status;p->state=RIX_PROC_ZOMBIE;/* Phase P3 backend: set-then-wake under the process guard. A parent blocked in process_wait_blocking holds this guard across its check+block, so the ZOMBIE publish is either observed by the check or wakes the blocked parent here — no exit is lost. Pid-wide wake is spurious-safe (every blocking loop re-checks). */scheduler_wake_pid((uint64_t)p->parent);if(current_pid==pid)current_pid=0;session_drop_if_empty(session);return 0;}
 int process_exit(pid_t pid,uint64_t status){PROCESS_GUARD();return process_exit_locked(pid,status);}
 int process_set_group(pid_t pid,pid_t process_group){PROCESS_GUARD();rix_process_t*p=process_lookup(pid);if(!p||!process_group)return -1;p->process_group=process_group;return 0;}
 int process_set_session(pid_t pid,pid_t session){PROCESS_GUARD();rix_process_t*p=process_lookup(pid);if(!p||!session)return -1;p->session=session;return 0;}
@@ -458,7 +459,16 @@ int process_leave_session(pid_t pid){PROCESS_GUARD();rix_process_t*p=process_loo
 int process_list_sessions(rix_session_info_t*out,size_t capacity,size_t*count){PROCESS_GUARD();size_t total=0,index=0;if(!count||(!out&&capacity))return-1;for(size_t i=0;i<RIX_SESSION_MAX;i++)if(sessions[i].session)total++;if(capacity<total)return-1;for(size_t i=0;i<RIX_SESSION_MAX;i++)if(sessions[i].session){session_refresh_tty(&sessions[i]);out[index++]=sessions[i];}*count=total;return 0;}
 int process_list_processes(rix_process_info_t*out,size_t capacity,size_t*count){PROCESS_GUARD();size_t total=0,index=0;if(!count||(!out&&capacity))return-1;for(size_t i=0;i<RIX_PROCESS_MAX;i++)if(table[i].state!=RIX_PROC_UNUSED)total++;if(capacity<total)return-1;for(size_t i=0;i<RIX_PROCESS_MAX;i++){rix_process_t*p=&table[i];if(p->state==RIX_PROC_UNUSED)continue;rix_process_info_t*slot=&out[index++];slot->pid=p->pid;slot->parent=p->parent;slot->uid=p->uid;slot->gid=p->gid;slot->state=(uint32_t)p->state;slot->session=p->session;size_t n=bounded_strlen(p->name);for(size_t k=0;k<n;k++)slot->name[k]=p->name[k];slot->name[n]=0;}*count=total;return 0;}
 int process_signal_group(pid_t process_group,unsigned signal){PROCESS_GUARD();if(!process_group||signal<1u||signal>64u)return -1;uint64_t bit=1ULL<<(signal-1u);int sent=0;for(size_t i=0;i<RIX_PROCESS_MAX;i++){rix_process_t*p=&table[i];if(p->state!=RIX_PROC_UNUSED&&p->state!=RIX_PROC_ZOMBIE&&p->process_group==process_group){p->signal_pending|=bit;if(p->state==RIX_PROC_SLEEPING&&(p->signal_mask&bit)==0)p->state=RIX_PROC_RUNNING;sent++;}}return sent?0:-1;}
-int process_wait(pid_t parent,pid_t wanted,uint64_t*status,pid_t*child_pid){PROCESS_GUARD();if(!status||!child_pid)return -1;rix_process_t*match=NULL;int has_child=0;for(size_t i=1;i<RIX_PROCESS_MAX;i++){rix_process_t*p=&table[i];if(p->state!=RIX_PROC_UNUSED&&p->parent==parent&&(wanted==(pid_t)-1||p->pid==wanted)){has_child=1;if(p->state==RIX_PROC_ZOMBIE){match=p;break;}}}if(!has_child)return 2;if(!match)return 1;pid_t session=match->session;*status=match->exit_status;*child_pid=match->pid;(void)vfs_close_all(match->pid);address_space_destroy(&match->address_space);if(match->kernel_stack)pmm_free_page_range(match->kernel_stack,KERNEL_STACK_PAGES);clear_process(match);audit_uids[(size_t)match->pid]=0;if(live_count)live_count--;session_drop_if_empty(session);return 0;}
+/* Phase P3 backend: locked wait cores. wait_find_locked scans for a
+ * reaped-or-waitable child (guard held); wait_reap_locked destroys the
+ * zombie and reports it. process_wait keeps the legacy poll contract;
+ * process_wait_blocking marks the caller BLOCKED (guard still held, so
+ * the exit_locked set-then-wake above cannot interleave) when no zombie
+ * is ready yet. */
+static rix_process_t *wait_find_locked(pid_t parent,pid_t wanted,int *has_child){rix_process_t*match=NULL;int has=0;for(size_t i=1;i<RIX_PROCESS_MAX;i++){rix_process_t*p=&table[i];if(p->state!=RIX_PROC_UNUSED&&p->parent==parent&&(wanted==(pid_t)-1||p->pid==wanted)){has=1;if(p->state==RIX_PROC_ZOMBIE){match=p;break;}}}if(has_child)*has_child=has;return match;}
+static int wait_reap_locked(rix_process_t *match,uint64_t *status,pid_t *child_pid){pid_t session=match->session;*status=match->exit_status;*child_pid=match->pid;(void)vfs_close_all(match->pid);address_space_destroy(&match->address_space);if(match->kernel_stack)pmm_free_page_range(match->kernel_stack,KERNEL_STACK_PAGES);clear_process(match);audit_uids[(size_t)match->pid]=0;if(live_count)live_count--;session_drop_if_empty(session);return 0;}
+int process_wait(pid_t parent,pid_t wanted,uint64_t*status,pid_t*child_pid){PROCESS_GUARD();if(!status||!child_pid)return -1;int has_child=0;rix_process_t*match=wait_find_locked(parent,wanted,&has_child);if(!has_child)return 2;if(!match)return 1;return wait_reap_locked(match,status,child_pid);}
+int process_wait_blocking(pid_t parent,pid_t wanted,uint64_t*status,pid_t*child_pid){PROCESS_GUARD();if(!status||!child_pid)return -1;int has_child=0;rix_process_t*match=wait_find_locked(parent,wanted,&has_child);if(!has_child)return 2;if(match)return wait_reap_locked(match,status,child_pid);scheduler_block_current();return 1;}
 
 int capability_valid(uint64_t mask){return mask!=0u&&(mask&~RIX_CAP_ALL)==0u;}
 int process_has_capability(pid_t pid,uint64_t capability){rix_process_t*p=process_lookup(pid);return p&&capability_valid(capability)&&((p->capabilities&capability)==capability);}

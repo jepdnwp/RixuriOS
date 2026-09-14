@@ -55,6 +55,14 @@ void cr3trace_push(uint64_t tag,uint64_t a,uint64_t b,uint64_t c);
 void cr3trace_dump(void);
 int process_exit(pid_t pid,uint64_t status);
 int process_wait(pid_t parent,pid_t wanted,uint64_t *status,pid_t *child_pid);
+/* Phase P3 backend: blocking waitpid. Same contract as process_wait, but
+ * when no child has exited yet (the 1 case) the caller is marked
+ * TASK_BLOCKED atomically under the process guard instead of returning
+ * to yield-poll: process_exit_locked publishes ZOMBIE and wakes the
+ * parent pid under the same guard, so no exit slips between check and
+ * block. The WAIT/WAITPID loops yield/take/retry like pipes; signal wake
+ * arrives via scheduler_wake_pid with EINTR through the existing check. */
+int process_wait_blocking(pid_t parent,pid_t wanted,uint64_t *status,pid_t *child_pid);
 int process_set_group(pid_t pid, pid_t process_group);
 int process_set_session(pid_t pid,pid_t session);
 int process_get_session(pid_t pid,pid_t *session);

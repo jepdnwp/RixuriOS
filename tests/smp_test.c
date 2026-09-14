@@ -46,6 +46,15 @@ void lapic_ap_enable(void) { ap_enable_count++; }
 __attribute__((noreturn)) void scheduler_ap_idle(void) {
     for (;;) { }
 }
+/* Phase E7: x86_ipi_dispatch yields after EOI when the scheduler gate
+ * says so (scheduler.c, not linked here). Recording doubles: a scripted
+ * gate answer plus a yield counter that also snapshots the EOI count at
+ * entry, so the test proves EOI-before-yield ordering, not just both. */
+static int stub_should_yield;
+static int stub_yield_calls;
+static int stub_yield_saw_eoi;
+int scheduler_should_yield_from_irq(void) { return stub_should_yield; }
+void scheduler_yield(void) { stub_yield_saw_eoi = eoi_count; stub_yield_calls++; }
 static uint64_t flushed[8];
 static size_t flushed_count;
 void smp_flush_one(uint64_t va) {
@@ -414,6 +423,24 @@ int main(void) {
         fr.vector = SMP_IPI_WAKEUP;
         x86_ipi_dispatch(&fr);
         assert(eoi_count == eoi_before + 4);
+        assert(stub_yield_calls == 0);
+    }
+    /* Phase E7 IPI-return yield: gate clear never yields; gate set yields
+     * exactly once per dispatch with EOI already done at yield entry. */
+    {
+        struct { uint64_t vector, error, rip, cs, rflags, rsp, ss; } fr =
+            { SMP_IPI_WAKEUP, 0, 0, 0, 0, 0, 0 };
+        int eoi_before = eoi_count;
+        stub_lapic = 2;
+        stub_should_yield = 0;
+        x86_ipi_dispatch(&fr);
+        assert(stub_yield_calls == 0);
+        stub_should_yield = 1;
+        x86_ipi_dispatch(&fr);
+        assert(stub_yield_calls == 1);
+        assert(stub_yield_saw_eoi == eoi_before + 2);
+        assert(eoi_count == eoi_before + 2);
+        stub_should_yield = 0;
     }
     /* Phase E2 wakeup: bad targets never send (BSP index, out of range,
      * PRESENT-but-never-onlined AP — cpu 1/2 were forced ONLINE by the

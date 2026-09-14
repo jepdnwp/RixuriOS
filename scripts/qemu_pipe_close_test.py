@@ -71,7 +71,7 @@ finally:
     shutil.rmtree(ESP, ignore_errors=True)
 LOG.write_bytes(output)
 sys.stdout.buffer.write(output)
-for marker in (b"pipe-close-eof=PASS", b"pipe-write-close=PASS"):
+for marker in (b"pipe-close-eof=PASS", b"pipe-write-close=PASS", b"pipe-backpressure=PASS"):
     if marker not in output:
         raise SystemExit(f"missing runtime marker: {marker!r}")
 if b"CPU exception" in output or b"PANIC" in output:

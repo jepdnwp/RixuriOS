@@ -3,6 +3,7 @@
 #include "../sync/lock.h"
 #ifndef RIX_HOST_TEST
 #include "../mm/vmm.h"
+#include "../sched/scheduler.h"
 #endif
 
 #ifdef RIX_HOST_TEST
@@ -395,6 +396,7 @@ void tty_init(void) {
         t->controlling = 0;
         t->session = 0;
         t->foreground_pgrp = 0;
+        rix_waitqueue_init(&t->read_wq);
     }
     for (unsigned i = 0; i < RIX_PTY_COUNT; ++i) ptys[i].opened = 0;
 }
@@ -645,7 +647,19 @@ int tty_read_nolock(unsigned id, void *buf, size_t n, size_t *out) {
 int tty_input(unsigned id, uint8_t ch) {
     uint64_t f;rix_spin_lock_irqsave(&tty_input_lock,&f);
     int rc=tty_input_nolock(id,ch);
+    rix_tty_t *t=tty_valid(id);
     rix_spin_unlock_irqrestore(&tty_input_lock,f);
+    /* Phase P3 backend: wake console readers AFTER releasing the input
+     * lock (no new nesting: the reader side holds input->wq->sched while
+     * the waker holds nothing here, so neither IRQ-context depositors
+     * nor the serial worker can deadlock against a blocked reader).
+     * Unconditional on rc: any accepted byte may have completed a line,
+     * and wakeups are spurious-safe (readers re-check under the lock). */
+#ifndef RIX_HOST_TEST
+    if(t)scheduler_wake_queue(&t->read_wq);
+#else
+    (void)t;
+#endif
     return rc;
 }
 int tty_read(unsigned id, void *buf, size_t n, size_t *out) {
@@ -654,6 +668,41 @@ int tty_read(unsigned id, void *buf, size_t n, size_t *out) {
     rix_spin_unlock_irqrestore(&tty_input_lock,f);
     return rc;
 }
+#ifdef RIX_HOST_TEST
+/* Host build has no scheduler: same non-blocking contract as tty_read. */
+int tty_read_blocking(unsigned id, void *buf, size_t n, size_t *out) {
+    return tty_read(id, buf, n, out);
+}
+#else
+int tty_read_blocking(unsigned id, void *buf, size_t n, size_t *out) {
+    if (out) *out = 0;
+    uint64_t f;rix_spin_lock_irqsave(&tty_input_lock,&f);
+    size_t got = 0;
+    /* -3 consumes nothing (canonical returns before the drain loop when no
+     * line is ready; raw drains only what exists), so the empty check is
+     * non-destructive and the bind below is atomic with it. */
+    int rc=tty_read_nolock(id,buf,n,&got);
+    if (rc == 0) {
+        rix_spin_unlock_irqrestore(&tty_input_lock,f);
+        if (out) *out = got;
+        return 0;
+    }
+    if (rc == -3 && got == 0) {
+        rix_tty_t *t=tty_valid(id);
+        if (t) {
+            rix_wait_handle_t wh={0,0};
+            if (scheduler_wait_prepare(&t->read_wq,&wh)==0) {
+                scheduler_block_current();
+                rix_spin_unlock_irqrestore(&tty_input_lock,f);
+                return -3;
+            }
+        }
+    }
+    rix_spin_unlock_irqrestore(&tty_input_lock,f);
+    if (out) *out = got;
+    return rc;
+}
+#endif
 
 int tty_set_canonical(unsigned id, int enabled) {
     rix_tty_t *t = tty_valid(id);

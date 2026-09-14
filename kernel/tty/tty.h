@@ -1,6 +1,7 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
+#include "../sync/waitqueue.h"
 
 #define RIX_TTY_COUNT 4u
 #define RIX_TTY_INPUT 4096u
@@ -57,6 +58,11 @@ typedef struct {
     char history[RIX_TTY_HISTORY_COUNT][RIX_TTY_LINE_MAX];
     uint8_t history_count;
     uint8_t history_cursor;
+    /* Phase P3 backend: console readers sleep here instead of yield-spinning
+     * in the fd-0 syscall loop. Woken by tty_input (any deposited byte) and
+     * by signal_send via scheduler_wake_pid (EINTR path). Spurious-safe:
+     * takers re-check readability under the input lock. */
+    rix_waitqueue_t read_wq;
 } rix_tty_t;
 
 void tty_init(void);
@@ -65,6 +71,14 @@ void tty_set_framebuffer(uint64_t base, uint32_t size, uint32_t width,
 rix_tty_t *tty_get(unsigned id);
 int tty_input(unsigned id, uint8_t ch);
 int tty_read(unsigned id, void *buf, size_t n, size_t *out);
+/* Phase P3 backend: blocking console read. The reader holds the input
+ * lock across check+prepare+block, so a deposited byte is either observed
+ * by the check or wakes the registered waiter (tty_input deposits under
+ * the same lock, then wakes after release). Returns -3 (empty, now asleep)
+ * on the block path and when the waiter table is full (legacy polling
+ * fallback); the fd-0 syscall loop yield/take/retries like pipes.
+ * Host build (no scheduler): plain non-blocking tty_read. */
+int tty_read_blocking(unsigned id, void *buf, size_t n, size_t *out);
 /* Phase E4: unlocked bodies (input lock already held nowhere internally;
  * reserved for future same-lock callers). External callers use the above. */
 int tty_input_nolock(unsigned id, uint8_t ch);
