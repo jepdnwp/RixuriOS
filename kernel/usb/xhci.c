@@ -998,6 +998,8 @@ static int xhci_usb2_reset(volatile uint32_t *reg) {
     uint32_t v = (*reg & ~(XHCI_PORT_PR | XHCI_PORT_WPR | XHCI_PORT_LWS));
     v |= XHCI_PORT_PP | XHCI_PORT_CHANGE_MASK | XHCI_PORT_PR;
     *reg = v;
+    /* Give hardware time to react to PR assertion before polling for PRC. */
+    xhci_udelay(100);
 
     // Wait for the reset to complete (PRC set)
     for (uint32_t i = 0; i < XHCI_RESET_POLL_LIMIT; ++i) {
