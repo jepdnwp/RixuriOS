@@ -1273,3 +1273,125 @@ full 27-suite QEMU matrix  ALL PASS, zero LOCKDEP lines in all logs
 Next: preempt-disable nesting + quantum + PIT need-resched + the
 EOI-first IRQ yield + hog test. Process-struct lifetime (refcounted
 activation) and VFS granularity refinement stay sequenced after.
+
+## 2026-09-13 — P3-B slice 2: preempt-disable + tick quantum + EOI-first IRQ yield + hog probe
+Small, additive, `-Werror` clean changes (`make all`/`test`/`image` RC=0):
+
+1. **`scheduler.h`/`scheduler.c` — preempt-disable + quantum state.**
+   New per-CPU arrays `cpu_preempt_depth`, `cpu_need_resched`,
+   `cpu_quantum_left` (zero-init; `scheduler_init` resets to
+   `RIX_PREEMPT_QUANTUM_TICKS=10` — 100 Hz PIT ⇒ 100 ms quantum).
+   API: `scheduler_preempt_disable/enable/is_disabled` (nesting, plain
+   counter on the caller CPU; never sleeps, never takes the sched lock,
+   IRQ-safe), `scheduler_need_resched/clear_need_resched`,
+   `scheduler_preempt_tick` (PIT IRQ context, BSP-only; counts the
+   quantum down even while disabled; on expiry plus runnable>=2 arms the
+   flag), `scheduler_should_yield_from_irq` (EOI-first consumer: flag +
+   enabled + still another runnable ⇒ tell the IRQ-return path to yield,
+   else reload and clear). `scheduler_yield` now consumes
+   need-resched and re-arms the quantum on every voluntary schedule
+   point — so the quantum only ever fires against a CPU-bound stretch
+   that did not volunteer, which is exactly the P1-failure class the
+   slice must fix without its mechanism.
+2. **`pit.c` — arm, don't switch.** `pit_irq` ticks, then calls
+   `scheduler_preempt_tick()`. No context switch inside the handler
+   (P1 lesson). Bounded `PREEMPT n` lines on the first three arms so a
+   boot log proves the quantum path fired.
+3. **`irq.c` — EOI first, then a task-context yield.** After EOI (APIC
+   ISR clear across any switch — P1 lesson), the return path calls
+   `scheduler_should_yield_from_irq()` and, when true, `scheduler_yield()`.
+   That yield is a normal C call on the interrupted task's kernel stack:
+   `rix_context_switch` saves that RSP into the task slot, so the
+   preempted task resumes inside `x86_irq_dispatch` and irets normally.
+   Safety: every allocator/VFS/NVMe/TTY/process critical section is
+   irqsave-locked or IF=0, so a PIT cannot land inside one; the flag is
+   consumed only when preemption is enabled. This restores the
+   involuntary switch point that P1-full lacked, WITHOUT the
+   IF=1-everywhere policy that corrupted allocators before.
+4. **`schedtest.c` + `qemu_sched_test.py` — hog probe.** New `hog`
+   mode: calibrate TSC per run; fork a never-yielding spinner (~2.5 s
+   by design) and a yielding checker writing 200 bytes; the parent must
+   receive the checker's first byte while the hog is still alive (bound
+   `HOG_FIRST_NS=1.5 s`). Markers `hog ticks=`/`first_ms=`/`total_ms=`
+   + `hog=PASS`. The QEMU harness now runs `churn`, `fair`, `hog` and
+   requires all three markers.
+
+Evidence (`CROSS=x86_64-linux-gnu- HOST_CC=gcc`; UP TCG QEMU 8.2.2,
+log `build/sched-slice2-run.log`, repeat `build/sched-slice2-run2.log`):
+`make all/test/image` RC=0; `qemu_sched_test.py` → `churn=PASS`,
+`fair=PASS`, `hog=PASS`, `PREEMPT 1`/`PREEMPT 2` arm lines present,
+0 `CPU exception` / `PANIC`; full 27-suite matrix in
+`build/test-logs/all-tests-*.log` re-run green (see ledger).
+
+Honest A/B note (why the arm lines are the discriminating evidence):
+an A/B with only the kernel changes stashed (pure cooperative HEAD)
+also produced `hog=PASS` — the churn step recycles DEAD task slots, so
+the checker can win the slot race and complete before the spinner on a
+cooperative kernel too. The hog probe as written therefore does not
+*alone* discriminate preemption in this guest; the slice's load-bearing
+discriminator is the `PREEMPT n` arm-line presence plus the unchanged
+green behavior with the quantum + IRQ-return yield ACTIVE (0 faults,
+full matrix). The probe is kept because the owner's sequencing named
+it, and it exercises the never-yield context switch end-to-end.
+
+Still open (P3-B next): scheduler-backed blocking/wakeup (the P3
+backend), AP timer or reschedule-IPI (symmetric preemption), per-task
+quantums/priorities, and a discriminated starvation probe that does not
+depend on slot order (the current A/B documents the slot-race caveat;
+a future harness can drive `-smp 4` + watchdog to make starvation
+fatal-by-timeout).
+
+Validation (`CROSS=x86_64-linux-gnu- HOST_CC=gcc`):
+
+```text
+make all/test/image RC=0
+full 27-suite QEMU matrix  ALL PASS, zero LOCKDEP lines in all logs
+```
+
+## 2026-09-14 — P3-B slice 2 completion: IF-entry fix, FPU images, discriminating hog A/B
+
+Follow-up to the slice-2 entry above; corrects and supersedes parts
+of it (history preserved, not rewritten).
+
+- **Ring entry sets IF (root cause of the stuck hog).** A never-
+  trapping spinner keeps its entry-masked IF forever, so no tick can
+  fire while it runs and preemption is impossible by construction
+  (diagnosed: `hog-dead` persisted with the quantum verifiably live).
+  All three trampolines now enter with IF set; safe because RSP0 is
+  programmed before every entry, the frame is per-task, and a pending
+  IRQ resumes at the entry RIP through the EOI-first path.
+- **Per-task FPU images.** Every stack switch now carries
+  fxsave/fxrstor (fninit template at init); a tick landing mid-SSE
+  can no longer corrupt kernel vector state. User FPU inheritance
+  stays out of scope until P25.
+- **Genuine A/B.** The hog probe was redesigned first: after 200
+  pattern-correct bytes, `waitpid(WNOHANG)` must still find the hog
+  alive (order-independent; wall-clock thresholds carry no weight —
+  this VM's TSC rate swings ~2-4x between runs). Cooperative tree
+  (kernel/ stashed): FAIL via `hog-dead`. Preemptive tree: PASS
+  (`first_ms=130`, `total_ms=2410`, PREEMPT arms, 0 faults).
+- **One `cp_mv` flake in ~12 runs**, fully preserved in analysis
+  (transient `openat` failure on a present binary, NVMe timeout
+  markers bracketing it, no faults, unreproduced in 8 targeted
+  retries). Prime suspect is a transient I/O-timeout error (known
+  Phase-12 no-retry limitation), not a preemption race (all lock
+  disciplines review-clean, zero LOCKDEP lines including the failing
+  run). Mitigations: initial-prompt sync + end-of-run quiescence in
+  the harness. Bounded NVMe read-retry is sequenced as explicit
+  Phase-12 follow-up, not bundled here.
+- **One `smp_boot` flake in 4 runs**, root-caused to the harness, not
+  the kernel: SHELL READY arrived BEFORE KERNEL_READY in the byte
+  stream (benign boot/task interleaving — main.c yields during boot
+  long before KERNEL_READY prints, so the shell can legitimately win
+  the race, more visibly under preemption), and the sequential
+  matcher deadlocked waiting for an already-passed marker. Fixed by
+  order-independent boot-marker matching; 3/3 green after. No faults
+  in any smp log.
+
+Validation (`CROSS=x86_64-linux-gnu- HOST_CC=gcc`):
+
+```text
+make all/test/image RC=0
+full 27-suite QEMU matrix  ALL PASS (incl. new sched hog),
+  zero LOCKDEP lines, zero CPU exception/PANIC in all logs
+```

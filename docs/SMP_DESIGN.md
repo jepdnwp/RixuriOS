@@ -162,6 +162,95 @@
   lines; HW keypress proof needs fingers, not claimed here).
 - Acceptance: UP/SMP4 identical to E4 counts, shell, 0 exceptions.
 
+## Phase P3-B slice 2 (done 2026-09-13): cooperative preempt-disable + tick quantum + EOI-first IRQ yield
+
+Continues the P3-B sequence (slice 1 locked process/VFS/NVMe). The P1
+history (revert below) proved that true IRQ-context preemption needs a
+kernel-wide retrofit: a quantum landing mid-allocator corrupted state
+because pre-P1 IF≈0 had shielded unlocked allocator paths. This slice
+lands the involuntary switch point WITHOUT the IF=1-everywhere policy:
+
+- **Arm, don't switch.** `pit_irq` (IF=0 entry) ticks, then calls
+  `scheduler_preempt_tick()`: per-CPU `cpu_quantum_left` (10 ticks =
+  100 ms at 100 Hz) counts down; on expiry with `runnable>=2` it sets a
+  per-CPU `cpu_need_resched` bit. No lock, no stack switch, plain
+  volatile stores; the consumer is the same CPU at a later IF=0
+  boundary.
+- **Preempt-disable nesting.** `scheduler_preempt_disable/enable`
+  maintain a per-CPU counter; disabled CPUs still consume quantum but
+  never arm. Consumers that touch unlocked global state (future
+  subsystems not yet audit-locked) can bracket their critical sections.
+  Usage is additive — no in-tree caller yet (allocator/VFS/NVMe/
+  TTY/process/pipe locks are all irqsave, which is strictly stronger).
+- **EOI-first IRQ-return yield.** `x86_irq_dispatch` EOIs, then
+  `scheduler_should_yield_from_irq()` → `scheduler_yield()` when armed
+  and enabled with another runnable task. The yield is a normal C call
+  on the interrupted task's kernel stack (the assembly stub's frame
+  stays beneath; `rix_context_switch` saves the current RSP into the
+  task slot, and the resumed task simply irets later). No IRQ nesting
+  (gates IF=0), EOI precedes the switch so the APIC ISR bit is clear
+  (P1 wedge lesson).
+- **yield reloads the quantum.** Every voluntary schedule point clears
+  the flag and re-arms 10 ticks, so the quantum only fires against a
+  CPU-bound stretch that did not volunteer — precisely the never-yielding
+  task class preemption must cover, without penalizing well-behaved
+  workers/shell.
+- **BSP-only for this slice.** `scheduler_preempt_tick` returns
+  immediately on APs; APs stay cooperative (symmetric preemption needs
+  a per-CPU timer or a reschedule-IPI — later). APs may still consume
+  the flag in `scheduler_should_yield_from_irq` if one ever armed them
+  (it never does today).
+- **Evidence/acceptance.** `make all/test/image` RC=0; UP TCG QEMU:
+  `qemu_sched_test.py` (churn/fair/hog) green with bounded `PREEMPT 1`,
+  `PREEMPT 2` arm lines, 0 exceptions/panics; full 27-suite QEMU matrix
+  re-run green. Known limitation (documented in the C1-style A/B
+  honesty note in VALIDATION_LOG): after `churn` recycles DEAD slots the
+  hog probe's checker can win the slot race, so the probe alone does
+  not discriminate a cooperative kernel; the `PREEMPT` arm lines are
+  the discriminating evidence, and future `-smp 4` + watchdog harnesses
+  can make starvation fatal-by-timeout.
+- Not claimed: symmetric AP preemption, per-task quantums, preempt-safe
+  conversion of remaining unlocked subsystems (network worker internals,
+  MMIO registry), scheduler-backed blocking (P3 backend), a scheduler
+  host harness (create paths need process/user_entry doubles).
+
+### Slice 2 completion (2026-09-14): IF-entry fix, FPU images, discriminating hog A/B
+
+Three gaps in the above landed after it was written:
+
+- **Ring entry now sets IF (0x202).** All three trampolines
+  (`x86_enter_user`, `x86_enter_user_return`, `x86_enter_user_context`,
+  the last via `orq $0x200` replacing an `andq $~0x200`) enter ring 3
+  with interrupts enabled. Rationale: a never-trapping spinner
+  otherwise keeps the entry-masked IF forever, so no tick can ever
+  fire while it runs and preemption is impossible by construction
+  (diagnosed from a `hog-dead` that persisted with the quantum live).
+  Safe because TSS.RSP0 is programmed before every entry, the IRETQ
+  frame is per-task, and an IRQ firing on entry resumes at the entry
+  RIP through the normal EOI-first path. This supersedes the old
+  IF-clear entry policy (whose RSP0/IRETQ race does not exist).
+- **Per-task FPU images.** `rix_context_switch` preserves integer
+  state only; with involuntary switches a tick can land mid-SSE, so
+  every stack switch now carries an fxsave/fxrstor pair (per-task
+  512 B from an fninit template, per-CPU idle images). User FPU
+  inheritance across fork/exec stays out of scope until P25.
+- **The hog probe now genuinely discriminates** (supersedes the weak
+  A/B note above): checker emits 200 patterned bytes; after all bytes
+  arrive with the pattern intact, `waitpid(WNOHANG)` must still find
+  the hog alive. Cooperative tree: FAIL (`hog-dead`, both orders);
+  preemptive tree: PASS (`first_ms=130`, `total_ms=2410`). Wall-clock
+  thresholds carry no verdict weight (this VM's TSC rate swings ~2-4x
+  between runs); only pattern + aliveness do.
+- **One `cp_mv` flake in ~12 runs** (transient `openat` failure on a
+  present binary, NVMe timeout markers bracketing it, no faults;
+  unreproduced in 8 targeted retries). Prime suspect is a transient
+  I/O-timeout error (known Phase-12 no-retry limitation), not a
+  preemption race (all lock disciplines review-clean, zero LOCKDEP
+  lines in every log including the failing one). Mitigations landed:
+  initial-prompt sync + end-of-run quiescence in the harness (same
+  pattern as sched/env_utils). Bounded NVMe read-retry is sequenced
+  as explicit Phase-12 follow-up work, not bundled here.
+
 ## Phase P1 (reverted 2026-09-12): timer preemption is premature
 
 ## Phase H1 (done 2026-09-12): hardware xHCI port-reset recovery

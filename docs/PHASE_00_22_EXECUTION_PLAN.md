@@ -22,18 +22,18 @@ cross-test, cred `fail-create2`).
 |---|---|---|
 | 00 | PARTIAL | Build green, no CI/pinning/repro/SBOM. |
 | 01 | PARTIAL | QEMU boot ok; no fault-injection harness, no HW boot log. |
-| 02 | HARDENING REQUIRED | W^X now enforced+verified in QEMU (R-X/R--/RW-, boot self-check); reclaim gate still open: heap interior reuse, PMM/VMM locking, pressure runs. pmm/heap host tests exist. |
+| 02 | HARDENING REQUIRED | W^X enforced+verified; PMM/heap/VMM/process/VFS/NVMe locks in, lockdep-wired; heap reuse landed. Reclaim gate still open: pressure/soak runs, DMA ownership. |
 | 03 | PARTIAL / HARDENING | Fail-stop only; no vector matrix, no user-fault recovery. |
 | 04 | PARTIAL | smp_boot PASS QEMU; PIT-only, no HPET/APIC-timer, no HW topology. |
-| 05 | PARTIAL / HARDENING | No mutex/RW/sem; waitqueue is metadata-only; no lockdep. |
-| 06 | BROKEN (gate) | Cooperative scheduler; preemption reverted. Biggest build item. |
+| 05 | PARTIAL / HARDENING | mutex/RW/sem/refcount/lockdep landed + host tests; true task blocking, P3 backends, SMP stress open. |
+| 06 | PARTIAL / HARDENING | Involuntary preemption LIVE on BSP (tick quantum + EOI-first IRQ yield + IF-entry + FPU images; hog proof, full matrix green). Still open: SMP-symmetric preemption, threads/TIDs, runqueues, migration/affinity. |
 | 07 | PARTIAL / HARDENING | No fixup; validate-then-deref; errno gaps; ID registry unversioned. |
 | 08 | PARTIAL | Static-only by design (deferred to 23); overlap policy untested. |
 | 09 | PARTIAL / HARDENING | No blocking writer, no FIFOs/unix-sockets/FD-passing, SHM lifetime open. |
 | 10 | PARTIAL / HARDENING | No IOMMU/DMA-domain ownership; MSI-X lifecycle open. |
 | 11 | PARTIAL / HARDENING | Known dirty-evict data-loss bug open; no queues/FUA/retry. |
 | 12 | PARTIAL | Polling I/O green; no reset/recovery, 2-page PRP cap, no HW. |
-| 13 | PARTIAL / HARDENING | S2 symlinks done; vnode/CLOEXEC/repair/busy-unmount open; legacy `vfs_file.c` diverges. |
+| 13 | PARTIAL / HARDENING | S2 symlinks done; stdio fd reservation landed; legacy `vfs_file.c` deleted; vnode/CLOEXEC/repair/busy-unmount open. |
 | 14 | PARTIAL / HARDENING | RTC UIP unbounded, yield-sleep, no HW reset/S5. |
 | 15 | PARTIAL / HW-BLOCKED | Build+host green, H1–H4 in, H5 unvalidated; no HW keyboard. |
 | 16 | PARTIAL / HW-BLOCKED | Parsers host-tested; end-to-end needs HW HID. |
@@ -45,7 +45,8 @@ cross-test, cred `fail-create2`).
 | 22 | PARTIAL (bounded) | Static libc green; allocator reclaim, realloc metadata, wait-status gaps documented. |
 
 No phase is marked PASS: physical evidence and security reviews are
-open across the board, and gates (02 reclaim, 06 preemption) are unmet.
+open across the board; gate 02 reclaim is unmet, and gate 06
+preemption is met on UP/BSP only (SMP-symmetric preemption open).
 
 ## 3. Work order (dependency-first)
 
@@ -54,15 +55,16 @@ open across the board, and gates (02 reclaim, 06 preemption) are unmet.
    (re-land 281229d correctly), isolation tests, pressure runs.
 2. **P2 — Phase 05 sync:** mutex/RW/sem, scheduler-backed wait queues,
    refcounts, lockdep-lite, stress.
-3. **P3 — Phase 06 scheduler:** thread/TID objects, per-CPU runqueues,
-   preempt-disable nesting, staged timer preemption, hog/migration/
-   affinity tests. Never-yield must not monopolize a CPU.
+3. **P3 — Phase 06 scheduler:** BSP timer preemption DONE (hog proof);
+   remaining: thread/TID objects, per-CPU runqueues, SMP-symmetric
+   preemption (AP timer/IPI), migration/affinity tests.
 4. **P4 — Phases 03+07:** fixup-based uaccess, EFAULT, vector matrix,
    malformed-return/nested-fault policy, syscall fuzz, ABI registry.
 5. **P5 — Phases 08/09/10/11/12/13/14:** ELF overlap policy + corpus;
    pipe blocking/FIFO/death cleanup; DMA ownership; dirty-evict fix +
-   queues; NVMe reset/recovery + PRP lists; vnode/CLOEXEC/repair +
-   legacy-VFS audit; bounded RTC + blocking sleep.
+   queues; NVMe reset/recovery + PRP lists + bounded read-retry on
+   transient timeouts; vnode/CLOEXEC/repair; bounded RTC + blocking
+   sleep.
 6. **P6 — Phases 15–22:** xHCI recovery paths; HW keyboard (owner);
    TTY fuzz; job control; userland gaps; TOCTOU review; TCP
    loss/recovery; libc allocator/wait-status fixes + support matrix.
