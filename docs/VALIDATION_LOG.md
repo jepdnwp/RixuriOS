@@ -1410,3 +1410,31 @@ slice-2 changes and match documented historical flakes):
   command echoes and one refused-CR3 activation in the failing run —
   consistent with the known nested fork/exec fragility there, with a
   transient-timeout contribution not ruled out. 5/6 green on retry.
+
+## 2026-09-14 — P3 backend slice 1: true blocking pipe readers
+
+Pipe reads no longer yield-poll: an empty pipe binds the task to the
+pipe's read queue (`TASK_BLOCKED`, skipped by selection) via an
+atomic check+prepare+mark under the VFS guard; writers wake on data,
+and every pipe-end closure wakes (EOF delivery). Waiter lifetime is
+bound to the task (exit paths drop it; table-full falls back to
+legacy polling). Spurious wakeups are safe by take-then-recheck.
+
+Caught by testing, fixed in-slice: signal delivery did not wake
+blocked tasks, hanging `killtest` (blocked gate-read + SIGUSR1, no
+writer to wake it). `process_signal_send` now wakes the target pid's
+blocked tasks after queueing (set-then-wake order is load-bearing);
+the woken task observes EINTR through the existing check. Single
+caller (KILL syscall, lock-free) so no new lock order.
+
+Not converted (still polling, sequenced next): nanosleep, waitpid,
+TTY reads, pipe writers (partial/error on full retained).
+
+Validation (`CROSS=x86_64-linux-gnu- HOST_CC=gcc`):
+
+```text
+make all/test/image RC=0
+new pipetest (close-EOF + write-then-close determinism) PASS
+pipe-stress (blocked-reader preservation) PASS
+full 28-suite QEMU matrix  ALL PASS, zero LOCKDEP/fault lines
+```
