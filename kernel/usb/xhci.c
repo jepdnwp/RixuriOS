@@ -994,31 +994,26 @@ static int xhci_port_enabled(volatile uint32_t *reg) {
 /* Pure USB2 bus-reset attempt (PR sequence only, no fallbacks).
  * Returns 0 with PRC observed, -3 on disconnect, -4/-5 on timeout. */
 static int xhci_usb2_reset(volatile uint32_t *reg) {
+    // Start the reset: set PR bit, preserve PP, set change bits to clear, clear WPR and LWS
+    uint32_t v = (*reg & ~(XHCI_PORT_PR | XHCI_PORT_WPR | XHCI_PORT_LWS));
+    v |= XHCI_PORT_PP | XHCI_PORT_CHANGE_MASK | XHCI_PORT_PR;
+    *reg = v;
+
+    // Wait for the reset to complete (PRC set)
     for (uint32_t i = 0; i < XHCI_RESET_POLL_LIMIT; ++i) {
         uint32_t s = *reg;
         if ((s & XHCI_STS_HSE) != 0u) { (void)s; }
-        if ((s & XHCI_PORT_PR) == 0u) {
-            if ((s & XHCI_PORT_PRC) != 0u) {
-                xhci_clear_port_change(reg);
-                /* Post-reset: device must still be present with a speed. */
-                uint32_t after = *reg;
-                if ((after & XHCI_PORT_CCS) == 0u) return -3;
-                return 0;
-            }
-            if ((s & XHCI_PORT_CCS) == 0u) return -3;
-            /* PR cleared without PRC: USB3 link may still be training;
-             * give it a little more time before failing. */
-            xhci_udelay(1000u);
-            uint32_t retry = *reg;
-            if (retry & XHCI_PORT_PRC) {
-                xhci_clear_port_change(reg);
-                return 0;
-            }
-            return -4;
+        if ((s & XHCI_PORT_PRC) != 0u) {
+            // Reset complete, clear the change bits
+            xhci_clear_port_change(reg);
+            // Post-reset: device must still be present
+            uint32_t after = *reg;
+            if ((after & XHCI_PORT_CCS) == 0u) return -3;
+            return 0;
         }
         if ((i & 0x3ffu) == 0u) xhci_udelay(50u);
     }
-    /* Timeout with PR still asserted: deassert to leave the port sane. */
+    /* Timeout with PRC still not set: deassert PR to leave the port sane. */
     xhci_clear_port_change(reg);
     return -5;
 }
