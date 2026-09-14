@@ -52,8 +52,8 @@ void syscall_dispatch(rix_syscall_frame_t*frame){
   uint8_t b[RIX_IO_CHUNK];size_t done=0;
   while(done<len){
    size_t n=(size_t)(len-done);if(n>RIX_IO_CHUNK)n=RIX_IO_CHUNK;size_t got=0;
-   int rc=vfs_read(self,(int)fd,b,n,&got);
-   if(rc==-3&&got==0){if(syscall_interrupted(self)){result=done?((int64_t)done):-(int64_t)RIX_EINTR;break;}scheduler_yield();continue;}
+    int rc=vfs_read(self,(int)fd,b,n,&got);
+    if(rc==-3&&got==0){if(syscall_interrupted(self)){scheduler_wait_abort();result=done?((int64_t)done):-(int64_t)RIX_EINTR;break;}scheduler_yield();(void)scheduler_wait_take();continue;}
    if(rc==-2&&got==0){result=(int64_t)done;break;}
    if(rc!=0&&!(rc==-3&&got)){result=done?((int64_t)done):-(int64_t)RIX_EINVAL;break;}
    if(got&&copy_to_user(dst+done,b,got)!=0){result=done?((int64_t)done):-(int64_t)RIX_EFAULT;break;}
