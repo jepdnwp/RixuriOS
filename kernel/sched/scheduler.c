@@ -30,6 +30,14 @@ typedef struct {
     uint8_t ap_ok;
     rix_user_context_t user_context;
     uint8_t stack[RIX_STACK_SIZE] __attribute__((aligned(16)));
+    /* Phase P3-B slice 2: per-task FPU image (fxsave area, 512 B).
+     * rix_context_switch only preserves integer callee-saved state;
+     * with involuntary preemption a tick can land mid-SSE-sequence in
+     * kernel code, so every stack switch must carry the FPU image too.
+     * Fresh tasks start from the fninit template (see task_init_stack);
+     * user FPU inheritance across fork/exec stays explicitly out of
+     * scope until P25 threads (documented boundary). */
+    uint8_t fpu[512] __attribute__((aligned(16)));
 } rix_task_t;
 
 /* user_entry.S consumes rix_user_context_t at fixed byte offsets.  Keep the
@@ -62,6 +70,15 @@ static rix_task_id_t next_id;
 static uint64_t cpu_idle_rsp[SMP_MAX_CPUS];
 static uint8_t cpu_idle_valid[SMP_MAX_CPUS];
 static uint64_t cpu_idle_tmp[SMP_MAX_CPUS];
+/* Per-CPU FPU image for the idle context (which owns no task slot).
+ * Rows are 512 B (multiple of 16), base is 16-aligned, so every row
+ * satisfies the fxsave/fxrstor alignment requirement. */
+static uint8_t cpu_idle_fpu[SMP_MAX_CPUS][512] __attribute__((aligned(16)));
+static uint8_t fpu_template[512] __attribute__((aligned(16)));
+static inline void fpu_switch(const void *old_area, const void *new_area) {
+    __asm__ volatile("fxsave (%0)" :: "r"(old_area) : "memory");
+    __asm__ volatile("fxrstor (%0)" :: "r"(new_area) : "memory");
+}
 static uint32_t sched_cpu(void){
     int id=smp_cpu_id();
     if(id>=0&&id<SMP_MAX_CPUS)return (uint32_t)id;
@@ -103,6 +120,21 @@ static uint64_t read_rflags(void){uint64_t v;__asm__ volatile("pushfq; popq %0":
 static void cli(void){__asm__ volatile("cli" ::: "memory");}
 static void sti(void){__asm__ volatile("sti" ::: "memory");}
 
+/* Phase P3-B slice 2: cooperative preempt-disable + tick quantum.
+ * PIT (100 Hz) only ARMS a per-CPU need-resched flag; the actual
+ * context switch happens in scheduler_yield() task context or in an
+ * IRQ-return path after EOI. This keeps PIT-safe the P1-failure
+ * class (IRQ preemption landing mid-allocator: pmm/heap/vmm/process
+ * critical sections are all locked or IF=0, never async-switched).
+ * Depth is nesting (irqsave-style): scheduler_preempt_disable() /
+ * scheduler_preempt_enable() pair; scheduler_preempt_is_disabled()
+ * reports the local CPU state (no locks, IRQ-safe read). */
+
+#define RIX_PREEMPT_QUANTUM_TICKS 10u /* 100 Hz PIT -> 100 ms quantum */
+
+static volatile unsigned cpu_preempt_depth[SMP_MAX_CPUS];
+static volatile unsigned cpu_need_resched[SMP_MAX_CPUS];
+static volatile uint64_t cpu_quantum_left[SMP_MAX_CPUS];
 static __attribute__((noreturn)) void task_returned(void){ uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);tasks[cpu_current[sched_cpu()]].state=TASK_DEAD;rix_spin_unlock_irqrestore(&sched_lock,irq);for(;;) scheduler_yield(); }
 static void boot_user_entry_marker(void){serial_write("BOOT: USER ENTRY READY\r\n");}
 static void trace_yield_begin(void){}
@@ -147,7 +179,11 @@ static __attribute__((noreturn)) void task_bootstrap(void){
 int scheduler_init(void){
     ticks=0;next_id=1;
     rix_spin_init(&sched_lock);
-    for(uint32_t c=0;c<SMP_MAX_CPUS;c++){cpu_current[c]=0;cpu_idle_rsp[c]=0;cpu_idle_valid[c]=0;cpu_idle_tmp[c]=0;}
+    /* Canonical clean FPU image (fninit state). CR4.OSFXSR is already on
+     * (vmm_early_init), and CR0.TS/EM are clear, so fxsave/fxrstor are
+     * legal from the first switch on. Rows/tasks copy this template. */
+    __asm__ volatile("fninit; fxsave %0" : "=m"(fpu_template) :: "memory");
+    for(uint32_t c=0;c<SMP_MAX_CPUS;c++){cpu_current[c]=0;cpu_idle_rsp[c]=0;cpu_idle_valid[c]=0;cpu_idle_tmp[c]=0;cpu_preempt_depth[c]=0;cpu_need_resched[c]=0;cpu_quantum_left[c]=RIX_PREEMPT_QUANTUM_TICKS;for(unsigned i=0;i<512;i++)cpu_idle_fpu[c][i]=fpu_template[i];}
     for(uint32_t i=0;i<RIX_MAX_TASKS;i++){
         tasks[i].id=0;tasks[i].state=TASK_UNUSED;tasks[i].rsp=0;tasks[i].entry=NULL;tasks[i].arg=NULL;
         tasks[i].process_pid=0;tasks[i].user_entry=0;tasks[i].user_stack=0;tasks[i].user_return=UINT64_MAX;
@@ -158,6 +194,46 @@ int scheduler_init(void){
 }
 void scheduler_tick(void){ticks++;}
 uint64_t scheduler_ticks(void){return ticks;}
+/* P3-B slice 2 preempt-disable API (nesting, per-CPU, IRQ-safe).
+ * disable/enable only adjust the caller CPU's counter — they never
+ * touch the scheduler lock, never sleep, never yield, so they are
+ * safe inside allocator/VFS/NVMe critical sections and IRQ handlers.
+ * enable() does NOT yield by itself; the pending flag is consumed at
+ * the next voluntary yield or IRQ-return boundary, where a task
+ * context exists. */
+void scheduler_preempt_disable(void){uint32_t me=sched_cpu();if(me<SMP_MAX_CPUS)cpu_preempt_depth[me]++;}
+void scheduler_preempt_enable(void){uint32_t me=sched_cpu();if(me<SMP_MAX_CPUS&&cpu_preempt_depth[me])cpu_preempt_depth[me]--;}
+int scheduler_preempt_is_disabled(void){uint32_t me=sched_cpu();return me<SMP_MAX_CPUS&&cpu_preempt_depth[me]!=0;}
+int scheduler_need_resched(void){uint32_t me=sched_cpu();return me<SMP_MAX_CPUS&&cpu_need_resched[me]!=0;}
+void scheduler_clear_need_resched(void){uint32_t me=sched_cpu();if(me<SMP_MAX_CPUS)cpu_need_resched[me]=0;}
+/* PIT quantum arm (IRQ context, BSP-only for this slice). Decrements
+ * the per-CPU quantum; on expiry and with another task runnable,
+ * sets need-resched and reloads. Depth-gated: a disabled CPU still
+ * consumes its quantum (time passes) but the flag waits until enable.
+ * Never switches stacks, never takes locks (plain volatile stores);
+ * rmb/wmb pairing is unnecessary: the consumer runs on the same CPU
+ * at the next yield/IRQ-return with IF=0. */
+void scheduler_preempt_tick(void){
+    uint32_t me=sched_cpu();
+    if(me>=(uint32_t)SMP_MAX_CPUS)return;
+    if(me!=(uint32_t)smp_bsp_index())return;
+    if(cpu_quantum_left[me])cpu_quantum_left[me]--;
+    if(cpu_quantum_left[me])return;
+    cpu_quantum_left[me]=RIX_PREEMPT_QUANTUM_TICKS;
+    if(cpu_preempt_depth[me])return;
+    if(scheduler_runnable_count()<2)return;
+    cpu_need_resched[me]=1;
+}
+/* IRQ-return helper: call AFTER EOI, before iret. Returns 1 when the
+ * caller should perform a voluntary yield now (flag set, preemption
+ * enabled, still more than one runnable task). Keeps the EOI-first
+ * order so the APIC ISR bit is clear across the switch. */
+int scheduler_should_yield_from_irq(void){
+    uint32_t me=sched_cpu();
+    if(me>=SMP_MAX_CPUS||cpu_preempt_depth[me]||!cpu_need_resched[me])return 0;
+    if(scheduler_runnable_count()<2){cpu_need_resched[me]=0;cpu_quantum_left[me]=RIX_PREEMPT_QUANTUM_TICKS;return 0;}
+    return 1;
+}
 rix_task_id_t scheduler_current_id(void){return tasks[cpu_current[sched_cpu()]].id;}
 uint32_t scheduler_runnable_count(void){uint32_t n=0;for(uint32_t i=0;i<RIX_MAX_TASKS;i++)if(tasks[i].state==TASK_RUNNABLE||tasks[i].state==TASK_RUNNING)n++;return n;}
 void scheduler_dump_states(void){
@@ -184,6 +260,7 @@ static void task_init_stack(rix_task_t *t){
     *--sp=(uint64_t)(uintptr_t)task_bootstrap;
     for(unsigned r=0;r<6;r++)*--sp=0;
     t->rsp=(uint64_t)(uintptr_t)sp;
+    for(unsigned i=0;i<512;i++)t->fpu[i]=fpu_template[i];
 }
 
 int scheduler_create_kernel_thread(rix_kernel_thread_fn entry,void *arg,rix_task_id_t *out_id){
@@ -262,17 +339,21 @@ __attribute__((noreturn)) void scheduler_exit_current(void){
  * and process activation still run). Default 0. If a bootloop vanishes
  * with this set, the switch/task-stack path is implicated. */
 #define RIX_DEBUG_NO_CTX_SWITCH 0
-/* Cooperative yield (E2 shape). No IRQ-context callers exist: PIT only
- * ticks, IPI handlers only ack/flush/EOI, faults halt by design — so
- * plain lock/unlock under the entry cli plus the entry-IF sti tail is
- * the whole IRQ story. See P1-revert in SMP_DESIGN.md for why timer
- * preemption was backed out (kernel-wide preempt-safety retrofit). */
+/* Cooperative yield (P3-B slice 2 shape). Consumes the PIT-armed
+ * need-resched flag: a voluntary yield always re-arms the quantum
+ * (it IS a schedule point), and the same reload happens on resume
+ * after a switch. No IRQ-context switch exists yet; the IRQ-return
+ * path (EOI first, then scheduler_should_yield_from_irq + yield) is
+ * the only other consumer. See P1-revert in SMP_DESIGN.md for why
+ * async IRQ-context switching stays out. */
 void scheduler_yield(void){
     static unsigned boot_marker;
     if (boot_marker++ < 2) serial_write("BOOT: scheduler yield\r\n");
     uint64_t flags=read_rflags();
     trace_flags();
     cli();
+    uint32_t self=sched_cpu();
+    if(self<SMP_MAX_CPUS){cpu_need_resched[self]=0;cpu_quantum_left[self]=RIX_PREEMPT_QUANTUM_TICKS;}
     trace_yield_begin();
     /* E1: selection + publish under the scheduler lock (IRQs already off,
      * so plain lock/unlock; IRQ posture across the switch is unchanged).
@@ -293,6 +374,7 @@ void scheduler_yield(void){
         if(me<SMP_MAX_CPUS&&cpu_idle_valid[me]){
             uint64_t idle=cpu_idle_rsp[me];
             rix_spin_unlock(&sched_lock);
+            fpu_switch(tasks[old].fpu,cpu_idle_fpu[me]);
             rix_context_switch(&cpu_idle_tmp[me],idle);
             if(flags&0x200ULL)sti();
             return;
@@ -324,9 +406,15 @@ void scheduler_yield(void){
     return;
 #endif
     rix_spin_unlock(&sched_lock);
+    fpu_switch(tasks[old].fpu,tasks[next].fpu);
     rix_context_switch(&tasks[old].rsp,tasks[next].rsp);
     trace_switched();
     trace_resumed();
+    /* The IRQ-return yield runs on the INTERRUPTED task's kernel stack:
+     * rix_context_switch saved the preemption RSP into tasks[old].rsp,
+     * so no additional IRQ-frame accounting is needed. The resumed-task
+     * path below re-activates the resumed address space exactly like a
+     * voluntary yield. */
     /* The context switch returns in the task that was waiting in this
        function. The address space must follow the resumed task, not the task
        that ran immediately before it. */
@@ -354,9 +442,6 @@ __attribute__((noreturn)) void scheduler_ap_idle(void){
         cpu_idle_rsp[me]=rsp;cpu_idle_valid[me]=1;
         __asm__ volatile("" ::: "memory");
         __asm__ volatile("sti" ::: "memory");
-        /* E2 cooperative pick (plain lock: no IRQ-context caller takes
-         * sched_lock — PIT only ticks, IPI handlers only ack/EOI, faults
-         * halt — so IF=1 here is safe; see P1-revert for the full story). */
         /* E2 cooperative pick. sched_lock via irqsave (not plain): a PIT
          * tick may preempt this window once timer preemption lands, and
          * a plain spin here would deadlock against it. */
@@ -372,6 +457,7 @@ __attribute__((noreturn)) void scheduler_ap_idle(void){
         tasks[next].state=TASK_RUNNING;cpu_current[me]=next;
         cr3trace_push(3,(uint64_t)tasks[old].id,(uint64_t)tasks[next].id,0);
         rix_spin_unlock_irqrestore(&sched_lock, ap_irq);
+        fpu_switch(cpu_idle_fpu[me],tasks[next].fpu);
         rix_context_switch(&cpu_idle_rsp[me],tasks[next].rsp);
     }
 }

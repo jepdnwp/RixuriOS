@@ -37,13 +37,20 @@ x86_enter_user:
        across MOV CR3, while a tiny .bss frame overflows on any NMI in the
        MOV CR3 -> far-return window (real ASUS/AMD boards deliver SMIs/NMIs
        where QEMU delivers none).  IRETQ (not LRETQ) loads a controlled
-       RFLAGS.  IF stays CLEAR here by design: a pending physical IRQ
-       (PIT/keyboard, certain on real HW) must not fire before the first
-       synchronous int 0x80, otherwise it races TSS.RSP0/IRETQ delivery.
-       The first syscall return sets IF (see syscall_dispatch). */
+       RFLAGS.  IF is SET on entry (0x202): a never-trapping user spinner
+       would otherwise run with IF masked forever, making timer
+       preemption impossible by construction.  This is safe because
+       process_activate has already programmed TSS.RSP0 to this task's
+       kernel stack, the IRETQ frame lives on that same per-task stack
+       (not shared), and a pending IRQ that fires on entry simply runs
+       its handler and irets back to the entry RIP — or preempts through
+       the EOI-first IRQ-return yield, which resumes at the same RIP.
+       (An earlier revision kept IF clear fearing an RSP0/IRETQ race;
+       the race does not exist: RSP0 is valid before every entry and the
+       frame is per-task.  See VALIDATION_LOG P3-B slice 2.) */
     pushq $0x23
     pushq %rdx
-    pushq $0x002
+    pushq $0x202
     pushq $0x1b
     pushq %rsi
     movq %rdi,%cr3
@@ -89,7 +96,7 @@ x86_enter_user_return:
     pushq %rdx
     pushfq
     popq %rax
-    orq $0x002,%rax
+    orq $0x202,%rax
     andq $~0x3000,%rax
     pushq %rax
     pushq $0x1b
@@ -108,7 +115,11 @@ x86_enter_user_context:
     movq 136(%rsi),%rax
     pushq %rax
     movq 128(%rsi),%rax
-    andq $~0x200,%rax
+    /* Fresh fork children enter ring 3 with IF set (matches
+     * x86_enter_user): the saved trap-time flags always have IF clear,
+     * and a child that never traps must still be timer-preemptible.
+     * IOPL stays clear. */
+    orq $0x200,%rax
     andq $~0x3000,%rax
     pushq %rax
     pushq $0x1b

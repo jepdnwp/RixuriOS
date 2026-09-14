@@ -3,7 +3,6 @@
 
 typedef uint64_t rix_task_id_t;
 typedef void (*rix_kernel_thread_fn)(void *arg);
-
 typedef struct {
     uint64_t r15, r14, r13, r12, r11, r10, r9, r8;
     uint64_t rbp, rdi, rsi, rdx, rcx, rbx, rax;
@@ -20,6 +19,17 @@ int scheduler_create_fork_child(uint64_t pid, uint64_t entry, uint64_t user_stac
 int scheduler_create_fork_child_context(uint64_t pid, const rix_user_context_t *context,
                                         rix_task_id_t *out_id);
 __attribute__((noreturn)) void scheduler_exit_current(void);
+/* Phase P3-B slice 2: cooperative preempt-disable + quantum.
+ * PIT only arms need-resched; switches happen in task context
+ * (scheduler_yield) or in an IRQ-return path after EOI. Nesting
+ * disable/enable, IRQ-safe, never sleeps. */
+void scheduler_preempt_disable(void);
+void scheduler_preempt_enable(void);
+int scheduler_preempt_is_disabled(void);
+int scheduler_need_resched(void);
+void scheduler_clear_need_resched(void);
+void scheduler_preempt_tick(void);
+int scheduler_should_yield_from_irq(void);
 void scheduler_yield(void);
 rix_task_id_t scheduler_current_id(void);
 uint32_t scheduler_runnable_count(void);
