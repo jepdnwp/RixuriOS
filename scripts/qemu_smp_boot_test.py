@@ -65,8 +65,13 @@ try:
             raise RuntimeError(f"{ap!r} line not observed")
     if not read_until(b"RIXURI:KERNEL_READY", 30.0):
         raise RuntimeError("kernel ready not observed")
-    if not read_until(b"RIXURI: SHELL READY", 30.0):
-        raise RuntimeError("shell ready not observed")
+    # Order-independent SHELL READY wait: boot tasks can interleave so
+    # that SHELL READY is already in the buffer (or arrives while we
+    # look). A strict sequential search from the cursor would then miss
+    # it and time out even on a healthy boot.
+    if b"RIXURI: SHELL READY" not in output:
+        if not read_until(b"RIXURI: SHELL READY", 30.0):
+            raise RuntimeError("shell ready not observed")
     if not read_until(PROMPT, 25.0):
         raise RuntimeError("idle prompt not observed")
 finally:

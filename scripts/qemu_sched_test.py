@@ -64,6 +64,7 @@ try:
         raise RuntimeError("initial shell prompt not observed")
     command(b"/usr/bin/schedtest churn 40")
     command(b"/usr/bin/schedtest fair")
+    command(b"/usr/bin/schedtest hog")
 finally:
     LOG.write_bytes(output)
     proc.terminate()
@@ -76,7 +77,7 @@ finally:
     shutil.rmtree(ESP, ignore_errors=True)
 LOG.write_bytes(output)
 sys.stdout.buffer.write(output)
-for marker in (b"churn=PASS", b"fair=PASS"):
+for marker in (b"churn=PASS", b"fair=PASS", b"hog=PASS"):
     if marker not in output:
         raise SystemExit(f"missing runtime marker: {marker!r}")
 if b"CPU exception" in output or b"PANIC" in output:

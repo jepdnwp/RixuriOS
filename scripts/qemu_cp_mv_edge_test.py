@@ -64,6 +64,25 @@ def drain_output(duration: float = 0.25) -> None:
         output.extend(chunk)
 
 
+def drain_quiet(idle: float = 2.0, cap: float = 15.0) -> None:
+    """Wait until the guest goes quiet before snapshotting (same
+    rationale as qemu_env_utils_test.py: under load, prompt matching
+    can succeed while a slow child still has bytes in flight)."""
+    deadline = time.monotonic() + cap
+    while time.monotonic() < deadline:
+        quiet_until = time.monotonic() + idle
+        while time.monotonic() < quiet_until:
+            ready, _, _ = select.select([proc.stdout], [], [], 0.05)
+            if not ready:
+                continue
+            chunk = os.read(proc.stdout.fileno(), 4096)
+            if not chunk:
+                return
+            output.extend(chunk)
+            quiet_until = time.monotonic() + idle
+        return
+
+
 def command(line: bytes) -> None:
     for byte in line + b"\n":
         proc.stdin.write(bytes((byte,)))
@@ -77,7 +96,11 @@ def command(line: bytes) -> None:
 try:
     if not read_until(b"RIXURI: SHELL READY", 30.0):
         raise RuntimeError("embedded init completion not observed")
-    time.sleep(1.0)
+    # Sync on the first interactive prompt before typing: with a slow
+    # guest the initial prompt can arrive after typing starts, shifting
+    # every later attribution by one (observed as split command echoes).
+    if not read_until(b"\x1b[1;37m:\x1b[0m ", 60.0):
+        raise RuntimeError("initial shell prompt not observed")
     commands = [
         b"/usr/bin/metatest init",
         b"/usr/bin/metatest policy",
@@ -117,6 +140,7 @@ try:
     ]
     for line in commands:
         command(line)
+    drain_quiet()
 finally:
     proc.terminate()
     try:
