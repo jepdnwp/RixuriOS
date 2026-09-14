@@ -10,6 +10,11 @@ int process_signal_send(pid_t pid,unsigned signal){
     if(!p||pid==0||p->state==RIX_PROC_UNUSED||p->state==RIX_PROC_ZOMBIE)return -1;
     p->signal_pending|=signal_bit(signal);
     if(p->state==RIX_PROC_SLEEPING && (p->signal_mask&signal_bit(signal))==0)p->state=RIX_PROC_RUNNING;
+    /* A task parked BLOCKED in a syscall never re-checks for signals
+     * on its own: wake the whole process so it observes EINTR (or
+     * spuriously re-blocks, which is equally correct). Set-then-wake
+     * order is load-bearing — reversing it could miss the signal. */
+    scheduler_wake_pid((uint64_t)pid);
     return 0;
 }
 
