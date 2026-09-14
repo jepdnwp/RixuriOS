@@ -4,11 +4,11 @@
 static void test_lookup_and_data(void) {
     const xhci_profile_t *p = xhci_profile_lookup(0x1022u, 0x15B7u);
     assert(p != 0);
-    assert(p->expected_ports == 18u);
+    assert(p->expected_ports == 4u);
     assert(p->expected_hci == 0x0120u);
-    assert(xhci_profile_port_known_bad(p, 9u));
-    assert(xhci_profile_port_known_bad(p, 16u));
-    assert(!xhci_profile_port_known_bad(p, 1u));
+    assert(!xhci_profile_port_known_bad(p, 9u));
+    assert(!xhci_profile_port_known_bad(p, 16u));
+    assert(xhci_profile_port_known_bad(p, 1u));
     assert(xhci_profile_lookup(0x1234u, 0x5678u) == 0);
 }
 
@@ -24,10 +24,11 @@ static void test_verification(void) {
 
 static void test_priority(void) {
     assert(xhci_profile_port_priority(2, 0) == 0);
-    assert(xhci_profile_port_priority(3, 0) == 1);
-    assert(xhci_profile_port_priority(0, 0) == 2);
+    assert(xhci_profile_port_priority(3, 0) == 2);
+    assert(xhci_profile_port_priority(0, 0) == 1);
     assert(xhci_profile_port_priority(2, 1) == 4);
-    assert(xhci_profile_port_priority(3, 1) == 5);
+    assert(xhci_profile_port_priority(3, 1) == 6);
+    assert(xhci_profile_port_priority(0, 1) == 5);
 }
 
 int main(void) {

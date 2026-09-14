@@ -1001,11 +1001,11 @@ static int xhci_usb2_reset(volatile uint32_t *reg) {
     /* Give hardware time to react to PR assertion before polling for PRC. */
     xhci_udelay(100);
 
-    // Wait for the reset to complete (PRC set)
+    // Wait for the reset to complete (PRC set) and port enable/disable change (PEC set)
     for (uint32_t i = 0; i < XHCI_RESET_POLL_LIMIT; ++i) {
         uint32_t s = *reg;
         if ((s & XHCI_STS_HSE) != 0u) { (void)s; }
-        if ((s & XHCI_PORT_PRC) != 0u) {
+        if ((s & XHCI_PORT_PRC) != 0u && (s & XHCI_PORT_PEC) != 0u) {
             // Reset complete, clear the change bits
             xhci_clear_port_change(reg);
             // Post-reset: device must still be present
