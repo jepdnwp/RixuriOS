@@ -1784,3 +1784,52 @@ scale, no per-CPU-lock need demonstrated); HW evidence open
 (preemptive SMP on silicon, >8-CPU topology, HW timer behavior —
 owner/hardware blocked, nothing fabricated). QEMU scope of Phase 06
 is complete; P3 scheduler work closes here.
+
+## 2026-09-15 — Phase P4: fixup uaccess, fault matrix, fuzz, ABI registry
+
+F1 fixup-based uaccess: raw byte copies in
+`kernel/arch/x86_64/uaccess.S` bracket exactly one user-memory
+instruction per direction; a kernel #PF inside a bracket with the
+per-CPU record armed (preemption disabled across arm+copy+disarm, so
+no migration) resumes at the fixup label with -EFAULT. Kernel-side
+accesses sit outside any bracket — a fault there still freezes (real
+kernel bug, never masked). Validate-then-deref stays as the fast
+path; return values unified to -EFAULT (zero `==-1` callers tree-wide,
+verified). Boot selftest faults a runtime-proven-unmapped user VA
+through the armed raw path: `UACCESS: fixup selftest PASS`.
+
+F2 user-fault kill matrix (`idt.c`): CPL3 faults in {0,1,3,4,5,6,13,
+14,16,17,19} terminate just the faulting process (exit 139, task
+dead, yield away — never iretq back); everything else (incl. all CPL0
+except fixup, NMI/#DF/#MC, nested faults via the E3 guard) freezes
+with forensics. Shared `x86_fault_frame` (idt.h); the IRQ path keeps
+its own struct untouched.
+
+F4 syscall fuzz: `fuzztest` (seeded LCG, 40 windows x 150 calls, wild
+pointer corpus incl. canonical holes, destructive numbers skipped by
+design with rationale) + harness. Children may die via F2; the parent
+requires every window reaped.
+
+F5 ABI registry: `docs/ABI_REGISTRY.md` (77 numbers from source,
+served vs reserved, v1-additive policy); `WAITPID 247` moved from a
+`syscall.c` local into the header (no behavior change).
+
+Validation (`CROSS=x86_64-linux-gnu- HOST_CC=gcc`):
+
+```text
+make all/test/image RC=0 (-Werror; only pre-existing font_psf note)
+UACCESS: fixup selftest PASS on boot (end-to-end #PF→fixup→resume)
+scripts/qemu_crash_test.py: PASS — null-deref + UD2 children reaped
+  139 (`crash-reap=PASS` x2), machine alive, zero fault markers
+scripts/qemu_fuzz_test.py: PASS — 6000 wild syscalls, zero fault
+  markers, SHELL READY after
+run-all-tests.sh RESULT: 37 PASS, 0 FAIL (auto-includes crash+fuzz),
+  log build/test-logs/all-tests-20260915T112331Z.log; fault-scan clean
+```
+
+Explicitly NOT in P4: fixup for anything but the two copy loops;
+user signal delivery frames/handlers (kill with status only —
+Phase 25); #SS-CPL3 kill (freezes; unreachable — stack overflows hit
+unmapped space as #PF first); precise wake-latency measurement;
+dynamic-fault injection beyond the boot selftest. Next: P5
+(ELF overlap, pipe/FIFO gaps, DMA, NVMe retry, RTC bounds).
