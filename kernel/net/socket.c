@@ -126,6 +126,17 @@ int rix_net_socket_shutdown(rix_net_socket_table_t *table, int descriptor, int h
     if (how == 1 || how == 2) table->sockets[descriptor].shutdown |= RIX_NET_SOCKET_SHUT_WR;
     return 0;
 }
+int rix_net_socket_set_option(rix_net_socket_table_t *table, int descriptor, int level, int option, int value) {
+    if (!valid_descriptor(table, descriptor) || level != 1 || option != RIX_NET_SOCKET_REUSEADDR || (value != 0 && value != 1)) return -1;
+    if (value) table->sockets[descriptor].flags |= RIX_NET_SOCKET_REUSEADDR;
+    else table->sockets[descriptor].flags &= (uint8_t)~RIX_NET_SOCKET_REUSEADDR;
+    return 0;
+}
+int rix_net_socket_get_option(rix_net_socket_table_t *table, int descriptor, int level, int option, int *value) {
+    if (!valid_descriptor(table, descriptor) || !value || level != 1 || option != RIX_NET_SOCKET_REUSEADDR) return -1;
+    *value = (table->sockets[descriptor].flags & RIX_NET_SOCKET_REUSEADDR) != 0;
+    return 0;
+}
 
 int rix_net_socket_bind(rix_net_socket_table_t *table, int descriptor,
                         rix_net_endpoint_t endpoint) {

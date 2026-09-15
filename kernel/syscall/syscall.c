@@ -18,6 +18,7 @@
 #define RIX_EINVAL 22
 #define RIX_EBADF 9
 #define RIX_EACCES 13
+#define RIX_ENOPROTOOPT 92
 #define RIX_EEXIST 17
 #define RIX_ELOOP 40
 #define RIX_EFAULT 14
@@ -79,6 +80,8 @@ void syscall_dispatch(rix_syscall_frame_t*frame){
  case RIX_SYS_SEND:{rix_process_t*p=process_lookup(self);rix_net_endpoint_t endpoint;uint8_t buffer[RIX_NET_MTU];size_t length=(size_t)frame->rdx;if(!p||length>sizeof(buffer)||copy_from_user(buffer,frame->rsi,length)!=0||copy_from_user(&endpoint,frame->r10,sizeof(endpoint))!=0){result=-RIX_EFAULT;break;}result=rix_net_socket_send(&p->sockets,(int)frame->rdi,buffer,length,endpoint);break;}
  case RIX_SYS_RECV:{rix_process_t*p=process_lookup(self);rix_net_endpoint_t endpoint, hop;uint8_t buffer[RIX_NET_MTU];size_t capacity=(size_t)frame->rdx,total=0;uint64_t user_base=frame->rsi;int have_peer=0;if(!p||!capacity){result=-RIX_EINVAL;break;}result=0;for(unsigned chunk=0;chunk<16&&total<capacity;++chunk){size_t want=capacity-total;if(want>sizeof(buffer))want=sizeof(buffer);int rc=rix_net_socket_receive(&p->sockets,(int)frame->rdi,buffer,want,frame->r10?&hop:0);if(rc<0){if(!total)result=rc;break;}if(rc==0)break;if(copy_to_user(user_base+total,buffer,(size_t)rc)!=0){result=-RIX_EFAULT;break;}if(frame->r10&&!have_peer){endpoint=hop;have_peer=1;if(copy_to_user(frame->r10,&endpoint,sizeof(endpoint))!=0){result=-RIX_EFAULT;break;}}total+=(size_t)rc;if((size_t)rc<want)break;}if(result==0)result=(int64_t)total;break;}
  case RIX_SYS_SHUTDOWN:{rix_process_t*p=process_lookup(self);if(!p||frame->rsi>2){result=-RIX_EINVAL;break;}result=rix_net_socket_shutdown(&p->sockets,(int)frame->rdi,(int)frame->rsi)==0?0:-RIX_EBADF;break;}
+ case RIX_SYS_SETSOCKOPT:{rix_process_t*p=process_lookup(self);int value;if(!p||copy_from_user(&value,frame->r10,sizeof(value))!=0){result=-RIX_EFAULT;break;}result=rix_net_socket_set_option(&p->sockets,(int)frame->rdi,(int)frame->rsi,(int)frame->rdx,value)==0?0:-RIX_ENOPROTOOPT;break;}
+ case RIX_SYS_GETSOCKOPT:{rix_process_t*p=process_lookup(self);int value;if(!p||rix_net_socket_get_option(&p->sockets,(int)frame->rdi,(int)frame->rsi,(int)frame->rdx,&value)!=0){result=-RIX_ENOPROTOOPT;break;}if(copy_to_user(frame->r10,&value,sizeof(value))!=0)result=-RIX_EFAULT;else result=0;break;}
  case RIX_SYS_OPENAT:{char path[RIX_VFS_PATH_MAX];if(user_string(frame->rsi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}int fd;int rc=vfs_open(self,path,(uint32_t)frame->rdx,(uint32_t)frame->r10,&fd);if(rc!=0)result=vfs_result(rc);else result=fd;break;}
  case RIX_SYS_LSEEK:{uint64_t position=0;int rc=vfs_seek(self,(int)frame->rdi,(int64_t)frame->rsi,(int)frame->rdx,&position);result=rc==0?(int64_t)position:-RIX_EINVAL;break;}
  case RIX_SYS_BRK:{uint64_t new_break=0;int rc=process_brk(self,frame->rdi,&new_break);if(rc==0)result=(int64_t)new_break;else result=rc==-3?-RIX_ENOMEM:-RIX_EINVAL;break;}

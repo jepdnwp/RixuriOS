@@ -11,6 +11,7 @@
 #define RIX_NET_SOCKET_NONBLOCK 0x1u
 #define RIX_NET_SOCKET_SHUT_RD 0x1u
 #define RIX_NET_SOCKET_SHUT_WR 0x2u
+#define RIX_NET_SOCKET_REUSEADDR 0x2u
 
 typedef enum {
     RIX_NET_SOCKET_UDP = 1,
@@ -75,6 +76,8 @@ void rix_net_socket_table_init(rix_net_socket_table_t *table);
 int rix_net_socket_open(rix_net_socket_table_t *table, rix_net_socket_type_t type);
 int rix_net_socket_close(rix_net_socket_table_t *table, int descriptor);
 int rix_net_socket_shutdown(rix_net_socket_table_t *table, int descriptor, int how);
+int rix_net_socket_set_option(rix_net_socket_table_t *table, int descriptor, int level, int option, int value);
+int rix_net_socket_get_option(rix_net_socket_table_t *table, int descriptor, int level, int option, int *value);
 int rix_net_socket_bind(rix_net_socket_table_t *table, int descriptor,
                         rix_net_endpoint_t endpoint);
 int rix_net_socket_connect(rix_net_socket_table_t *table, int descriptor,

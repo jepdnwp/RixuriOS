@@ -137,8 +137,8 @@ ssize_t recvfrom(int fd,void *buffer,size_t length,int flags,struct sockaddr *so
 ssize_t send(int fd,const void *buffer,size_t length,int flags){return sendto(fd,buffer,length,flags,0,0);}
 ssize_t recv(int fd,void *buffer,size_t length,int flags){return recvfrom(fd,buffer,length,flags,0,0);}
 int shutdown(int fd,int how){if(how<SHUT_RD||how>SHUT_RDWR){errno=RIX_EINVAL;return -1;}return(int)rix_int_result(rix_sys(151,fd,how,0));}
-int setsockopt(int fd,int level,int option,const void *value,socklen_t length){(void)fd;(void)value;(void)length;if(level==SOL_SOCKET&&option==SO_REUSEADDR)return 0;errno=RIX_ENOPROTOOPT;return -1;}
-int getsockopt(int fd,int level,int option,void *value,socklen_t *length){(void)fd;if(level==SOL_SOCKET&&option==SO_REUSEADDR&&value&&length&&*length>=sizeof(int)){*(int*)value=1;*length=sizeof(int);return 0;}errno=RIX_ENOPROTOOPT;return -1;}
+int setsockopt(int fd,int level,int option,const void *value,socklen_t length){if(!value||length<sizeof(int)){errno=RIX_EINVAL;return -1;}return(int)rix_int_result(rix_sys4(152,fd,level,option,(long)value));}
+int getsockopt(int fd,int level,int option,void *value,socklen_t *length){if(!value||!length||*length<sizeof(int)){errno=RIX_EINVAL;return -1;}return(int)rix_int_result(rix_sys4(153,fd,level,option,(long)value));}
 int socket_open(int type){return(int)rix_int_result(rix_sys(41,type,0,0));}
 int socket_bind(int fd,rix_net_endpoint_t endpoint){return(int)rix_int_result(rix_sys(42,fd,(long)&endpoint,0));}
 int socket_connect(int fd,rix_net_endpoint_t endpoint){return(int)rix_int_result(rix_sys(43,fd,(long)&endpoint,0));}

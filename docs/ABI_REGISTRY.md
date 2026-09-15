@@ -104,6 +104,8 @@ descriptive — any drift between them is a bug. `STATFS 145` / `SYSINFO 146` / 
 | 149 | LSTAT | served (v1 additive) |
 | 150 | ACCESS | served (v1 additive) |
 | 151 | SHUTDOWN | served (v1 additive) |
+| 152 | SETSOCKOPT | served (v1 additive) |
+| 153 | GETSOCKOPT | served (v1 additive) |
 | 247 | WAITPID | served (`NOHANG=1`) |
 | 248 | CLOSE_PIPES_EXCEPT | served |
 

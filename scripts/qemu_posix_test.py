@@ -96,7 +96,7 @@ sys.stdout.buffer.write(output)
 for group in (b"clock", b"clock-bad", b"nanosleep", b"gettimeofday", b"sysconf",
               b"mmap", b"mmap-bad", b"munmap", b"mprotect", b"poll", b"ioctl",
               b"signal", b"sigaction", b"sigpending", b"socket-domain",
-              b"socket-raw", b"fstat", b"lstat", b"listen", b"setsockopt",
+              b"socket-raw", b"fstat", b"lstat", b"access", b"shutdown", b"listen", b"sockopt",
               b"udp-loopback", b"udp-empty", b"exit-atexit", b"sscanf",
               b"getopt-run", b"inet", b"pthread"):
     if b"posix:" + group + b"=PASS" not in output:

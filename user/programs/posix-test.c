@@ -61,7 +61,7 @@ int program_main(int argc,char **argv,char **envp){
     check("access",access("/etc/hosts",F_OK|R_OK)==0&&access("/definitely-missing",F_OK)!=0&&errno!=0);
     {int shut=socket(AF_INET,SOCK_DGRAM,0);char byte='x';int ok=shut>=0&&shutdown(shut,SHUT_WR)==0&&send(shut,&byte,1,0)<0&&shutdown(shut,99)<0&&errno==RIX_EINVAL;if(shut>=0)close(shut);check("shutdown",ok);}
     check("listen",listen(0,1)!=0&&errno==RIX_ENOSYS);
-    check("setsockopt",setsockopt(0,SOL_SOCKET,99,0,0)!=0&&errno==RIX_ENOPROTOOPT);
+    {int optfd=socket(AF_INET,SOCK_DGRAM,0),enabled=1,observed=0;socklen_t optlen=sizeof(observed);int ok=optfd>=0&&setsockopt(optfd,SOL_SOCKET,SO_REUSEADDR,&enabled,sizeof(enabled))==0&&getsockopt(optfd,SOL_SOCKET,SO_REUSEADDR,&observed,&optlen)==0&&observed==1&&setsockopt(optfd,SOL_SOCKET,99,&enabled,sizeof(enabled))<0&&errno==RIX_ENOPROTOOPT;if(optfd>=0)close(optfd);check("sockopt",ok);}
     /* UDP loopback through the POSIX spelling. */
     int udp_ok=0;
     int fd=socket(AF_INET,SOCK_DGRAM,0);
@@ -69,8 +69,9 @@ int program_main(int argc,char **argv,char **envp){
         struct sockaddr_in addr;addr.sin_family=AF_INET;addr.sin_port=htons(41001);
         addr.sin_addr.s_addr=htonl(INADDR_LOOPBACK);
         for(size_t i=0;i<sizeof(addr.sin_zero);++i)addr.sin_zero[i]=0;
+        int reuse=1;
         if(bind(fd,(struct sockaddr*)&addr,sizeof(addr))==0&&
-           setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,0,0)==0){
+           setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,&reuse,sizeof(reuse))==0){
             static const char message[]="posix-udp";
             if(sendto(fd,message,sizeof(message),0,(struct sockaddr*)&addr,sizeof(addr))==(ssize_t)sizeof(message)){
                 char buffer[64];struct sockaddr_in source;socklen_t source_len=sizeof(source);

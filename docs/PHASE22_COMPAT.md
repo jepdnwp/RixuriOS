@@ -39,7 +39,7 @@ construction: `kernel/` includes only `include/` + its own headers.
 | 32/33 | DUP/DUP2 | dup/dup2 | dup/dup2 | working |
 | 35 | NANOSLEEP | nanosleep/sleep/usleep | same | working |
 | 39/140 | GETPID/GETPPID | getpid/getppid | same | working |
-| 41–45, 151 | SOCKET/BIND/CONNECT/SEND/RECV/SHUTDOWN | socket_open/... + socket/bind/connect/sendto/.../shutdown | POSIX socket API (AF_INET loopback; external where device stack serves) | working (loopback QEMU-proven); shutdown supports SHUT_RD/WR/RDWR |
+| 41–45, 151–153 | SOCKET/BIND/CONNECT/SEND/RECV/SHUTDOWN/SETSOCKOPT/GETSOCKOPT | socket_open/... + socket/bind/connect/sendto/.../shutdown/setsockopt/getsockopt | POSIX socket API (AF_INET loopback; external where device stack serves) | working (loopback QEMU-proven); shutdown and SO_REUSEADDR state are supported |
 | 57/59/61/247 | FORK/EXECVE/WAIT/WAITPID | fork/execve/wait/waitpid | same; WNOHANG=1; WEXITSTATUS et al in sys/wait.h | working |
 | 60 | EXIT | _exit/exit/_Exit | exit runs ≤16 atexit handlers LIFO, then _exit | working (QEMU-proven, status word checked) |
 | 62/127/142 | KILL/SIGPENDING/SIGPROCMASK | kill/raise/sigpending/sigprocmask/pause | same; signal()/sigaction() declared but ENOSYS (no delivery ABI) | partial |
