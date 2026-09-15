@@ -42,6 +42,32 @@ static inline void write_efer(uint64_t v){uint32_t lo=(uint32_t)v,hi=(uint32_t)(
 static uint64_t *entry_table(uint64_t e){return(uint64_t *)(uintptr_t)(e&PAGE_MASK);}static int canonical48(uint64_t va){return va<(1ULL<<47)||va>=(UINT64_MAX-(1ULL<<47)+1ULL);}
 static uint64_t *ensure_table(uint64_t *parent,size_t index,uint64_t flags){uint64_t e=parent[index];if(e&RIXURI_PTE_PRESENT){if(flags&RIXURI_PTE_USER)parent[index]|=RIXURI_PTE_USER;return entry_table(parent[index]);}uint64_t phys=pmm_alloc_page();if(!phys)return NULL;uint64_t*t=(uint64_t *)(uintptr_t)phys;for(size_t i=0;i<TABLE_ENTRIES;i++)t[i]=0;parent[index]=phys|RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE|(flags&RIXURI_PTE_USER);return t;}
 static uint64_t *split_pd_huge_page(uint64_t *pd,size_t index,uint64_t flags){uint64_t e=pd[index];if(!(e&RIXURI_PTE_PRESENT))return ensure_table(pd,index,flags);if(!(e&PTE_PS)){if(flags&RIXURI_PTE_USER)pd[index]|=RIXURI_PTE_USER;return entry_table(pd[index]);}uint64_t phys=pmm_alloc_page();if(!phys)return NULL;uint64_t*pt=(uint64_t *)(uintptr_t)phys;uint64_t base=e&PAGE_MASK;uint64_t leaf=e&(RIXURI_PTE_WRITE|RIXURI_PTE_USER|RIXURI_PTE_NX);for(size_t i=0;i<TABLE_ENTRIES;i++)pt[i]=(base+(uint64_t)i*0x1000ULL)|RIXURI_PTE_PRESENT|leaf;pd[index]=phys|RIXURI_PTE_PRESENT|RIXURI_PTE_WRITE|(e&RIXURI_PTE_USER)|(flags&RIXURI_PTE_USER);return pt;}
+static int table_is_empty(uint64_t*t){for(size_t i=0;i<TABLE_ENTRIES;i++)if(t[i]&RIXURI_PTE_PRESENT)return 0;return 1;}
+/* Prune empty tables along va's path (lock must be held). Frees only
+ * PMM-managed (non-reserved) tables; early static tables are reserved and
+ * are left intact. Used both for map-failure rollback and unmap reclaim. */
+static void prune_empty_path(uint64_t pml4_phys,uint64_t va){
+ uint64_t*pml4=(uint64_t *)(uintptr_t)pml4_phys;size_t i4=(size_t)((va>>39)&0x1FFULL),i3=(size_t)((va>>30)&0x1FFULL),i2=(size_t)((va>>21)&0x1FFULL);
+ uint64_t e4=pml4[i4];if(!(e4&RIXURI_PTE_PRESENT))return;
+ uint64_t*pdpt=entry_table(e4);uint64_t e3=pdpt[i3];if(!(e3&RIXURI_PTE_PRESENT)){
+  if(table_is_empty(pdpt)&&!pmm_is_reserved(e4&PAGE_MASK)){pml4[i4]=0;pmm_free_page(e4&PAGE_MASK);}
+  return;
+ }
+ if(e3&PTE_PS)return;
+ uint64_t*pd=entry_table(e3);uint64_t e2=pd[i2];if(!(e2&RIXURI_PTE_PRESENT)){
+  if(table_is_empty(pd)&&!pmm_is_reserved(e3&PAGE_MASK)){pdpt[i3]=0;pmm_free_page(e3&PAGE_MASK);}
+  if(table_is_empty(pdpt)&&!pmm_is_reserved(e4&PAGE_MASK)){pml4[i4]=0;pmm_free_page(e4&PAGE_MASK);}
+  return;
+ }
+ if(e2&PTE_PS)return;
+ uint64_t*pt=entry_table(e2);
+ if(!table_is_empty(pt))return;
+ if(!pmm_is_reserved(e2&PAGE_MASK)){pd[i2]=0;pmm_free_page(e2&PAGE_MASK);}
+ if(!table_is_empty(pd))return;
+ if(!pmm_is_reserved(e3&PAGE_MASK)){pdpt[i3]=0;pmm_free_page(e3&PAGE_MASK);}
+ if(!table_is_empty(pdpt))return;
+ if(!pmm_is_reserved(e4&PAGE_MASK)){pml4[i4]=0;pmm_free_page(e4&PAGE_MASK);}
+}
 static void reserve_table_range(uint64_t start, size_t bytes){
  uint64_t first=start&~0xfffULL;
  uint64_t last=(start+(uint64_t)bytes+0xfffULL)&~0xfffULL;
@@ -91,8 +117,8 @@ uint64_t vmm_current_pml4(void){return current_pml4_phys;}
 void *vmm_phys_ptr(uint64_t physical_address){if(!physical_address||(physical_address&0xFFFULL)||physical_address>=RIXURI_MAX_PHYS_BYTES)return NULL;return(void *)(uintptr_t)physical_address;}
 void vmm_switch_pml4(uint64_t pml4_phys){if(!pml4_phys)return;current_pml4_phys=pml4_phys;write_cr3(pml4_phys);}
 void vmm_track_pml4(uint64_t pml4_phys){if(!pml4_phys)return;current_pml4_phys=pml4_phys;}
-int vmm_map_page_in_pml4(uint64_t pml4_phys,uint64_t va,uint64_t pa,uint64_t flags){if(!pml4_phys||!canonical48(va)||(va&0xFFFULL)||(pa&0xFFFULL)||(pa&~PAGE_MASK))return -1;uint64_t irq;rix_spin_lock_irqsave(&vmm_map_lock,&irq);(void)rix_lockdep_acquire(vmm_map_lockdep_class);uint64_t*pml4=(uint64_t *)(uintptr_t)pml4_phys;uint64_t*pdpt=ensure_table(pml4,(va>>39)&0x1FFULL,flags);if(!pdpt){(void)rix_lockdep_release(vmm_map_lockdep_class);rix_spin_unlock_irqrestore(&vmm_map_lock,irq);return -1;}uint64_t*pd=ensure_table(pdpt,(va>>30)&0x1FFULL,flags);if(!pd){(void)rix_lockdep_release(vmm_map_lockdep_class);rix_spin_unlock_irqrestore(&vmm_map_lock,irq);return -1;}uint64_t*pt=split_pd_huge_page(pd,(va>>21)&0x1FFULL,flags);if(!pt){(void)rix_lockdep_release(vmm_map_lockdep_class);rix_spin_unlock_irqrestore(&vmm_map_lock,irq);return -1;}size_t idx=(size_t)((va>>12)&0x1FFULL);pt[idx]=(pa&PAGE_MASK)|(flags&LEAF_FLAGS);if(pml4_phys==current_pml4_phys)invlpg(va);(void)rix_lockdep_release(vmm_map_lockdep_class);rix_spin_unlock_irqrestore(&vmm_map_lock,irq);return 0;}
-int vmm_unmap_page_in_pml4(uint64_t pml4_phys,uint64_t va){if(!pml4_phys||!canonical48(va)||(va&0xFFFULL))return -1;uint64_t irq;rix_spin_lock_irqsave(&vmm_map_lock,&irq);(void)rix_lockdep_acquire(vmm_map_lockdep_class);uint64_t*pml4=(uint64_t *)(uintptr_t)pml4_phys;uint64_t e=pml4[(va>>39)&0x1FFULL];if(!(e&RIXURI_PTE_PRESENT)){(void)rix_lockdep_release(vmm_map_lockdep_class);rix_spin_unlock_irqrestore(&vmm_map_lock,irq);return 0;}uint64_t*pdpt=entry_table(e);e=pdpt[(va>>30)&0x1FFULL];if(!(e&RIXURI_PTE_PRESENT)){(void)rix_lockdep_release(vmm_map_lockdep_class);rix_spin_unlock_irqrestore(&vmm_map_lock,irq);return 0;}uint64_t*pd=entry_table(e);e=pd[(va>>21)&0x1FFULL];if(!(e&RIXURI_PTE_PRESENT)||(e&PTE_PS)){(void)rix_lockdep_release(vmm_map_lockdep_class);rix_spin_unlock_irqrestore(&vmm_map_lock,irq);return 0;}uint64_t*pt=entry_table(e);pt[(va>>12)&0x1FFULL]=0;if(pml4_phys==current_pml4_phys)invlpg(va);(void)rix_lockdep_release(vmm_map_lockdep_class);rix_spin_unlock_irqrestore(&vmm_map_lock,irq);return 0;}
+int vmm_map_page_in_pml4(uint64_t pml4_phys,uint64_t va,uint64_t pa,uint64_t flags){if(!pml4_phys||!canonical48(va)||(va&0xFFFULL)||(pa&0xFFFULL)||(pa&~PAGE_MASK))return -1;uint64_t irq;rix_spin_lock_irqsave(&vmm_map_lock,&irq);(void)rix_lockdep_acquire(vmm_map_lockdep_class);uint64_t*pml4=(uint64_t *)(uintptr_t)pml4_phys;uint64_t*pdpt=ensure_table(pml4,(va>>39)&0x1FFULL,flags);if(!pdpt){prune_empty_path(pml4_phys,va);(void)rix_lockdep_release(vmm_map_lockdep_class);rix_spin_unlock_irqrestore(&vmm_map_lock,irq);return -1;}uint64_t*pd=ensure_table(pdpt,(va>>30)&0x1FFULL,flags);if(!pd){prune_empty_path(pml4_phys,va);(void)rix_lockdep_release(vmm_map_lockdep_class);rix_spin_unlock_irqrestore(&vmm_map_lock,irq);return -1;}uint64_t*pt=split_pd_huge_page(pd,(va>>21)&0x1FFULL,flags);if(!pt){prune_empty_path(pml4_phys,va);(void)rix_lockdep_release(vmm_map_lockdep_class);rix_spin_unlock_irqrestore(&vmm_map_lock,irq);return -1;}size_t idx=(size_t)((va>>12)&0x1FFULL);pt[idx]=(pa&PAGE_MASK)|(flags&LEAF_FLAGS);if(pml4_phys==current_pml4_phys)invlpg(va);(void)rix_lockdep_release(vmm_map_lockdep_class);rix_spin_unlock_irqrestore(&vmm_map_lock,irq);return 0;}
+int vmm_unmap_page_in_pml4(uint64_t pml4_phys,uint64_t va){if(!pml4_phys||!canonical48(va)||(va&0xFFFULL))return -1;uint64_t irq;rix_spin_lock_irqsave(&vmm_map_lock,&irq);(void)rix_lockdep_acquire(vmm_map_lockdep_class);uint64_t*pml4=(uint64_t *)(uintptr_t)pml4_phys;uint64_t e=pml4[(va>>39)&0x1FFULL];if(!(e&RIXURI_PTE_PRESENT)){(void)rix_lockdep_release(vmm_map_lockdep_class);rix_spin_unlock_irqrestore(&vmm_map_lock,irq);return 0;}uint64_t*pdpt=entry_table(e);e=pdpt[(va>>30)&0x1FFULL];if(!(e&RIXURI_PTE_PRESENT)){(void)rix_lockdep_release(vmm_map_lockdep_class);rix_spin_unlock_irqrestore(&vmm_map_lock,irq);return 0;}if(e&PTE_PS){(void)rix_lockdep_release(vmm_map_lockdep_class);rix_spin_unlock_irqrestore(&vmm_map_lock,irq);return -1;}uint64_t*pd=entry_table(e);uint64_t pde=pd[(va>>21)&0x1FFULL];if(!(pde&RIXURI_PTE_PRESENT)){(void)rix_lockdep_release(vmm_map_lockdep_class);rix_spin_unlock_irqrestore(&vmm_map_lock,irq);return 0;}uint64_t*pt;if(pde&PTE_PS){pt=split_pd_huge_page(pd,(va>>21)&0x1FFULL,0);if(!pt){(void)rix_lockdep_release(vmm_map_lockdep_class);rix_spin_unlock_irqrestore(&vmm_map_lock,irq);return -1;}}else{pt=entry_table(pde);}pt[(va>>12)&0x1FFULL]=0;if(pml4_phys==current_pml4_phys)invlpg(va);prune_empty_path(pml4_phys,va);(void)rix_lockdep_release(vmm_map_lockdep_class);rix_spin_unlock_irqrestore(&vmm_map_lock,irq);return 0;}
 /* NOTE (Phase D2): this flushes only the local TLB. Unmapping a page that
  * other CPUs may hold (shared kernel mappings) additionally requires
  * smp_shootdown(va); see address_space_unmap for the established pattern.

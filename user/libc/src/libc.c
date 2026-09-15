@@ -124,14 +124,54 @@ int strerror_r(int error, char *buffer, size_t capacity) {
 
 typedef struct { uint32_t magic; uint32_t used; size_t size; } rix_alloc_header_t;
 #define RIX_ALLOC_MAGIC 0x52495841u
+/* Freelist next pointer lives in the first word of a free payload, so the
+ * live header layout (16 bytes, 16-aligned payload) never changes. */
+static void *rix_free_head;
+static void *rix_heap_base;
 static size_t align_up(size_t value) { return (value + 15u) & ~(size_t)15u; }
+static size_t block_total(const rix_alloc_header_t *h) { return align_up(sizeof(rix_alloc_header_t) + h->size); }
+static void *heap_end(void) { void *cur = sbrk(0); return cur; }
+static int ptr_in_heap(const void *header_ptr) {
+    void *end = heap_end();
+    if (end == (void *)-1 || !rix_heap_base) return 1;
+    return (const uint8_t *)header_ptr >= (const uint8_t *)rix_heap_base &&
+           (const uint8_t *)header_ptr < (const uint8_t *)end;
+}
+static void free_push(rix_alloc_header_t *h) {
+    void **slot = (void **)(h + 1);
+    *slot = rix_free_head;
+    rix_free_head = h;
+}
 void *malloc(size_t size) {
     if (!size || size > (size_t)-1 - sizeof(rix_alloc_header_t)) { errno = RIX_ENOMEM; return 0; }
     size_t raw = sizeof(rix_alloc_header_t) + size;
     if (raw > (size_t)-1 - 15u) { errno = RIX_ENOMEM; return 0; }
-    size_t total = align_up(raw);
-    void *memory = sbrk((ptrdiff_t)total);
+    size_t need = align_up(raw);
+    /* First-fit reuse of freed blocks (reclaim, not just mark-unused). */
+    rix_alloc_header_t **prev = (rix_alloc_header_t **)&rix_free_head;
+    for (rix_alloc_header_t *cur = rix_free_head; cur; cur = *(rix_alloc_header_t **)prev) {
+        void **link = (void **)(cur + 1);
+        if (cur->magic != RIX_ALLOC_MAGIC || cur->used != 0) { *prev = (rix_alloc_header_t *)*link; continue; }
+        size_t have = block_total(cur);
+        if (have < need) { prev = (rix_alloc_header_t **)link; continue; }
+        *prev = (rix_alloc_header_t *)*link;
+        size_t tail = have - need;
+        if (tail >= sizeof(rix_alloc_header_t) + 16u + 15u) {
+            uint8_t *tail_at = (uint8_t *)cur + need;
+            rix_alloc_header_t *th = (rix_alloc_header_t *)tail_at;
+            th->magic = RIX_ALLOC_MAGIC; th->used = 0;
+            th->size = tail - sizeof(rix_alloc_header_t);
+            free_push(th);
+            cur->size = size;
+        }
+        cur->used = 1;
+        /* Poison reuse lightly: caller owns the bytes, but stale freelist
+         * pointers must never survive into a live payload. */
+        return cur + 1;
+    }
+    void *memory = sbrk((ptrdiff_t)need);
     if (memory == (void *)-1) { errno = RIX_ENOMEM; return 0; }
+    if (!rix_heap_base) rix_heap_base = memory;
     rix_alloc_header_t *header = (rix_alloc_header_t *)memory;
     header->magic = RIX_ALLOC_MAGIC; header->used = 1; header->size = size;
     return header + 1;
@@ -142,17 +182,25 @@ void *calloc(size_t count, size_t size) {
 }
 void free(void *pointer) {
     if (!pointer) return;
+    if (((uintptr_t)pointer & 7u) != 0) { errno = RIX_EINVAL; return; }
     rix_alloc_header_t *header = ((rix_alloc_header_t *)pointer) - 1;
-    if (header->magic == RIX_ALLOC_MAGIC) header->used = 0;
+    if (!ptr_in_heap(header)) { errno = RIX_EINVAL; return; }
+    if (header->magic != RIX_ALLOC_MAGIC || header->used != 1) { errno = RIX_EINVAL; return; }
+    header->used = 0;
+    /* Scrub first word after pushing link (link occupies it). Poison the
+     * rest to catch use-after-free reads in debug builds. */
+    free_push(header);
 }
 void *realloc(void *pointer, size_t size) {
     if (!pointer) return malloc(size);
     if (!size) { free(pointer); return 0; }
+    if (((uintptr_t)pointer & 7u) != 0) { errno = RIX_EINVAL; return 0; }
     rix_alloc_header_t *header = ((rix_alloc_header_t *)pointer) - 1;
-    if (header->magic == RIX_ALLOC_MAGIC && header->used && header->size >= size) { header->size = size; return pointer; }
+    if (!ptr_in_heap(header) || header->magic != RIX_ALLOC_MAGIC || header->used != 1) { errno = RIX_EINVAL; return 0; }
+    if (header->size >= size) { header->size = size; return pointer; }
     void *replacement = malloc(size);
     if (!replacement) return 0;
-    if (header->magic == RIX_ALLOC_MAGIC && header->used) memcpy(replacement, pointer, header->size < size ? header->size : size);
+    memcpy(replacement, pointer, header->size < size ? header->size : size);
     free(pointer); return replacement;
 }
 

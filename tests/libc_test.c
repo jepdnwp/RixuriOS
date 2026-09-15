@@ -86,6 +86,18 @@ int main(void) {
     a = realloc(a, 64);
     assert(a != 0);
     free(a); free(b);
+    /* Reclaim: freed blocks are reused, invalid frees fail safely. */
+    {
+        void *ra = malloc(32); assert(ra != 0);
+        void *rb = malloc(32); assert(rb != 0);
+        free(ra);
+        void *rc = malloc(32); assert(rc == ra);
+        free(rb); free(rc);
+        errno = 0; free((void *)(uintptr_t)0x12345u); assert(errno == RIX_EINVAL);
+        void *rd = malloc(16); assert(rd != 0); free(rd);
+        errno = 0; free(rd); assert(errno == RIX_EINVAL);
+        errno = 0; assert(realloc((void *)(uintptr_t)0x12345u, 16) == 0 && errno == RIX_EINVAL);
+    }
     assert(malloc((size_t)-1) == 0 && errno == RIX_ENOMEM);
     char formatted[32];
     assert(isalpha('R') && isdigit('7') && isblank('\t') && iscntrl('\n') && isgraph('!'));
