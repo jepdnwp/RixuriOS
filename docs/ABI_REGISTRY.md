@@ -106,6 +106,8 @@ descriptive — any drift between them is a bug. `STATFS 145` / `SYSINFO 146` / 
 | 151 | SHUTDOWN | served (v1 additive) |
 | 152 | SETSOCKOPT | served (v1 additive) |
 | 153 | GETSOCKOPT | served (v1 additive) |
+| 154 | LISTEN | served (v1 additive) |
+| 155 | ACCEPT | served (v1 additive; empty queue returns EAGAIN) |
 | 247 | WAITPID | served (`NOHANG=1`) |
 | 248 | CLOSE_PIPES_EXCEPT | served |
 

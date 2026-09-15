@@ -102,6 +102,8 @@ int rix_net_socket_open(rix_net_socket_table_t *table, rix_net_socket_type_t typ
             socket->connected = 0;
             socket->flags = 0;
             socket->shutdown = 0;
+            socket->listening = 0;
+            socket->backlog = 0;
             socket->type = type;
             socket->local = (rix_net_endpoint_t){RIX_NET_SOCKET_LOOPBACK,
                                                  (uint16_t)(49152u + i)};
@@ -125,6 +127,17 @@ int rix_net_socket_shutdown(rix_net_socket_table_t *table, int descriptor, int h
     if (how == 0 || how == 2) table->sockets[descriptor].shutdown |= RIX_NET_SOCKET_SHUT_RD;
     if (how == 1 || how == 2) table->sockets[descriptor].shutdown |= RIX_NET_SOCKET_SHUT_WR;
     return 0;
+}
+int rix_net_socket_listen(rix_net_socket_table_t *table, int descriptor, int backlog) {
+    if (!valid_descriptor(table, descriptor) || table->sockets[descriptor].type != RIX_NET_SOCKET_TCP || backlog < 0 || backlog > (int)RIX_NET_SOCKET_QUEUE) return -1;
+    table->sockets[descriptor].listening = 1;
+    table->sockets[descriptor].backlog = (uint8_t)(backlog ? backlog : 1);
+    return 0;
+}
+int rix_net_socket_accept(rix_net_socket_table_t *table, int descriptor, rix_net_endpoint_t *peer) {
+    if (!valid_descriptor(table, descriptor) || !table->sockets[descriptor].listening) return -1;
+    if (peer) *peer = (rix_net_endpoint_t){0, 0};
+    return -2;
 }
 int rix_net_socket_set_option(rix_net_socket_table_t *table, int descriptor, int level, int option, int value) {
     if (!valid_descriptor(table, descriptor) || level != 1 || option != RIX_NET_SOCKET_REUSEADDR || (value != 0 && value != 1)) return -1;

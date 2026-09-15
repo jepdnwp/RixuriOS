@@ -60,7 +60,7 @@ int program_main(int argc,char **argv,char **envp){
     {rix_stat_t target={0},link_stat={0};int made=symlink("/etc/hosts","/tmp/posix-lstat-link")==0;int ok=made&&stat("/tmp/posix-lstat-link",&target)==0&&lstat("/tmp/posix-lstat-link",&link_stat)==0&&target.type==2&&link_stat.type==3;check("lstat",ok);if(made)unlink("/tmp/posix-lstat-link");}
     check("access",access("/etc/hosts",F_OK|R_OK)==0&&access("/definitely-missing",F_OK)!=0&&errno!=0);
     {int shut=socket(AF_INET,SOCK_DGRAM,0);char byte='x';int ok=shut>=0&&shutdown(shut,SHUT_WR)==0&&send(shut,&byte,1,0)<0&&shutdown(shut,99)<0&&errno==RIX_EINVAL;if(shut>=0)close(shut);check("shutdown",ok);}
-    check("listen",listen(0,1)!=0&&errno==RIX_ENOSYS);
+    {int listener=socket(AF_INET,SOCK_STREAM,0);struct sockaddr_in listen_addr={0};listen_addr.sin_family=AF_INET;listen_addr.sin_port=htons(42001);listen_addr.sin_addr.s_addr=htonl(INADDR_LOOPBACK);int ok=listener>=0&&bind(listener,(struct sockaddr*)&listen_addr,sizeof(listen_addr))==0&&listen(listener,2)==0&&accept(listener,0,0)<0&&errno==RIX_EAGAIN&&listen(listener,99)<0&&errno==RIX_EINVAL;if(listener>=0)close(listener);check("listen",ok);}
     {int optfd=socket(AF_INET,SOCK_DGRAM,0),enabled=1,observed=0;socklen_t optlen=sizeof(observed);int ok=optfd>=0&&setsockopt(optfd,SOL_SOCKET,SO_REUSEADDR,&enabled,sizeof(enabled))==0&&getsockopt(optfd,SOL_SOCKET,SO_REUSEADDR,&observed,&optlen)==0&&observed==1&&setsockopt(optfd,SOL_SOCKET,99,&enabled,sizeof(enabled))<0&&errno==RIX_ENOPROTOOPT;if(optfd>=0)close(optfd);check("sockopt",ok);}
     /* UDP loopback through the POSIX spelling. */
     int udp_ok=0;

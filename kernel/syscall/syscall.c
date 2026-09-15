@@ -17,6 +17,7 @@
 #define RIX_ENOSYS 38
 #define RIX_EINVAL 22
 #define RIX_EBADF 9
+#define RIX_EAGAIN 11
 #define RIX_EACCES 13
 #define RIX_ENOPROTOOPT 92
 #define RIX_EEXIST 17
@@ -82,6 +83,8 @@ void syscall_dispatch(rix_syscall_frame_t*frame){
  case RIX_SYS_SHUTDOWN:{rix_process_t*p=process_lookup(self);if(!p||frame->rsi>2){result=-RIX_EINVAL;break;}result=rix_net_socket_shutdown(&p->sockets,(int)frame->rdi,(int)frame->rsi)==0?0:-RIX_EBADF;break;}
  case RIX_SYS_SETSOCKOPT:{rix_process_t*p=process_lookup(self);int value;if(!p||copy_from_user(&value,frame->r10,sizeof(value))!=0){result=-RIX_EFAULT;break;}result=rix_net_socket_set_option(&p->sockets,(int)frame->rdi,(int)frame->rsi,(int)frame->rdx,value)==0?0:-RIX_ENOPROTOOPT;break;}
  case RIX_SYS_GETSOCKOPT:{rix_process_t*p=process_lookup(self);int value;if(!p||rix_net_socket_get_option(&p->sockets,(int)frame->rdi,(int)frame->rsi,(int)frame->rdx,&value)!=0){result=-RIX_ENOPROTOOPT;break;}if(copy_to_user(frame->r10,&value,sizeof(value))!=0)result=-RIX_EFAULT;else result=0;break;}
+ case RIX_SYS_LISTEN:{rix_process_t*p=process_lookup(self);if(!p){result=-RIX_EINVAL;break;}result=rix_net_socket_listen(&p->sockets,(int)frame->rdi,(int)frame->rsi)==0?0:-RIX_EINVAL;break;}
+ case RIX_SYS_ACCEPT:{rix_process_t*p=process_lookup(self);rix_net_endpoint_t peer;int rc;if(!p){result=-RIX_EINVAL;break;}rc=rix_net_socket_accept(&p->sockets,(int)frame->rdi,&peer);if(rc==-2){result=-RIX_EAGAIN;break;}if(rc<0){result=-RIX_EBADF;break;}if(copy_to_user(frame->rsi,&peer,sizeof(peer))!=0){result=-RIX_EFAULT;break;}result=rc;break;}
  case RIX_SYS_OPENAT:{char path[RIX_VFS_PATH_MAX];if(user_string(frame->rsi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}int fd;int rc=vfs_open(self,path,(uint32_t)frame->rdx,(uint32_t)frame->r10,&fd);if(rc!=0)result=vfs_result(rc);else result=fd;break;}
  case RIX_SYS_LSEEK:{uint64_t position=0;int rc=vfs_seek(self,(int)frame->rdi,(int64_t)frame->rsi,(int)frame->rdx,&position);result=rc==0?(int64_t)position:-RIX_EINVAL;break;}
  case RIX_SYS_BRK:{uint64_t new_break=0;int rc=process_brk(self,frame->rdi,&new_break);if(rc==0)result=(int64_t)new_break;else result=rc==-3?-RIX_ENOMEM:-RIX_EINVAL;break;}

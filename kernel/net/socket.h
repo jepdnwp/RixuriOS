@@ -36,6 +36,8 @@ typedef struct {
     uint8_t connected;
     uint8_t flags;
     uint8_t shutdown;
+    uint8_t listening;
+    uint8_t backlog;
     rix_net_socket_type_t type;
     rix_net_endpoint_t local;
     rix_net_endpoint_t peer;
@@ -76,6 +78,8 @@ void rix_net_socket_table_init(rix_net_socket_table_t *table);
 int rix_net_socket_open(rix_net_socket_table_t *table, rix_net_socket_type_t type);
 int rix_net_socket_close(rix_net_socket_table_t *table, int descriptor);
 int rix_net_socket_shutdown(rix_net_socket_table_t *table, int descriptor, int how);
+int rix_net_socket_listen(rix_net_socket_table_t *table, int descriptor, int backlog);
+int rix_net_socket_accept(rix_net_socket_table_t *table, int descriptor, rix_net_endpoint_t *peer);
 int rix_net_socket_set_option(rix_net_socket_table_t *table, int descriptor, int level, int option, int value);
 int rix_net_socket_get_option(rix_net_socket_table_t *table, int descriptor, int level, int option, int *value);
 int rix_net_socket_bind(rix_net_socket_table_t *table, int descriptor,
