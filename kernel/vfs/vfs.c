@@ -15,7 +15,7 @@
 
 typedef struct { rix_vnode_t node; } vfs_root_t;
 typedef struct { rixfs_t fs; char path[8]; uint8_t active; } vfs_mount_t;
-typedef struct { uint8_t used; uint8_t type; uint8_t writable; uint8_t append; uint64_t inode; uint64_t offset; rix_pipe_t *pipe; uint8_t pipe_write; } vfs_fd_t;
+typedef struct { uint8_t used; uint8_t type; uint8_t writable; uint8_t append; uint8_t cloexec; uint8_t reserved_[3]; uint64_t inode; uint64_t offset; rix_pipe_t *pipe; uint8_t pipe_write; } vfs_fd_t;
 typedef struct { rix_pipe_t pipe; uint8_t used; uint8_t refs; rix_waitqueue_t read_wq; rix_waitqueue_t write_wq; } vfs_pipe_slot_t;
 #define VFS_FD_PIPE_READ 5u
 #define VFS_FD_PIPE_WRITE 6u
@@ -175,10 +175,10 @@ int vfs_open(uint64_t pid,const char*path,uint32_t flags,uint32_t mode,int*out_f
     size_t ps;if(pid_slot(pid,&ps)||!path||!out_fd)return -1;rix_vfs_path_t p;int r=vfs_lookup_locked(path,&p);if(r==RIX_VFS_ERR_PERMISSION)return RIX_VFS_ERR_PERMISSION;if(r&&!(flags&RIX_VFS_O_CREAT))return -2;
     if(r){char parent[RIX_VFS_PATH_MAX],name[RIX_VFS_NAME_MAX+1];if(split_parent(path,parent,sizeof(parent),name,sizeof(name)))return -3;rix_vfs_path_t pp;int parent_rc=vfs_lookup_locked(parent,&pp);if(parent_rc==RIX_VFS_ERR_PERMISSION)return RIX_VFS_ERR_PERMISSION;if(parent_rc||!pp.node||pp.node->type!=RIX_VFS_DIR)return -4;int parent_permission=permission_allowed(pp.node,VFS_ACCESS_WRITE|VFS_ACCESS_EXEC);if(parent_permission!=0)return parent_permission;rixfs_t*fs=vfs_root_fs();if(!fs)return -5;uint64_t ino;if(rixfs_create(fs,pp.node->inode,name,mode,process_uid(process_current()),process_gid(process_current()),&ino))return -6;if(vfs_lookup_locked(path,&p))return -7;}
     rix_vnode_t node=*p.node;if(node.type!=RIX_VFS_FILE&&node.type!=RIX_VFS_DIR)return -8;if((flags&(RIX_VFS_O_WRONLY|RIX_VFS_O_RDWR))&&node.type==RIX_VFS_DIR)return -9;unsigned access=node.type==RIX_VFS_DIR?(VFS_ACCESS_READ|VFS_ACCESS_EXEC):((flags&(RIX_VFS_O_WRONLY|RIX_VFS_O_RDWR))?VFS_ACCESS_WRITE:VFS_ACCESS_READ);int node_permission=permission_allowed(&node,access);if(node_permission!=0)return node_permission;
-    int fd=-1;for(size_t i=RIX_VFS_STDIO_RESERVED;i<RIX_VFS_FD_MAX;i++)if(!fds[ps][i].used){fd=(int)i;break;}if(fd<0)return -10;fds[ps][fd].used=1;fds[ps][fd].type=(uint8_t)node.type;fds[ps][fd].writable=(uint8_t)((flags&(RIX_VFS_O_WRONLY|RIX_VFS_O_RDWR))!=0);fds[ps][fd].append=(uint8_t)((flags&RIX_VFS_O_APPEND)!=0);fds[ps][fd].inode=node.inode;fds[ps][fd].offset=0;
+    int fd=-1;for(size_t i=RIX_VFS_STDIO_RESERVED;i<RIX_VFS_FD_MAX;i++)if(!fds[ps][i].used){fd=(int)i;break;}if(fd<0)return -10;fds[ps][fd].used=1;fds[ps][fd].type=(uint8_t)node.type;fds[ps][fd].writable=(uint8_t)((flags&(RIX_VFS_O_WRONLY|RIX_VFS_O_RDWR))!=0);fds[ps][fd].append=(uint8_t)((flags&RIX_VFS_O_APPEND)!=0);fds[ps][fd].cloexec=(uint8_t)((flags&RIX_VFS_O_CLOEXEC)!=0);fds[ps][fd].inode=node.inode;fds[ps][fd].offset=0;fds[ps][fd].pipe=0;fds[ps][fd].pipe_write=0;
     if(flags&RIX_VFS_O_TRUNC){if(!fds[ps][fd].writable||node.type!=RIX_VFS_FILE||rixfs_truncate(vfs_root_fs(),node.inode,0)){fds[ps][fd].used=0;return -11;}}*out_fd=fd;return 0;
 }
-int vfs_pipe(uint64_t pid,int *read_fd,int *write_fd){VFS_GUARD();size_t ps;if(pid_slot(pid,&ps)||!read_fd||!write_fd)return -1;int r=-1,w=-1;for(int i=RIX_VFS_STDIO_RESERVED;i<(int)RIX_VFS_FD_MAX;i++)if(!fds[ps][i].used){if(r<0)r=i;else{w=i;break;}}if(r<0||w<0)return -2;for(size_t i=0;i<VFS_PIPE_MAX;i++)if(!pipe_slots[i].used){pipe_init(&pipe_slots[i].pipe);rix_waitqueue_init(&pipe_slots[i].read_wq);rix_waitqueue_init(&pipe_slots[i].write_wq);pipe_slots[i].used=1u;pipe_slots[i].refs=2u;fds[ps][r]=(vfs_fd_t){1u,VFS_FD_PIPE_READ,0u,0u,0u,0u,&pipe_slots[i].pipe,0u};fds[ps][w]=(vfs_fd_t){1u,VFS_FD_PIPE_WRITE,1u,0u,0u,0u,&pipe_slots[i].pipe,1u};*read_fd=r;*write_fd=w;return 0;}return -3;}
+int vfs_pipe(uint64_t pid,int *read_fd,int *write_fd){VFS_GUARD();size_t ps;if(pid_slot(pid,&ps)||!read_fd||!write_fd)return -1;int r=-1,w=-1;for(int i=RIX_VFS_STDIO_RESERVED;i<(int)RIX_VFS_FD_MAX;i++)if(!fds[ps][i].used){if(r<0)r=i;else{w=i;break;}}if(r<0||w<0)return -2;for(size_t i=0;i<VFS_PIPE_MAX;i++)if(!pipe_slots[i].used){pipe_init(&pipe_slots[i].pipe);rix_waitqueue_init(&pipe_slots[i].read_wq);rix_waitqueue_init(&pipe_slots[i].write_wq);pipe_slots[i].used=1u;pipe_slots[i].refs=2u;fds[ps][r]=(vfs_fd_t){1u,VFS_FD_PIPE_READ,0u,0u,0u,{0,0,0},0u,0u,&pipe_slots[i].pipe,0u};fds[ps][w]=(vfs_fd_t){1u,VFS_FD_PIPE_WRITE,1u,0u,0u,{0,0,0},0u,0u,&pipe_slots[i].pipe,1u};*read_fd=r;*write_fd=w;return 0;}return -3;}
 static int retain_fd(const vfs_fd_t *source, vfs_fd_t *destination) {
     if (!source || !destination || !source->used) return -1;
     vfs_fd_t copy = *source;
@@ -208,6 +208,7 @@ int vfs_dup(uint64_t pid, int old_fd, int *new_fd) {VFS_GUARD();
     for (int i = 0; i < (int)RIX_VFS_FD_MAX; ++i)
         if (!fds[ps][i].used) { fd = i; break; }
     if (fd < 0 || retain_fd(&fds[ps][old_fd], &fds[ps][fd]) != 0) return -2;
+    fds[ps][fd].cloexec=0;
     *new_fd = fd;
     return 0;
 }
@@ -216,6 +217,7 @@ int vfs_dup_min(uint64_t pid,int old_fd,int minimum_fd,int *new_fd){VFS_GUARD();
     size_t ps;if(pid_slot(pid,&ps)||old_fd<0||old_fd>=RIX_VFS_FD_MAX||minimum_fd<0||minimum_fd>=RIX_VFS_FD_MAX||!new_fd||!fds[ps][old_fd].used)return -1;
     int fd=-1;for(int i=minimum_fd;i<(int)RIX_VFS_FD_MAX;i++)if(!fds[ps][i].used){fd=i;break;}
     if(fd<0||retain_fd(&fds[ps][old_fd],&fds[ps][fd])!=0)return -2;
+    fds[ps][fd].cloexec=0;
     *new_fd=fd;return 0;
 }
 
@@ -236,10 +238,18 @@ int vfs_dup_to(uint64_t pid, int old_fd, int new_fd) {VFS_GUARD();
     if (old_fd == new_fd) return 0;
     vfs_fd_t copy;
     if (retain_fd(&fds[ps][old_fd], &copy) != 0) return -2;
+    copy.cloexec=0;
     if (fds[ps][new_fd].used && vfs_close_locked(pid, new_fd) != 0) return -3;
     fds[ps][new_fd] = copy;
     return 0;
 }
+int vfs_get_cloexec(uint64_t pid,int fd,uint32_t*flags){VFS_GUARD();
+    size_t ps;if(pid_slot(pid,&ps)||fd<0||fd>=RIX_VFS_FD_MAX||!flags||!fds[ps][fd].used)return -1;
+    *flags=fds[ps][fd].cloexec?RIX_VFS_FD_CLOEXEC:0u;return 0;}
+int vfs_set_cloexec(uint64_t pid,int fd,uint32_t flags){VFS_GUARD();
+    size_t ps;if(pid_slot(pid,&ps)||fd<0||fd>=RIX_VFS_FD_MAX||!fds[ps][fd].used||(flags&~RIX_VFS_FD_CLOEXEC))return -1;
+    fds[ps][fd].cloexec=(uint8_t)((flags&RIX_VFS_FD_CLOEXEC)!=0);return 0;}
+int vfs_close_cloexec(uint64_t pid){VFS_GUARD();size_t ps;if(pid_slot(pid,&ps))return -1;for(int fd=0;fd<(int)RIX_VFS_FD_MAX;fd++)if(fds[ps][fd].used&&fds[ps][fd].cloexec)(void)vfs_close_locked(pid,fd);return 0;}
 
 int vfs_fd_is_open(uint64_t pid, int fd) {
     size_t ps;
@@ -248,7 +258,7 @@ int vfs_fd_is_open(uint64_t pid, int fd) {
 }
 int vfs_clone_fds(uint64_t parent_pid,uint64_t child_pid){VFS_GUARD();size_t parent,child;if(pid_slot(parent_pid,&parent)||pid_slot(child_pid,&child)||parent_pid==child_pid)return -1;for(size_t i=0;i<RIX_VFS_FD_MAX;i++)if(fds[parent][i].used){if(fds[child][i].used)return -2;if(retain_fd(&fds[parent][i],&fds[child][i])!=0){(void)vfs_close_all(child_pid);return -3;}}return 0;}
 int vfs_close_pipes_except(uint64_t pid,int keep_fd0,int keep_fd1){VFS_GUARD();size_t ps;if(pid_slot(pid,&ps)||keep_fd0< -1||keep_fd0>=RIX_VFS_FD_MAX||keep_fd1< -1||keep_fd1>=RIX_VFS_FD_MAX)return -1;for(int fd=0;fd<(int)RIX_VFS_FD_MAX;fd++){if(!fds[ps][fd].used||(fd==keep_fd0)||(fd==keep_fd1))continue;if(fds[ps][fd].type==VFS_FD_PIPE_READ||fds[ps][fd].type==VFS_FD_PIPE_WRITE){if(vfs_close_locked(pid,fd)!=0)return -1;}}return 0;}
-static int vfs_close_locked(uint64_t pid,int fd){size_t ps;if(pid_slot(pid,&ps)||fd<0||fd>=RIX_VFS_FD_MAX||!fds[ps][fd].used)return -1;if(fds[ps][fd].type==VFS_FD_PIPE_READ||fds[ps][fd].type==VFS_FD_PIPE_WRITE){rix_pipe_t *pipe=fds[ps][fd].pipe;for(size_t i=0;i<VFS_PIPE_MAX;i++)if(pipe_slots[i].used&&(&pipe_slots[i].pipe==pipe)){if(fds[ps][fd].pipe_write)pipe_close_write(pipe);else pipe_close_read(pipe);if(pipe_slots[i].refs)pipe_slots[i].refs--;if(!pipe_slots[i].refs)pipe_slots[i].used=0;/* Every pipe-end closure can unblock both sides (EOF/re-check for readers, error re-check for full-pipe writers): wake both, free or not — the wq memory is static. */scheduler_wake_queue(&pipe_slots[i].read_wq);scheduler_wake_queue(&pipe_slots[i].write_wq);break;}}fds[ps][fd].used=0;return 0;}
+static int vfs_close_locked(uint64_t pid,int fd){size_t ps;if(pid_slot(pid,&ps)||fd<0||fd>=RIX_VFS_FD_MAX||!fds[ps][fd].used)return -1;if(fds[ps][fd].type==VFS_FD_PIPE_READ||fds[ps][fd].type==VFS_FD_PIPE_WRITE){rix_pipe_t *pipe=fds[ps][fd].pipe;for(size_t i=0;i<VFS_PIPE_MAX;i++)if(pipe_slots[i].used&&(&pipe_slots[i].pipe==pipe)){if(fds[ps][fd].pipe_write)pipe_close_write(pipe);else pipe_close_read(pipe);if(pipe_slots[i].refs)pipe_slots[i].refs--;if(!pipe_slots[i].refs)pipe_slots[i].used=0;/* Every pipe-end closure can unblock both sides (EOF/re-check for readers, error re-check for full-pipe writers): wake both, free or not — the wq memory is static. */scheduler_wake_queue(&pipe_slots[i].read_wq);scheduler_wake_queue(&pipe_slots[i].write_wq);break;}}fds[ps][fd].used=0;fds[ps][fd].cloexec=0;return 0;}
 int vfs_close(uint64_t pid,int fd){VFS_GUARD();return vfs_close_locked(pid,fd);}
 int vfs_close_all(uint64_t pid){VFS_GUARD();size_t ps;if(pid_slot(pid,&ps))return -1;for(int fd=0;fd<(int)RIX_VFS_FD_MAX;fd++)if(fds[ps][fd].used)(void)vfs_close_locked(pid,fd);return 0;}
 int vfs_read(uint64_t pid,int fd,void*buffer,size_t size,size_t*out_read){VFS_GUARD();

@@ -12,6 +12,8 @@
 #define RIX_VFS_O_CREAT 4u
 #define RIX_VFS_O_TRUNC 8u
 #define RIX_VFS_O_APPEND 16u
+#define RIX_VFS_O_CLOEXEC 128u
+#define RIX_VFS_FD_CLOEXEC 1u
 /* Negative errno-style results are part of the internal VFS/syscall mapping. */
 #define RIX_VFS_ERR_PERMISSION (-13)
 #define RIX_VFS_ERR_EXISTS (-17)
@@ -37,6 +39,9 @@ int vfs_dup_to(uint64_t pid,int old_fd,int new_fd);
 int vfs_dup_min(uint64_t pid,int old_fd,int minimum_fd,int *new_fd);
 int vfs_get_fd_flags(uint64_t pid,int fd,uint32_t *flags);
 int vfs_set_fd_flags(uint64_t pid,int fd,uint32_t flags);
+int vfs_get_cloexec(uint64_t pid,int fd,uint32_t *flags);
+int vfs_set_cloexec(uint64_t pid,int fd,uint32_t flags);
+int vfs_close_cloexec(uint64_t pid);
 int vfs_fd_is_open(uint64_t pid,int fd);
 int vfs_clone_fds(uint64_t parent_pid,uint64_t child_pid);
 int vfs_close_pipes_except(uint64_t pid,int keep_fd0,int keep_fd1);
