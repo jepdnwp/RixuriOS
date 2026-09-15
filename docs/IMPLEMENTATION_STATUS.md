@@ -882,6 +882,13 @@ wrapper and `/bin/dmesg` drain until short read. Host `klog_test` and
 
 Epoch mode now yields byte-identical `kernel.elf` + `esp.img` + `RixuriOS.iso`
 across two clean builds (`REPRO_ALL_PASS`): FAT volume ID + entry timestamps
-normalized, ISO stage/volume dates follow the epoch. CI probes all three
-artifacts. SBOM/provenance, retention, and release policy remain open. Phase 23
-stays LOCKED.
+normalized, ISO stage/volume dates follow the epoch. SBOM, retention, and
+release policy remain open. Phase 23 stays LOCKED.
+
+## Phase 00 local-verification checkpoint — 2026-09-15
+
+No hosted CI by owner decision (workflow removed). Replacements, all local:
+`make provenance` (`build/provenance.json`: revision, dirty, epoch,
+toolchain, artifact hashes), `make abi-check` (81 syscalls header-vs-registry,
+wired into `make test`), plus the documented `test` / `image` / `iso` / fast
+QEMU / `repro-twice.sh` flow. Phase 23 stays LOCKED.

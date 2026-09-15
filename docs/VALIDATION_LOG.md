@@ -2065,3 +2065,32 @@ git diff --check clean
 Explicitly NOT in this slice: SBOM/provenance manifest, artifact retention,
 test-skip enforcement automation, ABI ledger automation, release-blocker
 policy. Phase 23 stays LOCKED.
+
+## 2026-09-15 — Phase 00 slice: no hosted CI, local provenance + ABI check
+
+Owner decision: no hosted CI workflow in this tree (`.github/workflows/ci.yml`
+removed). Verification stays local and explicit instead:
+
+- `make provenance` writes `build/provenance.json` (schema 1): source
+  revision + dirty flag, epoch mode, host/toolchain versions, sha256+sizes
+  of `kernel.elf` / `esp.img` / `RixuriOS.iso` / `rixfs.img` when present
+  (absent recorded as absent, never fabricated).
+- `make abi-check` runs `scripts/check-abi.py`: all 81 `RIX_SYS_*` numbers
+  in `kernel/syscall/syscall.h` must match `docs/ABI_REGISTRY.md` by number
+  and short name, both directions; duplicates or drift fail the build. Wired
+  into `make test` so every host-suite run verifies the registry.
+- `docs/TOOLCHAIN.md`, the closure report, and the execution plan now
+  describe local verification (`test` / `image` / `iso` / fast QEMU /
+  `repro-twice.sh` / `provenance` / `abi-check`) instead of CI.
+
+Validation:
+
+```text
+make test RC=0 (-Werror) incl. ABI registry consistent: 81 syscalls
+python3 scripts/generate-provenance.py → build/provenance.json (dirty=True
+  on a working tree, artifact hashes match the repro builds)
+git diff --check clean
+```
+
+Explicitly NOT in this slice: SBOM, artifact retention, test-skip
+enforcement automation, release-blocker policy. Phase 23 stays LOCKED.

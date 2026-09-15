@@ -41,8 +41,17 @@ How ESP/ISO determinism works:
 
 Manual probe: `bash scripts/repro-twice.sh [epoch]` (defaults to 1700000000).
 
-## CI
+## Verification (no CI by owner decision)
 
-`.github/workflows/ci.yml` runs `make test`, `make image`, and the fast QEMU
-subset (pipe-stress, crash, fuzz) on every push. Full 37-harness matrix
-(`scripts/run-all-tests.sh`) runs nightly/manual (QEMU-heavy, ~30 min).
+There is no hosted CI workflow in this tree. Verification is local and
+explicit:
+
+- `make test CROSS=x86_64-linux-gnu- HOST_CC=gcc` (strict host suite)
+- `make image` + `make iso` + `make iso-test` (artifact chain)
+- Fast QEMU subset: `qemu_pipe_stress_test.py`, `qemu_crash_test.py`,
+  `qemu_fuzz_test.py`
+- Repro: `bash scripts/repro-twice.sh [epoch]` (three-artifact identity)
+- Full matrix: `bash scripts/run-all-tests.sh` (QEMU-heavy, ~30 min)
+- Provenance: `make provenance` writes `build/provenance.json`
+- ABI check: `make abi-check` verifies `docs/ABI_REGISTRY.md` against
+  `kernel/syscall/syscall.h` (any drift fails the build)

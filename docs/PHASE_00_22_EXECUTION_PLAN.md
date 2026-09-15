@@ -69,7 +69,8 @@ preemption is met on UP/BSP only (SMP-symmetric preemption open).
    TTY fuzz; job control; userland gaps; TOCTOU review; TCP
    loss/recovery; libc allocator/wait-status fixes + support matrix.
 7. **P0 — build:** pinned toolchain doc, `SOURCE_DATE_EPOCH`
-   reproducible mode, CI workflow, skip-enforcement, provenance.
+   reproducible mode, local provenance (`make provenance`), ABI check
+   (`make abi-check`), skip-enforcement. No hosted CI by owner decision.
 
 ## 4. External blockers (owner / hardware)
 

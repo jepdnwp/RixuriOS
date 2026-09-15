@@ -32,10 +32,13 @@ stated plainly; QEMU PASS is never claimed as physical PASS.
   host/QEMU harnesses, checkpoint ledger, `TOOLCHAIN.md` pins,
   `SOURCE_DATE_EPOCH` deterministic `build_id.h` + FAT volume ID/timestamps
   (`normalize-fat.py`) + ISO stage/volume dates (kernel ELF + ESP + ISO
-  `REPRO_ALL_PASS` over two clean builds), CI workflow (host+image+fast
-  QEMU+three-artifact repro probe).
-- Remaining: SBOM/provenance manifest, artifact retention, test-skip
-  enforcement, ABI/version ledger automation, release-blocker policy.
+  `REPRO_ALL_PASS` over two clean builds), local verification only (no hosted
+  CI by owner decision): `make test`/`image`/`iso`, fast QEMU subset,
+  `repro-twice.sh`, `make provenance`, `make abi-check`.
+- Remaining: SBOM, artifact retention, test-skip enforcement, ABI/version
+  ledger automation beyond the wired `abi-check`, release-blocker policy.
+  (Provenance manifest exists locally via `make provenance`; no hosted CI
+  by owner decision.)
 - Tests: host suite green incl. new tests; `git diff --check` clean.
 - QEMU: fast subset green; full matrix rerun open.
 - Physical: none (build-to-HW artifact chain unproven).
