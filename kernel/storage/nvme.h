@@ -41,6 +41,7 @@ typedef struct {
     uint64_t admin_cq_phys;
     uint64_t io_sq_phys;
     uint64_t io_cq_phys;
+    uint64_t prp_list_phys;
     uint16_t io_queue_depth;
     /* Serializes submit+poll per controller (shared cid/tail/head/phase).
      * The poll loop never yields, so holding across completion is safe.
