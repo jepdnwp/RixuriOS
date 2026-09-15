@@ -297,6 +297,15 @@ static uint64_t map_range(uint64_t base, uint64_t length) {
     return vmm_map_mmio(base, length);
 }
 
+/* xHCI 64-bit MMIO pointer registers are two consecutive dwords. Real
+ * controllers require the low dword before the high dword; do not use a
+ * single C volatile uint64_t store for these registers. */
+static void xhci_write_mmio_ptr(volatile void *reg, uint64_t value) {
+    volatile uint32_t *p = (volatile uint32_t *)reg;
+    p[0] = (uint32_t)value;
+    p[1] = (uint32_t)(value >> 32);
+}
+
 static void zero_page(uint64_t phys) {
     volatile uint8_t *p = (volatile uint8_t *)(uintptr_t)phys;
     for (size_t i = 0; i < 4096; ++i) p[i] = 0;
@@ -497,10 +506,8 @@ static int setup_runtime(rix_xhci_controller_t *c, volatile uint8_t *cap,
     volatile uint64_t *dcbaa_ptr = (volatile uint64_t *)(uintptr_t)dcbaa;
     dcbaa_ptr[0] = scratch_array;
 
-    volatile uint64_t *dcbaap = (volatile uint64_t *)(op + XHCI_DCBAAP);
-    volatile uint64_t *crcr = (volatile uint64_t *)(op + XHCI_CRCR);
-    *dcbaap = dcbaa;
-    *crcr = cmd_ring | XHCI_TRB_CYCLE;
+    xhci_write_mmio_ptr(op + XHCI_DCBAAP, dcbaa);
+    xhci_write_mmio_ptr(op + XHCI_CRCR, cmd_ring | XHCI_TRB_CYCLE);
 
     /* Clear stale status (W1C) and disable device notifications: polling
      * driver, no notification handler. */
@@ -528,8 +535,8 @@ static int setup_runtime(rix_xhci_controller_t *c, volatile uint8_t *cap,
     volatile uint8_t *runtime = cap + rt_off;
     volatile uint32_t *iman = (volatile uint32_t *)(runtime + 0x20);
     volatile uint32_t *erstsz = (volatile uint32_t *)(runtime + 0x28);
-    volatile uint64_t *erstba = (volatile uint64_t *)(runtime + 0x30);
-    volatile uint64_t *erdp = (volatile uint64_t *)(runtime + 0x38);
+    volatile uint32_t *erstba = (volatile uint32_t *)(runtime + 0x30);
+    volatile uint32_t *erdp = (volatile uint32_t *)(runtime + 0x38);
     /* Polling mode: clear any pending IP (W1C) and keep IE disabled. There
      * is no xHCI IRQ handler routed, so IE=1 would leave Event-Interrupt
      * pending on real silicon. */
@@ -540,8 +547,8 @@ static int setup_runtime(rix_xhci_controller_t *c, volatile uint8_t *cap,
         *iman = iman_v;
     }
     *erstsz = 1u;
-    *erstba = erst;
-    *erdp = event_ring | XHCI_ERDP_EHB;
+    xhci_write_mmio_ptr(erstba, erst);
+    xhci_write_mmio_ptr(erdp, event_ring | XHCI_ERDP_EHB);
     {
         uint32_t iman_v = *iman;
         iman_v &= ~(1u << 1);
@@ -1600,7 +1607,7 @@ static void acknowledge_event(const rix_xhci_controller_t *c, xhci_runtime_t *rt
         rt->event_cycle ^= 1u;
     }
     uint64_t erdp = c->event_ring_phys + (uint64_t)rt->event_dequeue * sizeof(xhci_trb_t);
-    *(volatile uint64_t *)(runtime_base(c) + 0x38) = erdp | XHCI_ERDP_EHB;
+    xhci_write_mmio_ptr(runtime_base(c) + 0x38, erdp | XHCI_ERDP_EHB);
 }
 
 static void trace_context_state_error(const rix_xhci_controller_t *c, xhci_runtime_t *rt,
