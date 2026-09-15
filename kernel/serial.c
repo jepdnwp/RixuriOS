@@ -1,6 +1,7 @@
 #include "kernel.h"
 #include "tty/tty.h"
 #include "sync/lock.h"
+#include "log/klog.h"
 #define COM1 0x3F8u
 static inline void outb(uint16_t port,uint8_t value){__asm__ volatile("outb %0,%1"::"a"(value),"Nd"(port));}
 static inline uint8_t inb(uint16_t port){uint8_t value;__asm__ volatile("inb %1,%0":"=a"(value):"Nd"(port));return value;}
@@ -35,6 +36,11 @@ static void serial_putc(char c){
 }
 void serial_write(const char *s){
  if(!s)return;
+ size_t n=0;while(s[n])n++;
+ /* Klog before console output: even if the UART/framebuffer path is slow,
+  * the diagnostic byte stream is preserved. COM1-only user echo paths do
+  * not come through here, so user content never enters the ring. */
+ klog_push(s,n);
  uint64_t f=console_lock_acquire();
  const char *p=s;
  while(*p){if(serial_has_com1)serial_putc(*p);p++;}
@@ -43,6 +49,7 @@ void serial_write(const char *s){
 }
 void serial_write_n(const char *s,size_t length){
  if(!s)return;
+ klog_push(s,length);
  uint64_t f=console_lock_acquire();
  for(size_t i=0;i<length;i++)if(serial_has_com1)serial_putc(s[i]);
  if(serial_console_ready){size_t w=0;tty_output_nolock(0,s,length,&w);}
