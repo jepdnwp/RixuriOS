@@ -41,6 +41,18 @@ for script in "$ROOT"/scripts/qemu_*_test.py; do
   run_step "$(basename "$script")" python3 "$script"
 done
 
+# Skip-enforcement: no automated step may report SKIP/SKIPPED and still pass.
+# Deliberate design skips live only in source comments (e.g. fuzz destructive
+# numbers) and the manual on-device rixtest (explicit SKIP lines, --strict to
+# fail) — neither is part of this matrix, so any occurrence here is a defect.
+if grep -qi 'skip' "$LOG"; then
+  FAIL=$((FAIL + 1))
+  log "${RED}FAIL${RESET} skip-enforcement (SKIP marker in matrix log)"
+else
+  PASS=$((PASS + 1))
+  log "${GREEN}PASS${RESET} skip-enforcement (no SKIP in matrix log)"
+fi
+
 log ""
 log "RESULT: ${GREEN}$PASS PASS${RESET}, ${RED}$FAIL FAIL${RESET}"
 log "FULL LOG: $LOG"

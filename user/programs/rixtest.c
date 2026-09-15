@@ -38,8 +38,18 @@ static int run_one(const test_case_t *test,int logfd) {
     out("\033[1;32mPASS\033[0m ");out(test->path);out("\n");log_line(logfd,"PASS ");log_line(logfd,test->path);log_line(logfd,"\n");return 0;
 }
 
+static unsigned skip_count;
 static void skip_test(int logfd,const char *name,const char *why){
     out("SKIP ");out(name);out(" (");out(why);out(")\n");log_line(logfd,"SKIP ");log_line(logfd,name);log_line(logfd," ");log_line(logfd,why);log_line(logfd,"\n");
+    ++skip_count;
+}
+static int has_flag(int argc,char **argv,const char *flag){
+    size_t n=0;while(flag[n])++n;
+    for(int i=1;i<argc;++i){
+        size_t j=0;while(j<n&&argv[i][j]==flag[j])++j;
+        if(j==n&&argv[i][n]==0)return 1;
+    }
+    return 0;
 }
 
 int program_main(int argc,char **argv,char **envp) {
@@ -55,7 +65,7 @@ int program_main(int argc,char **argv,char **envp) {
     };
     int logfd=openat(RIX_VFS_AT_FDCWD,"/usr/rixtest.log",RIX_VFS_O_WRONLY|RIX_VFS_O_CREAT|RIX_VFS_O_TRUNC,0644u);
     out("\033[1;36mRixuriOS native test runner\033[0m\n");out("log: /usr/rixtest.log\n");
-    out("mode: safe native smoke (use --full for fixture tests)\n");
+    out("mode: safe native smoke (use --full for fixture tests; --strict fails on SKIPs)\n");
     out("power-loss: external power cut required; this program cannot cut device power\n");
     log_line(logfd,"RixuriOS native test runner\nmode: safe native smoke\npower-loss: external power cut required\n");
     int failures=0;size_t count=sizeof(smoke)/sizeof(smoke[0]);
@@ -70,6 +80,12 @@ int program_main(int argc,char **argv,char **envp) {
         static const test_case_t pipe_test={"/usr/bin/pipe-stress"};out("pipe stress explicitly requested; runs last\n");failures+=run_one(&pipe_test,logfd)!=0;
     }else skip_test(logfd,"/usr/bin/pipe-stress","known kernel fault risk; use --pipe-stress");
     out("power-loss: manually cut power during accountctl add/rotate/remove, reboot, then run authcheck\n");out("summary: ");
-    if(failures==0)out("\033[1;32mPASS\033[0m\n");else{out("\033[1;31mFAIL\033[0m failures=");out_num((uint64_t)failures);out("\n");}
-    log_line(logfd,failures==0?"SUMMARY PASS\n":"SUMMARY FAIL\n");if(logfd>=0)(void)close(logfd);return failures==0?0:1;
+    int strict=has_flag(argc,argv,"--strict");
+    if(failures==0&&skip_count==0){out("\033[1;32mPASS\033[0m\n");log_line(logfd,"SUMMARY PASS\n");}
+    else if(failures==0){out("\033[1;33mPASS WITH SKIPS\033[0m skipped=");out_num(skip_count);out(" (not phase evidence; re-run with --full --pipe-stress, or --strict to fail)\n");log_line(logfd,"SUMMARY PASS WITH SKIPS\n");}
+    else{out("\033[1;31mFAIL\033[0m failures=");out_num((uint64_t)failures);out("\n");log_line(logfd,"SUMMARY FAIL\n");}
+    if(logfd>=0)(void)close(logfd);
+    if(failures!=0)return 1;
+    if(strict&&skip_count!=0)return 1;
+    return 0;
 }
