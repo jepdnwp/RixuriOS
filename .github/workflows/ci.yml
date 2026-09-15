@@ -22,13 +22,17 @@ jobs:
           timeout 120 python3 scripts/qemu_pipe_stress_test.py
           timeout 120 python3 scripts/qemu_crash_test.py
           timeout 150 python3 scripts/qemu_fuzz_test.py
-      - name: Reproducibility probe (kernel ELF)
+      - name: Reproducibility probe (kernel ELF + ESP + ISO)
         run: |
           export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
           make clean
           make all CROSS=x86_64-linux-gnu- HOST_CC=gcc
-          sha256sum build/kernel.elf > /tmp/a.sha
+          make image CROSS=x86_64-linux-gnu-
+          make iso CROSS=x86_64-linux-gnu-
+          sha256sum build/kernel.elf build/uefi/esp.img build/RixuriOS.iso > /tmp/a.sha
           make clean
           make all CROSS=x86_64-linux-gnu- HOST_CC=gcc
-          sha256sum build/kernel.elf > /tmp/b.sha
+          make image CROSS=x86_64-linux-gnu-
+          make iso CROSS=x86_64-linux-gnu-
+          sha256sum build/kernel.elf build/uefi/esp.img build/RixuriOS.iso > /tmp/b.sha
           diff /tmp/a.sha /tmp/b.sha

@@ -877,3 +877,11 @@ cursor + capacity + next semantics and loss-tolerant resume. `klog_read()`
 wrapper and `/bin/dmesg` drain until short read. Host `klog_test` and
 `qemu_dmesg_test.py` green (boot marker re-printed from the ring).
 `mount`/`umount` remain open. Phase 23 stays LOCKED.
+
+## Phase 00 reproducibility checkpoint — 2026-09-15
+
+Epoch mode now yields byte-identical `kernel.elf` + `esp.img` + `RixuriOS.iso`
+across two clean builds (`REPRO_ALL_PASS`): FAT volume ID + entry timestamps
+normalized, ISO stage/volume dates follow the epoch. CI probes all three
+artifacts. SBOM/provenance, retention, and release policy remain open. Phase 23
+stays LOCKED.

@@ -30,15 +30,16 @@ stated plainly; QEMU PASS is never claimed as physical PASS.
 
 - Implemented: canonical Makefile, `-Werror`, ELF checks, image/ISO targets,
   host/QEMU harnesses, checkpoint ledger, `TOOLCHAIN.md` pins,
-  `SOURCE_DATE_EPOCH` deterministic `build_id.h` (kernel ELF repro proven),
-  CI workflow (host+image+fast QEMU+repro probe).
-- Remaining: FAT/ISO timestamp normalisation, SBOM/provenance manifest,
-  artifact retention, test-skip enforcement, ABI/version ledger automation,
-  release-blocker policy.
+  `SOURCE_DATE_EPOCH` deterministic `build_id.h` + FAT volume ID/timestamps
+  (`normalize-fat.py`) + ISO stage/volume dates (kernel ELF + ESP + ISO
+  `REPRO_ALL_PASS` over two clean builds), CI workflow (host+image+fast
+  QEMU+three-artifact repro probe).
+- Remaining: SBOM/provenance manifest, artifact retention, test-skip
+  enforcement, ABI/version ledger automation, release-blocker policy.
 - Tests: host suite green incl. new tests; `git diff --check` clean.
 - QEMU: fast subset green; full matrix rerun open.
 - Physical: none (build-to-HW artifact chain unproven).
-- Limitations: image/ISO byte-identity not claimed.
+- Limitations: dev-mode (no epoch) builds keep wall-clock behavior by design.
 - Security: build sandboxing, supply-chain verification open.
 - Recovery: artifact recovery absent.
 - Final: **PARTIAL**.

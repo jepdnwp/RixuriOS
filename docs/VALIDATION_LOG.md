@@ -2035,4 +2035,33 @@ qemu_df / free / cloexec re-green
 git diff --check clean
 ```
 
-Explicitly NOT in this slice: `mount`/`umount` + GPT. Phase 23 stays LOCKED.
+Explicitly NOT in this slice: `mount`/`umount` + GPT. Phase 23
+stays LOCKED.
+
+## 2026-09-15 — Phase 00 slice: full release-artifact reproducibility (ESP + ISO)
+
+`SOURCE_DATE_EPOCH` mode now covers the whole chain, not just the kernel ELF:
+
+- `scripts/build-uefi.sh`: source mtimes touched to the epoch, FAT volume ID
+  derived from the epoch (`mkfs.fat -i`), directory-entry timestamps rewritten
+  by `scripts/normalize-fat.py` (FAT32 walk, LFN-safe, short entries only).
+- `scripts/build-iso.sh`: stage mtimes touched to the epoch; xorriso volume
+  dates follow the epoch.
+- `.github/workflows/ci.yml`: repro probe extended from kernel ELF to
+  `kernel.elf` + `esp.img` + `RixuriOS.iso`.
+- `docs/TOOLCHAIN.md`: documents the mechanism plus the manual
+  `scripts/repro-twice.sh` probe.
+
+Validation:
+
+```text
+bash scripts/repro-twice.sh 1700000000
+  build 1 and build 2 sha256 identical for all three artifacts
+  REPRO_ALL_PASS
+make test / make image still RC=0; QEMU fast subset unaffected
+git diff --check clean
+```
+
+Explicitly NOT in this slice: SBOM/provenance manifest, artifact retention,
+test-skip enforcement automation, ABI ledger automation, release-blocker
+policy. Phase 23 stays LOCKED.

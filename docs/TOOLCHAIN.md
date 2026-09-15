@@ -25,15 +25,21 @@ make image CROSS=x86_64-linux-gnu-
 `build/build_id.h` then embeds `<short-hash>[-dirty]-<UTC stamp from epoch>`
 instead of wall-clock time. A dirty tree keeps the `-dirty` suffix so it can
 never be mistaken for a clean release artifact. Two clean builds of the same
-revision with the same `SOURCE_DATE_EPOCH` must produce identical
-`build/kernel.elf` bytes (modulo absolute build paths in debug sections;
-release uses the default `-O2` without `-g`, so paths do not leak).
+revision with the same `SOURCE_DATE_EPOCH` produce identical
+`build/kernel.elf`, `build/uefi/esp.img`, and `build/RixuriOS.iso` bytes
+(proven 2026-09-15: `REPRO_ALL_PASS` over two full clean builds).
 
-Remaining non-determinism (explicitly NOT claimed reproducible yet):
-FAT ESP timestamps (`mkfs.fat`/`mcopy` embed current time) and ISO volume
-timestamps (`xorriso`). Kernel ELF reproducibility is the current gate;
-full image/ISO byte-identity requires `libfaketime` or FAT/ISO timestamp
-normalisation (tracked, not fabricated).
+How ESP/ISO determinism works:
+
+- `scripts/build-uefi.sh`: file mtimes touched to the epoch, FAT volume ID
+  set from the epoch (`mkfs.fat -i`), and every directory-entry timestamp
+  normalized by `scripts/normalize-fat.py`.
+- `scripts/build-iso.sh`: stage file mtimes touched to the epoch; volume
+  timestamps follow `SOURCE_DATE_EPOCH` inside xorriso.
+- Without `SOURCE_DATE_EPOCH` the build keeps wall-clock behavior for local
+  development; only the epoch mode is claimed reproducible.
+
+Manual probe: `bash scripts/repro-twice.sh [epoch]` (defaults to 1700000000).
 
 ## CI
 
