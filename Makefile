@@ -17,7 +17,7 @@ PROGRAM_NAMES := echo cat args grep true false sleep ls mkdir rm rmdir touch sta
 PROGRAM_ELFS := $(addprefix build/programs/,$(addsuffix .elf,$(PROGRAM_NAMES)))
 PROGRAM_START_OBJ := build/programs/start.o
 
-.PHONY: all clean check image iso-test powerloss-test test-all run qemu build-run test user-init programs rixfs-image usb-test hid-test tty-test shell-test pipe-test net-test hosts-test rtl-test e1000-test acpi-test smp-test gdt-test pmm-test heap-test rixfs-mount-test auth-test phase20-test ring3-test sysroot thread-test runqueue-test block-cache-test elf-test dma-test nvme-prp-test statfs-test klog-test
+.PHONY: all clean check image iso-test powerloss-test test-all run qemu build-run test user-init programs rixfs-image usb-test hid-test tty-test shell-test pipe-test net-test hosts-test rtl-test e1000-test acpi-test smp-test gdt-test pmm-test heap-test rixfs-mount-test auth-test phase20-test ring3-test sysroot thread-test runqueue-test block-cache-test elf-test dma-test nvme-prp-test statfs-test klog-test abi-check provenance
 all: build/kernel.elf
 
 build:
@@ -333,8 +333,14 @@ klog-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -DRIX_HOST_TEST -I. tests/klog_test.c kernel/log/klog.c kernel/sync/lock.c -o build/klog_test
 		build/klog_test
 
-test: check usb-test hid-test tty-test shell-test pipe-test net-test libc-test hosts-test rtl-test e1000-test acpi-test smp-test gdt-test pmm-test heap-test xhci-caps-test xhci-profile-test rixfs-mount-test symlink-test sync-test thread-test runqueue-test block-cache-test elf-test dma-test nvme-prp-test statfs-test klog-test
+test: check usb-test hid-test tty-test shell-test pipe-test net-test libc-test hosts-test rtl-test e1000-test acpi-test smp-test gdt-test pmm-test heap-test xhci-caps-test xhci-profile-test rixfs-mount-test symlink-test sync-test thread-test runqueue-test block-cache-test elf-test dma-test nvme-prp-test statfs-test klog-test abi-check
 	@echo 'Static kernel build checks completed.'
+
+abi-check:
+	python3 scripts/check-abi.py
+
+provenance: | build
+	python3 scripts/generate-provenance.py
 
 sysroot:
 	bash ./scripts/musl-sysroot.sh
