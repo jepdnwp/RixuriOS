@@ -800,3 +800,33 @@ The freestanding libc now provides numeric conversion and utility APIs: `atoi`, 
 ## Phase 22 environment/random checkpoint — 2026-09-09
 
 The freestanding libc now includes a bounded environment table with `getenv`, `setenv` and `unsetenv`, including overwrite semantics and heap-owned strings. Deterministic `srand`/`rand` and a lightweight `arc4random`-named generator are also available for non-security use. These generators are not cryptographically secure because no entropy syscall is currently exposed. Conformance tests cover environment lifecycle and repeatable seeding; strict builds and the full host suite pass.
+
+## P5 slice 1 hardening checkpoint — 2026-09-15
+
+- Storage (Phase 11): `block_cache` no longer loses dirty data on eviction
+  failure. Victim writeback uses the victim device's sector size, preserves
+  the entry across I/O failure with an age guard, and handles second-victim
+  pressure without silent discard (read-uncached / write-through fallback).
+  Host fault-injection suite `block_cache_test` covers basic hit, eviction
+  failure preservation + retry, sector-size isolation, and flush redirty.
+- ELF (Phase 08): `elf64_validate` rejects overlapping PT_LOAD and requires
+  entry in an executable segment. Host corpus `elf_test` covers good,
+  overlap, NX-entry, outside-entry, W+X, filesz, magic, and adjacent-accept.
+- Time (Phase 14): RTC UIP polling is bounded (30k `pause` spins); stuck RTC
+  fails closed instead of hanging.
+- libc (Phase 22): allocator reclaims via first-fit freelist + split; invalid
+  / double free and invalid realloc fail with `EINVAL` without corruption.
+  `libc_test` now asserts reuse identity and negative cases.
+- VMM (Phase 02): map-failure rollback and unmap empty-table reclaim via
+  `prune_empty_path()` (non-reserved only); huge leaves split before 4K
+  unmap. Intermediate-OWNED was attempted and reverted after QEMU
+  `reason=-8` proved a cycle regression; the no-OWNED intermediate contract
+  is preserved.
+- Build (Phase 00): `SOURCE_DATE_EPOCH` deterministic `build_id.h`,
+  `docs/TOOLCHAIN.md` pins, `.github/workflows/ci.yml`, and a proven
+  two-build identical `kernel.elf` hash. FAT/ISO timestamp normalisation
+  remains open, so image/ISO byte-identity is not claimed.
+
+QEMU revalidation for this slice: pipe-stress, crash (139 x2), and fuzz
+(6000 calls) PASS with zero fault markers; full 37-harness matrix rerun and
+physical HW evidence remain open. Phase 23 stays LOCKED.

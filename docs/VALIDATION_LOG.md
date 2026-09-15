@@ -1833,3 +1833,64 @@ Phase 25); #SS-CPL3 kill (freezes; unreachable — stack overflows hit
 unmapped space as #PF first); precise wake-latency measurement;
 dynamic-fault injection beyond the boot selftest. Next: P5
 (ELF overlap, pipe/FIFO gaps, DMA, NVMe retry, RTC bounds).
+
+## 2026-09-15 — Phase P5 slice 1: block-cache durability, ELF, RTC, libc, VMM, repro (Phases 02/08/11/14/22/00)
+
+Root-cause fixes (no weakened tests, no deleted coverage):
+
+- `kernel/storage/block_cache.c`: dirty victims are no longer invalidated
+  before a successful writeback. `evict_one()` copies with the victim
+  device's own sector size (never the incoming device's size), keeps the
+  entry valid across the out-of-lock I/O, and only reclaims on success with
+  an age guard against concurrent updates. Second-victim insertion cannot
+  silently discard dirty data: read returns fresh data uncached on pressure,
+  write falls back to write-through. Fixes the known dirty-loss +
+  cross-device sector-size defect.
+- `kernel/elf/elf.c`: `elf64_validate()` now rejects overlapping PT_LOAD
+  ranges and requires the entry address inside an executable PT_LOAD.
+  W+X, filesz>memsz, bad magic/class remain rejected.
+- `kernel/time/rtc.c`: both UIP spins are bounded (`wait_uip_clear()`,
+  30k polls + `pause`); a stuck RTC returns `-2` instead of hanging boot.
+- `user/libc/src/libc.c`: bump allocator is now reclaiming. First-fit
+  freelist with tail splitting reuses freed blocks; `free()`/`realloc()`
+  validate alignment + heap range + magic/used and fail with `EINVAL`
+  instead of corrupting or faulting on wild pointers. Double-free and
+  invalid-pointer are safe no-ops with `errno`.
+- `kernel/mm/vmm.c`: map-failure rollback via `prune_empty_path()` (frees
+  only non-reserved empty tables along the failing VA path) and unmap
+  reclaim of empty PT/PD/PDPT. Huge PD leaves are split before 4K unmap
+  instead of silently succeeding. An attempted `OWNED`-on-intermediates
+  change was reverted after QEMU proved a `reason=-8` cycle regression:
+  intermediates keep the established no-OWNED contract (see
+  `address_space.c`); ownership stays at leaf + USER-slot discipline.
+- Phase 00: `SOURCE_DATE_EPOCH` reproducible mode for `build/build_id.h`,
+  `docs/TOOLCHAIN.md` pins (gcc 13.3, binutils 2.42, mingw 13-win32,
+  QEMU 8.2.2, mtools 4.0.43, xorriso 1.5.6, python 3.12.3), and
+  `.github/workflows/ci.yml` (host suite + image + pipe/crash/fuzz +
+  kernel-ELF two-build identity probe).
+
+Validation (`CROSS=x86_64-linux-gnu- HOST_CC=gcc`, HEAD `320930e` + this slice):
+
+```text
+make test RC=0 (-Werror): all prior suites plus
+  block_cache_test: basic-hit, dirty-evict-failure-preserved,
+    dirty-evict-retry, sector-size-isolation, flush-failure-redirty — PASS
+  elf_test: good, overlap-reject, entry-nx-reject, entry-outside-reject,
+    wx-reject, filesz-reject, magic-reject, adjacent-accept — PASS
+  libc_test: prior + reuse==same-address, invalid-free/double-free/
+    invalid-realloc EINVAL — PASS
+make image RC=0
+qemu_pipe_stress_test: PASS (blocked-reader + fork-reap, zero fault markers)
+qemu_crash_test: PASS (crash-reap x2, 139, machine alive)
+qemu_fuzz_test: PASS (6000 wild syscalls, SHELL READY after)
+SOURCE_DATE_EPOCH two-build kernel.elf sha256 identical — REPRO_PASS
+git diff --check clean
+```
+
+Explicitly NOT in this slice: central DMA map/pin/SG/IOMMU contract,
+NVMe PRP-list/SGL + reset/recovery state machine, RixFS multi-object atomic
+transactions + fsck repair, VFS stable vnode/CLOEXEC/symlink-traversal depth,
+blocking `nanosleep` timer queue, xHCI controller-backed completion + HW HID,
+TCP retransmit/reassembly/window, GPT/mount APIs, ASLR/SMEP-SMAP, sustained
+soak + SMP4 full matrix rerun, physical HW evidence everywhere. Phase 23
+remains LOCKED.
