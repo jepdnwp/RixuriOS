@@ -5,13 +5,14 @@
 #include "../../serial.h"
 #include "../../mm/ptmap.h"
 #include "../../mm/vmm.h"
+#include "../../mm/uaccess.h"
 #include "../../process/process.h"
+#include "../../sched/scheduler.h"
 #include <stdint.h>
 #include <stddef.h>
 
 struct idt_gate { uint16_t offset_low; uint16_t selector; uint8_t ist; uint8_t type_attr; uint16_t offset_mid; uint32_t offset_high; uint32_t reserved; } __attribute__((packed));
 struct idt_ptr { uint16_t limit; uint64_t base; } __attribute__((packed));
-struct interrupt_frame { uint64_t vector; uint64_t error; uint64_t rip, cs, rflags, rsp, ss; };
 
 extern void isr_default(void);
 extern void isr128(void);
@@ -34,7 +35,7 @@ static void sti(void){__asm__ volatile("sti":::"memory");}
 static uint64_t read_cr2(void){uint64_t value;__asm__ volatile("mov %%cr2,%0":"=r"(value));return value;}
 static uint64_t read_cr3_hw(void){uint64_t value;__asm__ volatile("mov %%cr3,%0":"=r"(value)::"memory");return value;}
 static void fault_entry(const char *name,uint64_t entry){kernel_log(name);kernel_log_hex(entry);kernel_log("\r\n");}
-static void page_fault_diagnostics(const struct interrupt_frame *frame){
+static void page_fault_diagnostics(const struct x86_fault_frame *frame){
     /* Dual-output (screen+serial): physical-console-only setups must see
      * faults too. The framebuffer lives in the shared low identity window,
      * so it is mapped under any process CR3. CR3HW is read from hardware;
@@ -68,7 +69,7 @@ void scheduler_dump_states(void);
  * deliberate: safe .bss reads first, fault-RSP stack second, fault-RIP
  * bytes last. */
 static void fault_hex_byte(uint8_t v){static const char d[]="0123456789abcdef";char c[2];c[0]=d[(v>>4)&0xFu];c[1]=d[v&0xFu];kernel_log_n(c,2);}
-static void fault_forensics(const struct interrupt_frame *frame){
+static void fault_forensics(const struct x86_fault_frame *frame){
     const x86_tss_t *tss=tss_current();
     kernel_log("FAULT: rsp0=");kernel_log_hex(tss?tss->rsp0:0);kernel_log("\r\n");
     scheduler_dump_states();
@@ -99,7 +100,37 @@ static void fault_forensics(const struct interrupt_frame *frame){
         kernel_log("\r\n");
     }
 }
-void x86_exception_dispatch(const struct interrupt_frame *frame){__asm__ volatile("outb %0,%1"::"a"((uint8_t)(frame?frame->vector:0xFFu)),"Nd"((uint16_t)0x80u));/* Phase E3: per-CPU nested-fault guard. The old shared flag halted a
+/* Phase F2 fault matrix (vector x CPL). CPL3 faults in the kill set
+ * terminate the faulting user process (exit status 139 = 128+SIGSEGV
+ * convention) instead of freezing the machine; everything else halts.
+ * Kill set: 0 #DE, 1 #DB, 3 #BP, 4 #OF, 5 #BR, 6 #UD, 13 #GP, 14 #PF,
+ * 16 #MF, 17 #AC, 19 #XF (all unexpected in userspace without a
+ * debugger/FPU owner: kill). Freeze set: 2 NMI, 7 #NM (kernel FPU
+ * state bug either way), 8 #DF, 9, 10 #TS, 11 #NP, 12 #SS (kernel
+ * stack bug; user stack overflows surface as #PF first — the 32-page
+ * stack runs into unmapped space, no guard pages needed), 15, 18 #MC,
+ * 20 #VE, 21 #CP, 22-31 reserved, plus every CPL0 fault except the
+ * uaccess fixup (a kernel-mode fault is always a kernel bug). */
+static int user_fault_kill_vector(uint64_t vector){
+    switch(vector){
+        case 0:case 1:case 3:case 4:case 5:case 6:case 13:case 14:
+        case 16:case 17:case 19:return 1;
+        default:return 0;
+    }
+}
+#define RIX_FAULT_EXIT_STATUS 139u
+void x86_exception_dispatch(const struct x86_fault_frame *frame){__asm__ volatile("outb %0,%1"::"a"((uint8_t)(frame?frame->vector:0xFFu)),"Nd"((uint16_t)0x80u));
+/* Phase F1 first: an armed uaccess copy faulting in kernel mode
+ * resumes at its fixup label (returns -EFAULT). Consumes nothing else;
+ * in_fault untouched so forensics stay available afterwards. */
+if(frame&&(frame->cs==0x08u)){struct x86_fault_frame *m=(struct x86_fault_frame*)frame;if(uaccess_fixup_frame(m))return;}
+/* Phase F2: CPL3 faults in the kill set terminate the faulting user
+ * process (zombie + wake parent, task dead, yield away — never iretq
+ * back to the faulting context). pid 0 with user CS is impossible; it
+ * falls through to the freeze path. A fault INSIDE this kill path runs
+ * with kernel CS and lands in the freeze path below (no kill loop). */
+if(frame&&(frame->cs==0x1bu)&&user_fault_kill_vector(frame->vector)){pid_t cur=process_current();if(cur!=(pid_t)0){(void)process_exit(cur,RIX_FAULT_EXIT_STATUS);scheduler_exit_current();}}
+/* Phase E3: per-CPU nested-fault guard. The old shared flag halted a
  * second CPU's forensics whenever two CPUs faulted together; with APs
  * running tasks every CPU gets its own slot (BSP-index fallback, then
  * 0 — same routing as the scheduler). Nested faults still halt with

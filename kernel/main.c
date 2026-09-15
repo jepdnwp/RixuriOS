@@ -4,6 +4,7 @@
 #include "mm/pmm.h"
 #include "mm/vmm.h"
 #include "mm/heap.h"
+#include "mm/uaccess.h"
 #include "arch/x86_64/cpu.h"
 #include "arch/x86_64/gdt.h"
 #include "arch/x86_64/idt.h"
@@ -379,8 +380,13 @@ void kernel_main(const rixuri_boot_info_t *boot){
  if(rtc_init()!=0)klog_write("RTC: unavailable or non-24-hour mode\r\n");
  if(time_init(100)!=0)klog_write("TIME: realtime clock unavailable; monotonic clock active\r\n");
  else {rix_timespec_t now;if(time_realtime(&now)==0){klog_write("TIME: realtime=");klog_write_dec(now.sec);klog_write("\r\n");}}
-  if(scheduler_init()!=0)panic("scheduler initialization failed");
-  klog_write("BOOT: scheduler begin\r\n");
+   if(scheduler_init()!=0)panic("scheduler initialization failed");
+   klog_write("BOOT: scheduler begin\r\n");
+   /* Phase F1: fault the armed uaccess path on purpose (IDT+VMM live,
+    * preemption API usable). A working fixup chain is load-bearing for
+    * every copy_from/to_user below; fail-stop here, not pages later. */
+   if(uaccess_fixup_selftest()!=0)panic("uaccess fixup selftest failed");
+   klog_write("UACCESS: fixup selftest PASS\r\n");
   if(process_init()!=0)panic("process initialization failed");
  tty_set_signal_hook(terminal_signal_group);
  syscall_init();

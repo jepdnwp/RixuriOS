@@ -62,6 +62,10 @@
  * snapshot. Additive ABI extension; ABI version stays 1. Args mirror
  * LIST_PROCESSES: rdi=out array, rsi=capacity, rdx=count out. */
 #define RIX_SYS_LIST_THREADS 144
+/* waitpid(2): rdi=child (or -1 any), rsi=status out, rdx=options.
+ * Header-owned since the F5 registry audit (was a syscall.c local). */
+#define RIX_SYS_WAITPID 247
+#define RIX_WAITPID_NOHANG 1u
 #define RIX_SYS_GETRANDOM 139
 #define RIX_SYS_GETPPID 140
 #define RIX_SYS_ISATTY 141
