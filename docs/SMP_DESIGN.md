@@ -319,6 +319,41 @@ E7 makes preemption symmetric without a new timer or vector:
   stays), thread/TID/clone (P25), worker migration beyond serial (E5
   still deferred), LAPIC timer, IPI-ack protocols for wakeup.
 
+## Phase R2 (done 2026-09-15): per-CPU runqueues
+
+The E7-era global scan (`sched_select_locked`: every CPU scans all 32
+slots past each other's ineligible tasks) is replaced by one runqueue
+per CPU: a RUNNABLE+eligible slot bitmask plus a round-robin cursor
+(`kernel/sched/runqueue.[hc]`, pure mask logic, host-tested). Still a
+single `sched_lock` (no per-CPU locks, no new lockdep edges); the masks
+are a cache of scheduler ground truth, maintained at every transition
+(create, yield-old, pick-claim, block, abort, wake, death, ap_ok flip,
+AP-idle pick, debug no-switch path). Safety: pick heals stale bits
+(bounded) and an unconditional full verify fail-stops the boot on drift.
+UP boots are byte-identical in behavior; SMP keeps the E7 interleave
+bound through per-CPU picks (matrix-proven, zero RQVERIFY drift).
+
+## Phase R3 (done 2026-09-15): affinity + work-conserving migration
+
+Placement mask per task (default all; BASE rule stays the hard gate).
+`set_affinity` narrows within the base rule and refuses stranding pins
+at the API. An AP with an empty own-mask steals AP-eligible work from
+the BSP mask (eligibility re-checked for the thief — BSP-pinned work
+unstealable). Per-slot `run_cpu`/`migrations` accounting at both claim
+sites; R3-P (AP-pinned, mig=0) + R3-F (floating, mig>0) prove pin and
+migration deterministically — placement sampling alone false-passes
+(A/B control), the counter is load-bearing.
+
+## Phase R4 (done 2026-09-15): flip-first picks + priority shares
+
+Yield restructured to flip-first (the yielding RUNNING task rejoins
+before the pick; sole-runnable reclaims in the same critical
+section) — pick-before-flip barred self-pick and pinned streak<=1,
+neutralizing priority (live-measured 7,8,7,8 lockstep). Two-level
+priority with streak-cap starvation guard (high<=80%); per-task
+run_ticks/voluntary/involuntary accounting over exact RUNNING
+intervals. UP-measured 4:1 forced share (H=160 N=60), A/B controlled.
+
 ## Phase P1 (reverted 2026-09-12): timer preemption is premature
 
 ## Phase H1 (done 2026-09-12): hardware xHCI port-reset recovery

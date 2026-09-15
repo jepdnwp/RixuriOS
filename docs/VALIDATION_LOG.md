@@ -1559,9 +1559,228 @@ A/B negative control (mechanism stashed, spinners kept): harness
   proving mere presence cannot discriminate and the interleave bound
   (max run <=4) is load-bearing. Mechanism restored afterwards.
 run-all-tests.sh RESULT: 31 PASS, 0 FAIL (auto-includes the new
-  harness); zero CPU-exception and zero LOCKDEP/violation lines
+  harness), log build/test-logs/all-tests-20260915T064226Z.log; zero
+  CPU-exception and zero LOCKDEP/violation lines (fault-scan clean)
 ```
 
 Explicitly NOT in E7: per-CPU runqueues, thread/TID/clone, worker
 migration beyond serial, LAPIC timer. Next: per-CPU runqueues, then
 threads.
+
+## 2026-09-15 — Phase R1: thread/TID objects (Phase 06)
+
+Kernel thread objects with refcounted process ownership, no new lock
+(table in `kernel/sched/thread.[hc]`, pure `_locked` ops guarded by the
+existing `sched_lock`; zero new lockdep edges). Every task slot binds
+one TID at creation (4 create paths, `-4` thread-exhaustion with slot
+release); TID 1 reserved for the BSP boot context; TIDs monotonic,
+never reused. Single death choke point `task_mark_dead_locked` (all 3
+DEAD sites) frees the thread exactly once. `process_exit_locked`
+detaches (not frees) under the existing PROC4->sched edge; reap
+(`wait_reap_locked`) destroys the address space only with zero ACTIVE
+threads of that pid (returns 1 = not-ready, self-clearing: the racing
+thread's bootstrap refuses the ZOMBIE root and frees itself; DETACHED
+threads keep pre-R1 die-at-next-activation semantics and never gate).
+Exec refuses with >1 ACTIVE thread (address-space replacement would
+dangle a second thread; unreachable until Phase 25 clone). Introspection:
+`RIX_SYS_LIST_THREADS 144` (ABI v1 additive, mirrors LIST_PROCESSES),
+libc `list_threads()`, `threads` program (`TID OWNER STAT`).
+
+Validation (`CROSS=x86_64-linux-gnu- HOST_CC=gcc`):
+
+```text
+make thread-test RC=0: alloc validation (dead/unknown/ZOMBIE owners
+  refuse), monotonic non-reuse, detach/count/lookup/list-overflow,
+  table-full -2 + recovery — thread_test: PASS
+make all/test/image RC=0 (-Werror; only pre-existing font_psf note)
+scripts/qemu_thread_test.py: PASS (27 s) — settled baseline, TID 1/0
+  present, count returns to baseline across ps-spawn load, max TID
+  strictly grows, no lingering DETACHED
+run-all-tests.sh RESULT: 32 PASS, 0 FAIL, log
+  build/test-logs/all-tests-20260915T083921Z.log; fault-scan clean
+  (zero CPU-exception/PANIC/LOCKDEP/violation)
+```
+
+Incidental hardening (same serial-timing family as the documented
+`phase19_utils`/`env_utils` flakes, NOT an R1 logic fault): the matrix
+first ran 31 PASS + 1 FAIL when the unhardened `qemu_auth_test.py`
+(`sleep(1.0)`, no prompt-sync, no `drain_quiet`) timed out waiting for
+`auth-pass` with zero kernel-fault lines; retry passed unchanged, then
+the harness got the tree-standard `drain_quiet` + initial-prompt-sync
+discipline (markers/timeouts identical — hardening, not weakening) and
+the re-run matrix went 32/32.
+
+Explicitly NOT in R1: shared-address-space thread creation API (lands
+with its harness in R3), per-CPU runqueues (R2 next), priorities,
+accounting, userspace clone/futex (Phase 25). Next: R2 per-CPU
+runqueues.
+
+## 2026-09-15 — Phase R2: per-CPU runqueues (Phase 06)
+
+Replaced the global `sched_select_locked` scan with per-CPU runqueues:
+one `rix_runqueue_t` (RUNNABLE+eligible slot bitmask + round-robin
+cursor) per CPU in `kernel/sched/runqueue.[hc]` (pure `_locked` mask
+logic, no new lock — still a single `sched_lock`, so zero new lockdep
+edges). Eligibility mirrors the old scan exactly (BSP: any RUNNABLE;
+AP: RUNNABLE kernel-thread `ap_ok`, never slot 0); each CPU picks from
+its own mask, ending global head-of-line scans past ineligible tasks.
+Every transition maintains the cache (create/yield-old/pick-claim/
+block/abort/wake/death/`ap_ok`-flip, incl. the AP-idle path and the
+`RIX_DEBUG_NO_CTX_SWITCH` debug path). Two safety nets: pick-time
+heal-and-continue for stale bits (bounded one rotation) plus an
+unconditional full `rq_verify_locked` at every pick that fail-stops
+(`cli`+`hlt` after one log line) on any mask drift — a missed site
+bricks the boot loudly instead of starving a task silently.
+
+Validation (`CROSS=x86_64-linux-gnu- HOST_CC=gcc`):
+
+```text
+make runqueue-test RC=0: rotation order, wrap, stale-cursor fold,
+  idempotent add, safe remove-absent, empty pick — runqueue_test: PASS
+make all/test/image RC=0 (-Werror; only pre-existing font_psf note)
+qemu_thread_test: PASS (UP mask paths: create/yield/block/wake/death)
+qemu_smp_preempt_test: PASS (AP mask paths: interleave bound still
+  round-robins through per-CPU picks; ap_ok-flip path live)
+run-all-tests.sh RESULT: 32 PASS, 0 FAIL, log
+  build/test-logs/all-tests-20260915T091923Z.log; fault-scan clean
+  (zero CPU-exception/PANIC/LOCKDEP/violation AND zero RQVERIFY drift
+  across the whole matrix — every transition site proven under all
+  workloads)
+```
+
+Explicitly NOT in R2: per-CPU locks (single sched_lock stays),
+affinity/migration/balancing (R3 next), priorities/accounting (R4),
+shared-address-space thread creation (R3 with its harness). Next: R3
+affinity + migration.
+
+## 2026-09-15 — Phase R3: affinity + migration (Phase 06)
+
+Per-task placement mask (`affinity`, `uint64_t` for 64 CPUs, default
+all — the BSP/AP `ap_ok` BASE rule stays the hard gate, so the default
+changes nothing). `scheduler_set_affinity(id, mask)` narrows placement
+and refuses stranding masks (no intersection with the base rule) at
+the API, so pinning can never silence a task; eligibility changes
+re-sync mask bits via `rq_resync_locked`. Work conservation: an AP
+with an empty own-mask steals AP-eligible work from the BSP mask
+(BSP-pinned tasks unstealable — eligibility re-checked for the thief).
+Migration accounting: `run_cpu` + `migrations` per slot, written at
+both claim sites, lock-free self-read via
+`scheduler_current_migrations()`. Proof pair (SMP-only): R3-P pinned
+AP-only, R3-F floating; reports carry `mig=`.
+
+Validation (`CROSS=x86_64-linux-gnu- HOST_CC=gcc`):
+
+```text
+make all/test/image RC=0 (-Werror; only pre-existing font_psf note)
+scripts/qemu_migrate_test.py (-smp 2): PASS — P 4 rows unanimous
+  cpu=1 with mig=0 (pin holds, never migrated); F mig=10 (floated
+  across CPUs although every sampled report showed cpu=1)
+A/B negative control (pin compiled out, mechanism kept): harness
+  FAILs as required via `R3-P migrated 8 times despite AP-only pin`.
+  NOTE: P unanimity ALONE passed the floating task (all 4 samples hit
+  one cpu by luck) — the migration counter is load-bearing, not
+  decorative; placement sampling without it false-passes.
+run-all-tests.sh RESULT: 33 PASS, 0 FAIL (auto-includes the new
+  harness), log build/test-logs/all-tests-20260915T094402Z.log;
+  fault-scan clean (zero CPU-exception/PANIC/LOCKDEP/violation and
+  zero RQVERIFY drift)
+```
+
+Explicitly NOT in R3: per-CPU locks, priorities/fairness accounting
+(R4 next), shared-address-space user-thread creation API (deferred to
+Phase 25 clone; the thread objects already support shared owners —
+host-proven), user-visible affinity syscall (kernel API only for now).
+Next: R4 accounting + priorities, then Phase 06 re-audit.
+
+## 2026-09-15 — Phase R4: accounting + priorities + fairness (Phase 06)
+
+Per-task quantum accounting (`run_ticks` over exact [claim, yield-old/
+block/death] intervals in PIT ticks; `voluntary`/`involuntary` yield
+classes — armed-quantum-consumed = preempted) plus two-level priority
+(`NORMAL`/`HIGH`, kernel-threads-only boost mirroring `allow_ap`'s
+audited scope; user tasks stay round-robin). Preference lives in
+`rq_pick_locked` (high subset first, `RIX_RQ_HIPRI_CAP 4` streak cap
+forces one normal pick per 4 high: high share <=80%, normal always
+drains). Self-read accessors (`scheduler_current_run_ticks`, existing
+migrations reader). Proof pair (all boots): R4-H boosted, R4-N normal,
+wall-paced reports with run-paced totals over a shared ~200-tick
+window; UP harness requires H_final >= 2x N_final.
+
+Validation (`CROSS=x86_64-linux-gnu- HOST_CC=gcc`):
+
+```text
+make runqueue-test RC=0 (extended: hipri preference, cap-forced
+  normal, all-high rotation, high-subset rotation) — runqueue_test: PASS
+make all/test/image RC=0 (-Werror; only pre-existing font_psf note)
+scripts/qemu_fair_test.py (UP): PASS — H=160 N=60 (H deltas exactly
+  +40/50 wall = 80% share; N +10/50 = 20%; the designed 4:1)
+A/B negative control (boost compiled out): harness FAILs as required
+  via `no priority share: H=110 N=110` (~1:1 no-boost signature)
+run-all-tests.sh RESULT: 34 PASS, 0 FAIL (auto-includes the new
+  harness), log build/test-logs/all-tests-20260915T102445Z.log;
+  fault-scan clean (zero CPU-exception/PANIC/LOCKDEP/violation and
+  zero RQVERIFY drift)
+```
+
+Load-bearing bug found by the harness (not by review): pick-before-
+flip ordering structurally neutralized priority — the yielder is
+bit-absent at pick time, so every yield was forced to switch and the
+streak could never exceed 1 (measured live as a 7,8,7,8 UP lockstep
+with H=N=120 while host tests passed in isolation). Fix: flip-first
+(the yielding RUNNING task rejoins before the pick) with a reclaim
+path for sole-runnable (back to RUNNING, bits dropped, re-stamped in
+the same critical section — no AP can steal mid-reclaim); yield
+classification moved to genuine switches only. Rotation dynamics for
+equal priority unchanged (E7 interleave + R3 migration re-proven
+green in the same matrix).
+
+Explicitly NOT in R4: more than 2 levels, dynamic priority/aging
+(documented future work), user-task boost (refused at the API),
+per-task stats syscall (ABI frozen; spinners report their own),
+latency histograms (tick granularity is the documented floor).
+Next: Phase 06 re-audit against the roadmap + gap exit criteria.
+
+## 2026-09-15 — Phase 06 re-audit (roadmap + gap exit criteria)
+
+Roadmap items (`docs/ROADMAP.md` Phase 06) vs tree:
+PID/TID lifecycle (R1) ✓; process/thread objects (R1) ✓; kernel
+threads (pre-existing) ✓; user-thread contexts+stacks (pre-existing
+per-task `user_context`/stacks, fork-proven) ✓; timer preemption
+(P3-B BSP + E7 symmetric AP) ✓; per-CPU queues (R2) ✓; SMP
+balancing/affinity (R3) ✓; scheduler accounting (R4) ✓.
+
+Gap exit criteria (`PHASE_00_22_GAP_ANALYSIS.md:397`) vs evidence:
+non-yielding task preempted on UP (hog first_ms/total_ms) ✓ and on
+SMP4 (manual `-smp 4` run 2026-09-15: `cpus=4 online=4`, E7 rows on
+cpu 0-3, APREEMPT on 1+2, R3-P pinned cpu=1 mig=0, R3-F mig=14,
+R4 finals present, SHELL READY, zero fault/RQVERIFY lines in
+`build/r4-smp4.log`) ✓; user+kernel threads block/wake/exit safely
+(pipe/signal/session/thread matrix tests) ✓; slot-limit
+fork/exec/exit with no stale task (new `schedtest burst` + harness:
+40 concurrent forks vs 32 slots → 25 live + 15 clean -1 failures,
+`burst-reaped=40` via waitpid(-1) drain incl. create-failed 127
+zombies, threads+ps baselines equal afterwards) ✓; allocator/VFS/
+IPC/device stress under live IRQ preemption (the whole matrix runs
+with preemption armed: pipe_stress, powerloss, NVMe paths) ✓;
+fairness measured (R4 UP H=160 N=60, forced ~4:1) ✓; no corruption,
+fault, starvation or hang across six consecutive full matrices
+(31→32→32→33→34→35 PASS, 0 FAIL) plus A/B-controlled retries ✓.
+
+```text
+run-all-tests.sh RESULT: 35 PASS, 0 FAIL (auto-includes burst),
+  log build/test-logs/all-tests-20260915T104618Z.log; fault-scan
+  clean (zero CPU-exception/PANIC/LOCKDEP/violation, zero RQVERIFY)
+```
+
+Honest boundaries (Phase 06 stays PARTIAL/HARDENING at phase level
+per the 12-criterion rule — no PASS claimed): fixed capacities are
+ceilings with clean-failure proof, not scalable (32 task slots, 64
+threads, 128 processes); shared-address-space user threads + clone
+syscall belong to Phase 25 (thread objects already support shared
+owners — host-proven); no >2 priority levels, no aging; no precise
+wake-latency measurement (10 ms tick floor is the documented
+resolution); single sched_lock stays (no contention evidence at this
+scale, no per-CPU-lock need demonstrated); HW evidence open
+(preemptive SMP on silicon, >8-CPU topology, HW timer behavior —
+owner/hardware blocked, nothing fabricated). QEMU scope of Phase 06
+is complete; P3 scheduler work closes here.
