@@ -2749,14 +2749,13 @@ int xhci_control_transfer(size_t controller, uint8_t slot_id,
             }
 #endif
         }
-        /* Status Stage direction is the inverse of the data stage:
-         * for control IN (device-to-host data) the status is OUT (DIR=1);
-         * for control OUT (host-to-device data) the status is IN (DIR=0).
-         * This also covers zero-length control transfers, where data_in is
-         * taken from bmRequestType bit 7. */
+        /* Status Stage direction is the inverse of the data stage. For a
+         * control IN transfer the status is OUT (DIR=0); for control OUT the
+         * status is IN (DIR=1). A zero-length control transfer has an IN
+         * status stage regardless of bmRequestType. */
         uint64_t status_trb = ep0_emit(c, slot, 0, 0,
             (XHCI_TRB_STATUS_STAGE << XHCI_TRB_TYPE_SHIFT) | XHCI_TRB_IOC |
-            (data_in ? XHCI_TRB_DIR : 0u));
+            (setup->length != 0u ? (data_in ? 0u : XHCI_TRB_DIR) : XHCI_TRB_DIR));
         xhci_log_ep0_trb("STATUS TRB", status_trb);
 #if XHCI_EP0_TRACE
         /* DATA buffer DMA visibility check before the doorbell: physical
