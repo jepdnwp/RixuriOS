@@ -72,6 +72,10 @@
 #define RIX_SYS_SIGPROCMASK 142
 #define RIX_SYS_FCNTL 143
 #define RIX_SYS_STATFS 145
+#define RIX_SYS_SYSINFO 146
+#define RIX_SYSINFO_VERSION 1u
+typedef struct { uint32_t version; uint32_t struct_size; uint32_t page_size; uint32_t flags; uint64_t total_pages; uint64_t free_pages; uint64_t reserved_pages; uint64_t uptime_sec; uint32_t uptime_nsec; uint32_t pad; uint64_t reserved0; } rix_sysinfo_t;
+_Static_assert(sizeof(rix_sysinfo_t)==64,"sysinfo layout must stay 64 bytes");
 #define RIX_SYS_GETPID 39
 #define RIX_SYS_KILL 62
 #define RIX_SYS_EXIT 60

@@ -20,6 +20,7 @@ void pmm_reserve_page(uint64_t physical_address);
 void pmm_free_page(uint64_t physical_address);
 uint64_t pmm_total_pages(void);
 uint64_t pmm_free_pages(void);
+uint64_t pmm_reserved_pages(void);
 /* CR3-switch diagnostics: query PMM ownership of a 4 KiB-aligned page. */
 int pmm_is_managed(uint64_t physical_address);
 int pmm_is_in_use(uint64_t physical_address);

@@ -60,6 +60,24 @@ int main(void) {
     assert(pmm_alloc_pages(1u << 30) == 0u);
     assert(pmm_alloc_page_below(0x1000u) == 0u);
     assert(pmm_free_pages() == free_before);
+    /* Reserved accounting: boot reservations counted once, explicit reserve
+     * counts once, double reserve never double-counts. */
+    {
+        uint64_t r0 = pmm_reserved_pages();
+        assert(r0 >= 2u);
+        uint64_t rp = pmm_alloc_page();
+        assert(rp != 0u);
+        pmm_reserve_page(rp);
+        assert(pmm_is_reserved(rp));
+        assert(pmm_reserved_pages() == r0 + 1u);
+        pmm_reserve_page(rp);
+        assert(pmm_reserved_pages() == r0 + 1u);
+        /* Reserved pages cannot be freed back. */
+        uint64_t fb = pmm_free_pages();
+        pmm_free_page(rp);
+        assert(pmm_is_in_use(rp));
+        assert(pmm_free_pages() == fb);
+    }
     assert(lockdep_warnings == 0u);
     return 0;
 }

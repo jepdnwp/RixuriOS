@@ -21,6 +21,7 @@ static uint64_t managed_bitmap[RIXURI_BITMAP_WORDS];
 static uint64_t reserved_bitmap[RIXURI_BITMAP_WORDS];
 static uint64_t total_pages_count;
 static uint64_t free_pages_count;
+static uint64_t reserved_pages_count;
 static rix_spinlock_t pmm_lock;
 /* lockdep rank 30: heap (20) and vmm-map (10) both nest inside PMM. */
 static unsigned pmm_lockdep_class;
@@ -51,7 +52,7 @@ static void mark_range(uint64_t base,uint64_t pages,int freeable){
              * Kernel image, boot metadata, the low legacy window and the
              * saved memory map must remain permanently owned by the boot
              * environment even if a caller later invokes pmm_free_page(). */
-            reserved_bitmap[word_index]|=bit;
+            if(!(reserved_bitmap[word_index]&bit)){reserved_bitmap[word_index]|=bit;++reserved_pages_count;}
             if(!(page_bitmap[word_index]&bit)){
                 page_bitmap[word_index]|=bit;
                 if(free_pages_count)--free_pages_count;
@@ -61,7 +62,7 @@ static void mark_range(uint64_t base,uint64_t pages,int freeable){
 }
 void pmm_init(const void*memory_map,uint64_t memory_map_size,uint64_t descriptor_size,uint64_t kernel_base,uint64_t kernel_end,uint64_t boot_info,uint64_t boot_info_size){
     for(size_t i=0;i<RIXURI_BITMAP_WORDS;i++){page_bitmap[i]=UINT64_MAX;managed_bitmap[i]=0;reserved_bitmap[i]=0;}
-    total_pages_count=free_pages_count=0;rix_spin_init(&pmm_lock);
+    total_pages_count=free_pages_count=reserved_pages_count=0;rix_spin_init(&pmm_lock);
     rix_lockdep_register("pmm", 30u, &pmm_lockdep_class);
     if(!memory_map||descriptor_size<EFI_DESCRIPTOR_MIN_SIZE||descriptor_size>4096||memory_map_size<descriptor_size)return;
     saved_map=(const unsigned char*)memory_map;saved_map_size=memory_map_size;saved_desc_size=descriptor_size;
@@ -139,7 +140,7 @@ void pmm_reserve_page(uint64_t physical_address){
     (void)rix_lockdep_acquire(pmm_lockdep_class);
     uint64_t*managed=&managed_bitmap[page>>6],*used=&page_bitmap[page>>6],*reserved=&reserved_bitmap[page>>6],bit=1ULL<<(page&63ULL);
     if(!(*managed&bit)){(void)rix_lockdep_release(pmm_lockdep_class);rix_spin_unlock_irqrestore(&pmm_lock,irq);return;}
-    *reserved |= bit;
+    if(!(*reserved&bit)){*reserved|=bit;++reserved_pages_count;}
     if(!(*used&bit)){*used|=bit;if(free_pages_count)--free_pages_count;}
     (void)rix_lockdep_release(pmm_lockdep_class);
     rix_spin_unlock_irqrestore(&pmm_lock,irq);
@@ -157,6 +158,7 @@ void pmm_free_page(uint64_t physical_address){
 }
 uint64_t pmm_total_pages(void){uint64_t irq;rix_spin_lock_irqsave(&pmm_lock,&irq);uint64_t n=total_pages_count;rix_spin_unlock_irqrestore(&pmm_lock,irq);return n;}
 uint64_t pmm_free_pages(void){uint64_t irq;rix_spin_lock_irqsave(&pmm_lock,&irq);uint64_t n=free_pages_count;rix_spin_unlock_irqrestore(&pmm_lock,irq);return n;}
+uint64_t pmm_reserved_pages(void){uint64_t irq;rix_spin_lock_irqsave(&pmm_lock,&irq);uint64_t n=reserved_pages_count;rix_spin_unlock_irqrestore(&pmm_lock,irq);return n;}
 int pmm_is_managed(uint64_t physical_address){
     if((physical_address&(RIXURI_PAGE_SIZE-1ULL))!=0)return 0;
     uint64_t page=physical_address/RIXURI_PAGE_SIZE;if(page>=PMM_MAX_PAGES)return 0;

@@ -6,6 +6,7 @@
 #include "../sched/scheduler.h"
 #include "../mm/uaccess.h"
 #include "../mm/heap.h"
+#include "../mm/pmm.h"
 #include "../vfs/vfs.h"
 #include "../tty/tty.h"
 #include "../time/time.h"
@@ -91,6 +92,7 @@ void syscall_dispatch(rix_syscall_frame_t*frame){
  case RIX_SYS_CLOSE_PIPES_EXCEPT:if(vfs_close_pipes_except(self,(int)frame->rdi,(int)frame->rsi)!=0)result=-RIX_EINVAL;else result=0;break;
  case RIX_SYS_STAT:{char path[RIX_VFS_PATH_MAX];if(user_string(frame->rdi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}rix_vnode_t st;int rc=vfs_stat(path,&st);if(rc!=0)result=vfs_result(rc);else if(copy_to_user(frame->rsi,&st,sizeof(st))!=0)result=-RIX_EFAULT;else result=0;break;}
  case RIX_SYS_STATFS:{char path[RIX_VFS_PATH_MAX];rix_statfs_t probe;if(user_string(frame->rdi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}if(copy_from_user(&probe,frame->rsi,sizeof(probe))!=0){result=-RIX_EFAULT;break;}if(probe.version!=RIX_STATFS_VERSION||probe.struct_size!=sizeof(rix_statfs_t)){result=-RIX_EINVAL;break;}rix_statfs_t out;int rc=vfs_statfs(path,&out);if(rc!=0)result=vfs_result(rc);else if(copy_to_user(frame->rsi,&out,sizeof(out))!=0)result=-RIX_EFAULT;else result=0;break;}
+ case RIX_SYS_SYSINFO:{rix_sysinfo_t probe;if(copy_from_user(&probe,frame->rdi,sizeof(probe))!=0){result=-RIX_EFAULT;break;}if(probe.version!=RIX_SYSINFO_VERSION||probe.struct_size!=sizeof(rix_sysinfo_t)){result=-RIX_EINVAL;break;}rix_sysinfo_t out;out.version=RIX_SYSINFO_VERSION;out.struct_size=sizeof(out);out.page_size=4096u;out.flags=0u;out.total_pages=pmm_total_pages();out.free_pages=pmm_free_pages();out.reserved_pages=pmm_reserved_pages();uint64_t ns=time_monotonic_ns();out.uptime_sec=ns/1000000000ULL;out.uptime_nsec=(uint32_t)(ns%1000000000ULL);out.pad=0u;out.reserved0=0u;if(copy_to_user(frame->rdi,&out,sizeof(out))!=0)result=-RIX_EFAULT;else result=0;break;}
  case RIX_SYS_GETACL:{char path[RIX_VFS_PATH_MAX];rixfs_acl_t acl;if(user_string(frame->rdi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}int rc=vfs_get_acl(path,&acl);if(rc!=0)result=vfs_result(rc);else if(copy_to_user(frame->rsi,&acl,sizeof(acl))!=0)result=-RIX_EFAULT;else result=0;break;}
  case RIX_SYS_SETACL:{char path[RIX_VFS_PATH_MAX];rixfs_acl_t acl;if(user_string(frame->rdi,path,sizeof(path))!=0||copy_from_user(&acl,frame->rsi,sizeof(acl))!=0){result=-RIX_EFAULT;break;}result=vfs_result(vfs_set_acl(path,&acl));break;}
  case RIX_SYS_CLEARACL:{char path[RIX_VFS_PATH_MAX];if(user_string(frame->rdi,path,sizeof(path))!=0){result=-RIX_EFAULT;break;}result=vfs_result(vfs_clear_acl(path));break;}
