@@ -47,5 +47,6 @@ int rixfs_get_acl(rixfs_t *fs,uint64_t inode,rixfs_acl_t *out);
 int rixfs_set_acl(rixfs_t *fs,uint64_t inode,const rixfs_acl_t *acl);
 int rixfs_clear_acl(rixfs_t *fs,uint64_t inode);
 int rixfs_sync(rixfs_t *fs);
+int rixfs_statfs(rixfs_t *fs,uint64_t *out_total,uint64_t *out_free,uint64_t *out_free_inodes);
 int rixfs_fsck(rix_block_device_t *device,uint64_t *checked_inodes,uint64_t *referenced_sectors);
 void rixfs_unmount(rixfs_t *fs);

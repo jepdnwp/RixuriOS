@@ -21,6 +21,10 @@
 #define RIX_VFS_ERR_LOOP (-40)
 typedef enum { RIX_VFS_DIR=1, RIX_VFS_FILE=2, RIX_VFS_SYMLINK=3, RIX_VFS_DEVICE=4 } rix_vfs_type_t;
 typedef struct { uint64_t inode; rix_vfs_type_t type; uint32_t mode; uint32_t uid; uint32_t gid; uint64_t size; } rix_vnode_t;
+#define RIX_STATFS_VERSION 1u
+#define RIX_STATFS_TYPE_RIXFS 0x52495846u
+typedef struct { uint32_t version; uint32_t struct_size; uint32_t fs_type; uint32_t block_size; uint64_t total_blocks; uint64_t free_blocks; uint64_t avail_blocks; uint64_t total_inodes; uint64_t free_inodes; uint32_t mount_id; uint32_t flags; } rix_statfs_t;
+_Static_assert(sizeof(rix_statfs_t)==64,"statfs layout must stay 64 bytes");
 typedef struct { rix_vnode_t *node; char path[RIX_VFS_PATH_MAX]; } rix_vfs_path_t;
 typedef struct { uint64_t inode; uint8_t type; uint8_t reserved[7]; } rix_vfs_dirent_t;
 int vfs_init(void);
@@ -42,6 +46,7 @@ int vfs_set_fd_flags(uint64_t pid,int fd,uint32_t flags);
 int vfs_get_cloexec(uint64_t pid,int fd,uint32_t *flags);
 int vfs_set_cloexec(uint64_t pid,int fd,uint32_t flags);
 int vfs_close_cloexec(uint64_t pid);
+int vfs_statfs(const char *path,rix_statfs_t *out);
 int vfs_fd_is_open(uint64_t pid,int fd);
 int vfs_clone_fds(uint64_t parent_pid,uint64_t child_pid);
 int vfs_close_pipes_except(uint64_t pid,int keep_fd0,int keep_fd1);

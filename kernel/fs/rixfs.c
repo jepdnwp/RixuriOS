@@ -103,4 +103,38 @@ static int io_file(rixfs_t*fs,uint64_t ino,uint64_t off,void*buf,size_t size,int
 int rixfs_read(rixfs_t*fs,uint64_t ino,uint64_t off,void*buf,size_t size){return io_file(fs,ino,off,buf,size,0);}
 int rixfs_write(rixfs_t*fs,uint64_t ino,uint64_t off,const void*buf,size_t size){return io_file(fs,ino,off,(void*)buf,size,1);}
 int rixfs_sync(rixfs_t*fs){if(!fs||!fs->mounted)return-1;return bio_flush(fs->device);}
+int rixfs_statfs(rixfs_t*fs,uint64_t*out_total,uint64_t*out_free,uint64_t*out_free_inodes){
+    if(out_total)*out_total=0;
+    if(out_free)*out_free=0;
+    if(out_free_inodes)*out_free_inodes=0;
+    if(!fs||!fs->mounted||!fs->device)return -1;
+    uint64_t total=fs->super.total_sectors;
+    if(!total||fs->device->sector_size<512||fs->device->sector_size>RIXFS_PAGE_SIZE)return -1;
+    uint64_t q=pmm_alloc_page();if(!q)return -2;
+    uint8_t*b=(uint8_t*)(uintptr_t)q;
+    uint64_t free_sec=0;
+    uint64_t bs=fs->device->sector_size;
+    uint64_t cached=(uint64_t)-1;
+    for(uint64_t s=0;s<total;s++){
+        uint64_t rel=s/8ULL,bsec=fs->super.bitmap_sector+rel/bs,off=rel%bs;
+        if(bsec>=fs->super.bitmap_sector+fs->super.bitmap_sectors){pmm_free_page(q);return -3;}
+        if(cached!=bsec){
+            if(bio_read(fs->device,bsec,1,b,bs)){pmm_free_page(q);return -4;}
+            cached=bsec;
+        }
+        if(!(b[off]&(uint8_t)(1u<<(s%8ULL))))free_sec++;
+    }
+    uint64_t free_ino=0;
+    for(uint64_t ino=1;ino<=fs->super.inode_count;ino++){
+        rixfs_inode_disk_t in;
+        /* rixfs_read_inode allocates its own page; reuse it directly. */
+        if(rixfs_read_inode(fs,ino,&in)){pmm_free_page(q);return -5;}
+        if(in.inode==0)free_ino++;
+    }
+    pmm_free_page(q);
+    if(out_total)*out_total=total;
+    if(out_free)*out_free=free_sec;
+    if(out_free_inodes)*out_free_inodes=free_ino;
+    return 0;
+}
 void rixfs_unmount(rixfs_t*fs){if(!fs)return;fs->mounted=0;fs->device=NULL;for(size_t i=0;i<sizeof(fs->super);i++)((uint8_t*)&fs->super)[i]=0;}
