@@ -13,6 +13,11 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE"
 cp -a "$ESP/." "$STAGE/"
 cp "$ESP_IMAGE" "$STAGE/esp.img"
+if [ -n "${SOURCE_DATE_EPOCH:-}" ]; then
+  # Normalize file mtimes so the ISO payload is deterministic. Volume
+  # timestamps additionally follow SOURCE_DATE_EPOCH inside xorriso.
+  find "$STAGE" -exec touch -d "@${SOURCE_DATE_EPOCH}" {} +
+fi
 xorriso -as mkisofs \
   -iso-level 3 \
   -V RIXURIOS \
