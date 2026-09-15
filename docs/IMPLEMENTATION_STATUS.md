@@ -830,3 +830,24 @@ The freestanding libc now includes a bounded environment table with `getenv`, `s
 QEMU revalidation for this slice: pipe-stress, crash (139 x2), and fuzz
 (6000 calls) PASS with zero fault markers; full 37-harness matrix rerun and
 physical HW evidence remain open. Phase 23 stays LOCKED.
+
+## P5 slice 2 hardening checkpoint — 2026-09-15
+
+- DMA (Phase 10): central `pci_dma_map/unmap/map_sg/is_mapped/sync/bounce`
+  ownership contract with per-page PMM validation, owner+direction records,
+  overlap rejection, SG rollback, mfence sync, and DMA-after-free containment
+  in `pci_dma_free`. Host `dma_test` green.
+- NVMe (Phase 12): pure `nvme_prp_build` + per-controller static PRP list
+  page lifts the 2-page cap to 257 pages; every data page validated
+  managed+in-use+unreserved; queues + list DMA-mapped. Host `nvme_prp_test`
+  green; QEMU file/pipe/posix suites still green (no large-transfer HW proof
+  claimed).
+- VFS (Phase 13): `O_CLOEXEC`/`FD_CLOEXEC` end to end — open sets, dup family
+  clears, fork preserves, `F_GETFD`/`F_SETFD` served, `execve` closes cloexec
+  only on success. `/usr/bin/cloexec-test` + `qemu_cloexec_test.py` prove all
+  markers plus child exec-close.
+- Time (Phase 14) correction: `nanosleep` is tick-driven via
+  `time_sleep_queue`, not yield-spinning.
+
+QEMU revalidation: cloexec, pipe-stress, crash, fuzz, posix PASS; full matrix
+and HW remain open. Phase 23 stays LOCKED.

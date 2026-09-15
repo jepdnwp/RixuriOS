@@ -40,7 +40,7 @@ construction: `kernel/` includes only `include/` + its own headers.
 | 57/59/61/247 | FORK/EXECVE/WAIT/WAITPID | fork/execve/wait/waitpid | same; WNOHANG=1; WEXITSTATUS et al in sys/wait.h | working |
 | 60 | EXIT | _exit/exit/_Exit | exit runs ≤16 atexit handlers LIFO, then _exit | working (QEMU-proven, status word checked) |
 | 62/127/142 | KILL/SIGPENDING/SIGPROCMASK | kill/raise/sigpending/sigprocmask/pause | same; signal()/sigaction() declared but ENOSYS (no delivery ABI) | partial |
-| 78–87 | GETDENTS/GETCWD/CHDIR/MKDIR/.../LINK | getdents/opendir/readdir/... | dirent + fcntl F_DUPFD/F_GETFL/F_SETFL | working; fstat/lstat ENOSYS; F_GETFD/F_SETFD reserved |
+| 78–87 | GETDENTS/GETCWD/CHDIR/MKDIR/.../LINK | getdents/opendir/readdir/... | dirent + fcntl F_DUPFD/F_GETFD/F_SETFD/F_GETFL/F_SETFL | working; fstat/lstat ENOSYS; O_CLOEXEC + FD_CLOEXEC QEMU-proven (cloexec-test) |
 | 79/80 | GETCWD/CHDIR | getcwd/chdir | same + getopt/sysconf/getpagesize (pure) | working |
 | 102–119 | credentials/ACL/caps/sessions | getuid/.../access/fcntl | access (stat-based), chmod/chown/rename/link | working within bounded model |
 | 139 | GETRANDOM | getrandom/arc4random | getrandom | working where CPU has RDRAND/RDSEED else ENOSYS fallback |

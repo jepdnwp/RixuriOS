@@ -205,15 +205,22 @@ stated plainly; QEMU PASS is never claimed as physical PASS.
 
 - Implemented: PCI/ECAM discovery, capability/BAR sizing/binding, uncached
   MMIO window with dedup + kernel-slot borrow, page-list DMA alloc/free
-  below 4G, MSI-X helpers, IOMMU fail-closed stub.
+  below 4G, central map/unmap/SG/is_mapped/sync/bounce ownership contract
+  (per-page PMM validation, owner+direction, overlap reject, SG rollback,
+  mfence sync, after-free containment, lockdep rank 25), MSI-X helpers,
+  IOMMU fail-closed stub. Host `dma_test` green.
 - Remaining: BAR ownership/release, bridge/multifunction qualification, hot
-  removal, central DMA map/pin/unmap + SG + barriers/coherency + bounce,
-  MSI-X lifecycle, DMAR/IVRS domains or explicit restricted no-IOMMU policy.
-- Tests: E1000/RTL8125/xHCI-caps host models green.
+  removal, cache-coherency rules per device, MSI-X lifecycle, DMAR/IVRS
+  domains or explicit restricted no-IOMMU policy, driver migration to the
+  central API (NVMe queues/list now mapped; E1000/RTL8125/xHCI still use
+  direct PMM helpers).
+- Tests: E1000/RTL8125/xHCI-caps + new `dma_test` green.
 - QEMU: NVMe/E1000 paths green.
 - Physical: inventory only; operation BLOCKED.
-- Limitations: DMA is physical pages without device-domain translation.
-- Security: no-IOMMU DMA can escape buffers (documented risk).
+- Limitations: identity translation (no IOMMU); DMA is physical pages with
+  ownership records, not device-domain remapping.
+- Security: unmapped/arbitrary DMA rejected at the API; no-IOMMU escape still
+  possible for drivers bypassing the API (documented risk).
 - Recovery: reset cleanup open.
 - Final: **PARTIAL**.
 
@@ -237,17 +244,23 @@ stated plainly; QEMU PASS is never claimed as physical PASS.
 ## Phase 12 — NVMe — PARTIAL (physical + recovery BLOCKED)
 
 - Implemented: reset/enable, admin + I/O queues, Identify, namespace
-  registration, bounded PRP1/PRP2, polling read/write/flush, single bounded
-  retry on transient timeout, QEMU mount + file I/O green.
-- Remaining: general PRP lists/SGL, multiple outstanding commands + CID
-  tracking, interrupt completions, stale-CID handling, runtime
-  reset/re-identify/re-register/quiesce, 4K LBA + large-transfer +
-  concurrency matrix, HW qualification.
-- Tests: no queue/PRP host model.
-- QEMU: Identify/mount/read/write green; reset matrix open.
+  registration, PRP1/PRP2 + single-page PRP-list builder (pure
+  `nvme_prp_build`, 257-page / 1M cap) with per-controller static list page,
+  per-page PMM validation, list-before-doorbell ordering, DMA-mapped queues
+  + list, polling read/write/flush, single bounded retry on transient
+  timeout, QEMU mount + file I/O green. Host `nvme_prp_test` green.
+- Remaining: SGL, multiple outstanding commands + CID tracking, interrupt
+  completions, stale-CID handling, runtime reset/re-identify/re-register/
+  quiesce FSM, 4K LBA + large-transfer + concurrency matrix, HW
+  qualification.
+- Tests: new PRP host model green; queue/reset host model still open.
+- QEMU: Identify/mount/read/write green (1-sector cache path); large-transfer
+  list path built but without multi-block HW proof; reset matrix open.
 - Physical: BLOCKED.
-- Limitations: >2-page buffers fail cleanly.
-- Security: DMA/cache assumptions unqualified on HW.
+- Limitations: single outstanding per controller (io_lock held across poll)
+  by design; static list page shared under that lock.
+- Security: data pages validated live + DMA-mapped; cache assumptions still
+  unqualified on HW.
 - Recovery: timeout returns error without wedge; full recovery open.
 - Final: **PARTIAL**.
 
@@ -255,14 +268,18 @@ stated plainly; QEMU PASS is never claimed as physical PASS.
 
 - Implemented: VFS normalize + permission checks + open/read/write/seek/
   readdir/stat/mkdir/unlink/rmdir/rename/link/symlink/readlink, per-process
-  FDs, RixFS inodes/extents/dirs, format/mount validation, hard links,
+  FDs with `O_CLOEXEC`/`FD_CLOEXEC` (open sets, dup family clears, fork
+  preserves, `F_GETFD`/`F_SETFD` served, `execve` closes cloexec only on
+  success), RixFS inodes/extents/dirs, format/mount validation, hard links,
   journal replay, checksums, read-only fsck, compact-dirent + replace-rename
-  fixes, host `rixfs_mount_test` + `symlink_test` green.
+  fixes, host `rixfs_mount_test` + `symlink_test` green, QEMU `cloexec-test`
+  green.
 - Remaining: stable refcounted vnode/dentry, shared open-file descriptions
-  (dup/fork offsets still copied), CLOEXEC, busy unmount, mount namespaces,
+  (dup/fork offsets still copied), busy unmount, mount namespaces,
   orphan/duplicate-extent repair, emergency read-only, atomic multi-object
   transactions, SMP locking, legacy-divergence audit complete.
-- Tests: host mount/symlink green; QEMU file/cp/mv/rename suites green.
+- Tests: host mount/symlink green; QEMU file/cp/mv/rename + new cloexec
+  suites green.
 - QEMU: disposable-image functional green; durability/crash matrix partial.
 - Physical: UNVERIFIED.
 - Limitations: single root mount; fsck reports, limited repair.
@@ -273,10 +290,11 @@ stated plainly; QEMU PASS is never claimed as physical PASS.
 ## Phase 14 — Time, RTC and Desktop ACPI — PARTIAL / HARDENING REQUIRED
 
 - Implemented: CMOS RTC conversion + snapshots, PIT monotonic, boot-RTC +
-  elapsed realtime, `nanosleep` (yield-based) + `/bin/sleep`, FADT S5 parse,
-  CF9/INT19 reboot + PM1 S5 paths, this slice's bounded UIP.
+  elapsed realtime, tick-driven `nanosleep` (`time_sleep_queue` + PIT wake,
+  prepare-recheck-block) + `/bin/sleep`, FADT S5 parse, CF9/INT19 reboot +
+  PM1 S5 paths, bounded UIP.
 - Remaining: RTC init + invalid-fallback, calibration/drift/adjustment,
-  distinct clock IDs, timer queues + truly blocking sleep, APIC/HPET timing,
+  distinct clock IDs, APIC/HPET timing,
   wall-clock policy, HW reset/S5 + idle/thermal proof.
 - Tests: ACPI/libc time partial; no CMOS/timer-queue model.
 - QEMU: date/sleep green; reset/S5 unverified.

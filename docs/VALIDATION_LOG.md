@@ -1894,3 +1894,52 @@ blocking `nanosleep` timer queue, xHCI controller-backed completion + HW HID,
 TCP retransmit/reassembly/window, GPT/mount APIs, ASLR/SMEP-SMAP, sustained
 soak + SMP4 full matrix rerun, physical HW evidence everywhere. Phase 23
 remains LOCKED.
+
+## 2026-09-15 — Phase P5 slice 2: DMA ownership, NVMe PRP lists, VFS CLOEXEC (Phases 10/12/13/22)
+
+Root-cause fixes (no weakened tests):
+
+- `kernel/pci/dma.{h,c}`: central ownership contract. `pci_dma_map` validates
+  every page managed+in-use+unreserved, records owner+direction, rejects
+  overlapping maps; `pci_dma_unmap` requires exact match; `pci_dma_map_sg`
+  with rollback; `pci_dma_is_mapped` query; `pci_dma_sync_for_device/cpu`
+  (mfence); `pci_dma_needs_bounce` + `pci_dma_map/unmap_bounce` (below-limit
+  allocation with TO/FROM copy). `pci_dma_free` fails closed on DMA-after-free
+  (mapped pages leaked, never handed back while a device may DMA). Lockdep
+  rank 25 (dma -> pmm). Host `dma_test` covers alloc-low, map, double-map
+  reject, bad-arg, unmap exactness, SG + rollback, sync, bounce passthrough,
+  after-free containment.
+- `kernel/storage/nvme_prp.{h,c}`: pure PRP builder (1 page, 2-page direct,
+  N-page list) with host `nvme_prp_test` (single, exact-fit, span-two,
+  two-direct, list-three/four, negatives). `kernel/storage/nvme.c` wires a
+  per-controller static PRP list page (DMA-mapped, never freed until cleanup
+  so stale completions stay valid), validates every data page
+  managed+in-use+unreserved, orders list writes before doorbell, and lifts
+  the 2-page cap to 257 pages (1M: 16 blocks x 64K LBA). Queues + list are
+  DMA-mapped with per-controller owner.
+- `kernel/vfs/vfs.{h,c}` + `kernel/syscall/syscall.c`: `O_CLOEXEC` /
+  `FD_CLOEXEC` end to end. `vfs_fd_t.cloexec`, `RIX_VFS_O_CLOEXEC 128u`
+  (matches libc), open sets, pipe inits clear, dup/dup_min/dup_to clear on
+  the new fd (fork via `vfs_clone_fds` preserves), `F_GETFD`/`F_SETFD` served
+  (`F_SETFD` masks to bit 0), `vfs_close_cloexec` on successful `execve`
+  only (failure keeps fds). New `/usr/bin/cloexec-test` + harness proves
+  open/get/set/bad-reject/dup/dupfd/dup2/exec-close with `cloexec:PASS`.
+- Note: `nanosleep` is already tick-driven (`time_sleep_queue` + PIT wake,
+  prepare-recheck-block), not yield-spinning; the P5-slice-1 report line
+  saying yield-based is superseded.
+
+Validation (`CROSS=x86_64-linux-gnu- HOST_CC=gcc`):
+
+```text
+make test RC=0 (-Werror) incl. dma_test + nvme_prp_test
+make image RC=0
+qemu_cloexec_test: PASS (all 8 markers + child-exec-close + cloexec:PASS)
+qemu_pipe_stress / crash (139 x2) / fuzz (6000) / posix (27 groups): PASS
+git diff --check clean
+```
+
+Explicitly NOT in this slice: IOMMU domains, NVMe reset FSM + interrupt
+completions + multi-outstanding CID tracking, RixFS transactions/fsck repair,
+VFS stable vnode/shared-offset descriptions/busy-unmount, GPT/mount APIs,
+xHCI live completion + HW HID, TCP retransmit/reassembly, ASLR/SMEP-SMAP,
+soak + full 37-matrix rerun, HW evidence. Phase 23 stays LOCKED.
