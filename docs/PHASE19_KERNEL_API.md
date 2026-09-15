@@ -10,8 +10,8 @@ The identifiers below are reserved for the RixuriOS ABI and must be added only t
 
 | Call | ID | Purpose |
 |---|---:|---|
-| `statfs` | 145 | Return filesystem capacity and mount identity for a path. |
-| `sysinfo` | 138 | RESERVED — collides with `LIST_PROCESSES`; do not use. Next free: 146. |
+| `statfs` | 145 | Served: filesystem capacity and mount identity for a path. |
+| `sysinfo` | 146 | Served: page accounting (total/free/reserved) + uptime. Only honestly accounted fields; no inferred kernel/user/cache split. |
 | `klog_read` | 139 | RESERVED — collides with `GETRANDOM`; do not use. Next free: 147. |
 | `mount` | 165 | Attach a validated block/filesystem source into a namespace. |
 | `umount` | 166 | Detach a mount after reference and busy checks. |

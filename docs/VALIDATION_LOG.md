@@ -1978,3 +1978,32 @@ git diff --check clean
 Explicitly NOT in this slice: `sysinfo`/`free`, `klog`/`dmesg`,
 `mount`/`umount` + GPT, sysinfo accounting, log ring, namespace work. Phase 23
 stays LOCKED.
+
+## 2026-09-15 — Phase 19 slice: `sysinfo` + `free` (Phase 19)
+
+- `kernel/mm/pmm.{h,c}`: exact `pmm_reserved_pages()` counter (new reserves
+  count once; double reserve never double-counts; reserved never freed).
+  `pmm_test` now asserts boot-reserve floor, +1 on reserve, idempotent
+  re-reserve, and free-rejection.
+- `kernel/syscall/syscall.h`: `RIX_SYS_SYSINFO 146` + versioned 64-byte
+  `rix_sysinfo_t` (page_size, total/free/reserved pages, uptime sec+nsec).
+  Only honestly accounted fields — no inferred kernel/user/cache split.
+- `kernel/syscall/syscall.c`: handler validates user pointer (`EFAULT`) and
+  version+size (`EINVAL`), fills from PMM + `time_monotonic_ns()`.
+- `user/libc`: `sys/sysinfo.h` + `sysinfo()` wrapper (pre-stamps version/size).
+- `/usr/bin/free`: `MemTotal/MemFree/MemUsed kB + Reserved pages + Uptime s`,
+  non-zero on failure or bad version.
+
+Validation (`CROSS=x86_64-linux-gnu- HOST_CC=gcc`):
+
+```text
+make test RC=0 (-Werror) incl. extended pmm_test
+make image RC=0
+qemu_free_test: PASS (MemTotal 517920 = 129480 pages, MemFree 454512,
+  Reserved 15650, Uptime 2s; total-free=used consistent, 0<=free<=total)
+qemu_df / cloexec / pipe_stress re-green (no exec-path regression)
+git diff --check clean
+```
+
+Explicitly NOT in this slice: `klog`/`dmesg`, `mount`/`umount` + GPT. Phase 23
+stays LOCKED.

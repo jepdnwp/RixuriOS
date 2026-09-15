@@ -860,3 +860,12 @@ and is superseded) serves honest RixFS capacity via bitmap+inode scans.
 forms and fails non-zero on missing paths. Host `statfs_test` and
 `qemu_df_test.py` green; `sysinfo`/`free`, `klog`/`dmesg`, `mount`/`umount`
 remain open. Phase 23 stays LOCKED.
+
+## Phase 19 sysinfo/free checkpoint — 2026-09-15
+
+`RIX_SYS_SYSINFO 146` (v1 additive) serves exact PMM total/free/reserved +
+monotonic uptime in a versioned 64-byte struct. `sysinfo()` wrapper and
+`/usr/bin/free` print MemTotal/MemFree/MemUsed/Reserved/Uptime with no
+inferred breakdowns. Extended `pmm_test` and `qemu_free_test.py` green
+(517920/454512 kB, 15650 reserved, consistent). `klog`/`dmesg`,
+`mount`/`umount` remain open. Phase 23 stays LOCKED.
