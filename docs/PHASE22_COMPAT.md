@@ -101,7 +101,7 @@ semantics, read()/write() on socket fds (use send/recv).
 - `recv()` on an empty queue returns EAGAIN even on blocking sockets.
 - `mmap`/`ioctl`/`signal()` and friends compile, then
   fail closed at runtime; probe with ENOSYS checks, not `#ifdef`. `poll()`
-  provides immediate socket readiness and `POLLNVAL`; timeout blocking is deferred.
+  provides socket readiness, `POLLNVAL`, bounded timeout waits, and EINTR handling.
 - Realtime is UTC epoch time; monotonic is a non-decreasing tick-backed uptime source.
 - `rand()` is deterministic LCG; `arc4random()` needs CPU
   RDRAND/RDSEED or it falls back deterministically (never use the

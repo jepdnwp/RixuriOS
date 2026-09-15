@@ -4,7 +4,7 @@
 /* I/O readiness compatibility surface.
  *
  * The kernel implements bounded, immediate readiness checks for socket
- * descriptors. Timeout blocking remains a later scheduler integration. */
+ * descriptors with bounded timeout waits. */
 
 typedef unsigned long nfds_t;
 struct pollfd {
