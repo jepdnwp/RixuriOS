@@ -75,7 +75,7 @@ netinet/in.h + arpa/inet.h (IPv4 only), sys/socket.h, pthread.h
 (mutex/once local; create/join/detach ENOSYS), locale.h (C locale only),
 wchar.h (strict UTF-8).
 
-Fail-closed stubs (declared, ENOSYS): mmap/munmap/mprotect, ioctl,
+Fail-closed stubs (declared, ENOSYS): mmap/munmap/mprotect,
 signal/sigaction, system,
 pthread_create/join/detach.
 
@@ -99,7 +99,7 @@ semantics, read()/write() on socket fds (use send/recv).
   may numerically overlap stdio. Never assume `socket()` returns >2.
 - No `fork()`+threads mixing: mutexes are process-local spinlocks.
 - `recv()` on an empty queue returns EAGAIN even on blocking sockets.
-- `mmap`/`ioctl`/`signal()` and friends compile, then
+- `mmap`/`signal()` and friends compile, then
   fail closed at runtime; probe with ENOSYS checks, not `#ifdef`. `poll()`
   provides socket readiness, `POLLNVAL`, bounded timeout waits, and EINTR handling.
 - Realtime is UTC epoch time; monotonic is a non-decreasing tick-backed uptime source.

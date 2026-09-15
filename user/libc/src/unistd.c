@@ -119,7 +119,7 @@ void *mmap(void *address,size_t length,int protection,int flags,int fd,off_t off
 int munmap(void *address,size_t length){if(!length){errno=RIX_EINVAL;return -1;}return(int)rix_int_result(rix_sys(11,(long)address,(long)length,0));}
 int mprotect(void *address,size_t length,int protection){if(!length){errno=RIX_EINVAL;return -1;}return(int)rix_int_result(rix_sys(10,(long)address,(long)length,(long)protection));}
 int poll(struct pollfd *fds,nfds_t count,int timeout_ms){if(count&&!fds){errno=RIX_EFAULT;return -1;}return(int)rix_int_result(rix_sys(7,(long)fds,(long)count,(long)timeout_ms));}
-int ioctl(int fd,unsigned long command,...){(void)command;return(int)rix_int_result(rix_sys(16,(long)fd,0,0));}
+int ioctl(int fd,unsigned long command,...){va_list ap;void *arg;va_start(ap,command);arg=va_arg(ap,void*);va_end(ap);return(int)rix_int_result(rix_sys(16,(long)fd,(long)command,(long)arg));}
 /* POSIX socket spelling over the native socket syscalls. Kernel raw
  * negatives are remapped: -2 (ARP pending/device busy) and -3 (empty
  * queue) become EAGAIN, -4 (payload larger than the receiver capacity)

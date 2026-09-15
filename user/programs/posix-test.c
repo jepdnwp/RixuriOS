@@ -50,7 +50,7 @@ int program_main(int argc,char **argv,char **envp){
     {char stack_top;check("munmap",munmap(&stack_top,1)!=0&&errno==RIX_ENOSYS);}
     {char stack_top;errno=0;int rc=mprotect(&stack_top,4096,PROT_READ);int ec=errno;out("posix:mprotect-diag rc=");out_num(rc);out(" errno=");out_num(ec);out("\n");check("mprotect",rc!=0&&ec==RIX_ENOSYS);}
     {struct pollfd pfd={-1,POLLIN,0};check("poll",poll(&pfd,1,0)==0&&pfd.revents==0);struct pollfd bad={999,POLLIN,0};check("poll-invalid",poll(&bad,1,0)==1&&(bad.revents&POLLNVAL)!=0);int waitfd=socket(AF_INET,SOCK_DGRAM,0);struct pollfd waiting={waitfd,POLLIN,0};check("poll-timeout",waitfd>=0&&poll(&waiting,1,1)==0&&waiting.revents==0);if(waitfd>=0)close(waitfd);}
-    check("ioctl",ioctl(1,0)!=0&&errno==RIX_ENOSYS);
+    {struct winsize ws={0};struct termios tio={0};int ok=ioctl(1,TIOCGWINSZ,&ws)==0&&ws.ws_row>0&&ws.ws_col>0&&ioctl(1,TCGETS,&tio)==0&&(tio.c_lflag&(ICANON|ECHO))==(ICANON|ECHO)&&ioctl(1,0,&ws)<0&&errno==RIX_ENOTTY;check("ioctl",ok);}
     check("signal",signal(SIGTERM,SIG_IGN)==SIG_ERR&&errno==RIX_ENOSYS);
     check("sigaction",sigaction(SIGTERM,0,0)!=0&&errno==RIX_ENOSYS);
     {sigset_t pending=0;check("sigpending",sigpending(&pending)==0&&pending==0);}

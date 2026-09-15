@@ -34,7 +34,7 @@ descriptive — any drift between them is a bug. `STATFS 145` / `SYSINFO 146` / 
 | 12 | BRK | served |
 | 13 | CLOCK_GETTIME | served |
 | 14 | SIGMASK | served |
-| 16 | IOCTL | reserved (`-ENOSYS`) |
+| 16 | IOCTL | served (console termios/window-size subset) |
 | 22 | PIPE | served |
 | 24 | YIELD | served (v1 additive) |
 | 32 | DUP | served |
