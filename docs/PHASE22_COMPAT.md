@@ -69,7 +69,8 @@ qsort/bsearch, getenv/setenv/putenv/clearenv, rand/arc4random,
 exit/atexit/abort-N/A-system-ENOSYS), string (+strnlen/strtok_r/memccpy),
 signal (sets/mask/pending/raise/pause), time (+struct timespec,
 clock_gettime/nanosleep POSIX signatures), unistd, sys/stat (+fstat/lstat
-stubs), sys/types, sys/wait (macros), sys/time (gettimeofday),
+stubs), sys/statfs.h, sys/sysinfo.h, sys/klog.h, sys/types, sys/wait
+(macros), sys/time (gettimeofday),
 netinet/in.h + arpa/inet.h (IPv4 only), sys/socket.h, pthread.h
 (mutex/once local; create/join/detach ENOSYS), locale.h (C locale only),
 wchar.h (strict UTF-8).
@@ -80,8 +81,9 @@ pthread_create/join/detach.
 
 Reserved/missing by design: dynamic loading (dlopen — Phase 23),
 `_Thread_local` (no PT_TLS/%fs until Phase 23), wide collation, timezones
-(UTC only), pthreads across processes, O_CLOEXEC/nonblocking pipe
+(UTC only), pthreads across processes, nonblocking (O_NONBLOCK) pipe
 semantics, read()/write() on socket fds (use send/recv).
+(O_CLOEXEC/FD_CLOEXEC are implemented and QEMU-proven — not in this list.)
 
 ## 5. Porting notes (Linux/glibc divergences)
 
@@ -140,11 +142,18 @@ loader and is NOT claimed.
 - Regression neighbors re-run for the timespec migration + close
   change: phase19-extended (`date`), session suite, process-utils,
   signal suite, ISO boot (see VALIDATION_LOG / checkpoint entry).
+- System/diagnostic surface (145/146/147): `/bin/df`, `/usr/bin/free`,
+  `/bin/dmesg` via versioned statfs/sysinfo/klog_read; `/usr/bin/cloexec-test`
+  for O_CLOEXEC/FD_CLOEXEC; `/usr/bin/rixtest` native runner (smoke + --full
+  + --sched + --crash + --fuzz + --pipe-stress + --all + --strict), each with
+  a QEMU harness.
 
 ## 9. Known limitations (remain open past Phase 22)
 
 Dynamic linking/loader/TLS; kernel threads/futex/full pthread; signal
 delivery frames; blocking socket receive; file-backed mmap; poll/ioctl
-command sets; fd-stat/readlink/symlinks; timestamps in stat; non-C
+command sets; fd-stat (fstat/lstat); timestamps in stat; non-C
 locales/timezones; physical-hardware qualification (all QEMU evidence
 is disposable-image class).
+(Symlink/readlink syscalls are implemented under Phase 13 S2 and exercised
+by the filesystem suites — not a libc gap.)

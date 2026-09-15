@@ -2093,6 +2093,51 @@ git diff --check clean
 Explicitly NOT in this slice: SBOM, artifact retention, full-matrix rerun,
 hardware evidence. Phase 23 stays LOCKED.
 
+## 2026-09-15 — P0 credential-array slot/PID aliasing + rixtest all-modes (Phases 06/20/22)
+
+Root cause (found via `rixtest --full` failing where dedicated harnesses
+pass): the parallel credential arrays in `kernel/process/process.c`
+(`real/saved_uids/gids`, `supplementary_groups/counts`, `audit_uids`) are
+written at TABLE SLOT on creation but read at PID everywhere else
+(`setuid/setgid`, `in_group`, `get/setgroups`, `apply_exec_credentials`,
+`get/set_audit_uid`). `allocate_pid()` is round-robin, so after any
+reap/reuse cycle pid != slot and a process reads a stranger's credentials.
+`wait_reap_locked` additionally cleared `audit_uids[match->pid]` AFTER
+`clear_process()` zeroed the pid (writes slot 0, leaks the dead slot) and
+never cleared the other five arrays. Fix: `slot_of()` resolution at every
+site; reap captures the slot first and zeroes all six arrays. Bare
+single-shot runs passed only by pid==slot coincidence.
+
+`rixtest` can now run everything: argv-capable `run_one` (execve errno
+diagnostic), groups (smoke 15, full, sched burst/churn-10, crash null/ud,
+fuzz, pipe-stress, --all), per-group process-count leak gate, fixture
+teardown for re-runs, `--strict`. Test-list corrections: bare `auditcheck`
+always fails by design (needs audit_uid 4242, covered as credtest's child)
+and bare `metatest` returns 2 by design (subcommand tool), so full runs
+`metatest init` + `metatest policy` instead. New `scripts/qemu_rixtest_test.py`
+harness (smoke by default; auto-included in the matrix glob).
+
+Validation (`CROSS=x86_64-linux-gnu- HOST_CC=gcc`):
+
+```text
+make test RC=0 (-Werror) incl. ABI 81 syscalls
+make image RC=0
+qemu posix/pipetest/credtest sequence: PASS incl. audit=PASS + setid=PASS
+  (same sequence failed at the audit child before the fix)
+qemu rixtest smoke: 15 PASS, PASS WITH SKIPS
+qemu rixtest --sched: burst (24+16/40) + churn-10 PASS
+qemu rixtest --crash: null + ud crash-reap PASS
+qemu proc-test bare: proc_pipe_wait=PASS
+git diff --check clean
+```
+
+Explicitly NOT closed here: one `--full` run showed eaten line prefixes +
+`proc-test status=127` AFTER metatest/renametest churn; bare and
+divergent-prefix runs of the same binaries are clean, so a filesystem-
+aftermath vs TTY-output-path discriminator is still open (tracked, not
+claimed). `mount`/`umount` + GPT, SBOM, retention, hardware evidence remain
+open. Phase 23 stays LOCKED.
+
 ## 2026-09-15 — Phase 00 slice: no hosted CI, local provenance + ABI check
 
 Owner decision: no hosted CI workflow in this tree (`.github/workflows/ci.yml`

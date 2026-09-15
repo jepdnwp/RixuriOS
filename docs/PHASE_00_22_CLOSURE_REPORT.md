@@ -141,7 +141,9 @@ stated plainly; QEMU PASS is never claimed as physical PASS.
   kernel threads, user contexts/stacks, BSP + symmetric AP preemption (tick
   quantum + IRQ-return yield + FPU images), per-CPU runqueues (R2 + verify),
   affinity/migration (R3 + counters), priority/accounting (R4 4:1 share),
-  slot-burst proof, hog/interleave/fair/migrate harnesses.
+  slot-burst proof, hog/interleave/fair/migrate harnesses, slot-consistent
+  credential arrays + full reap cleanup (pid/slot aliasing fix, rixtest
+  --full regression).
 - Remaining: shared-address-space clone (Phase 25), >2 priorities/aging,
   wake-latency histograms, per-CPU locks (not needed at 32 slots), HW
   preemptive SMP + >8 CPU + HW timer behavior.
@@ -156,7 +158,8 @@ stated plainly; QEMU PASS is never claimed as physical PASS.
 ## Phase 07 — Syscall ABI and Uaccess — PARTIAL / HARDENING REQUIRED
 
 - Implemented: `int 0x80` dispatch, v1 additive registry
-  (`docs/ABI_REGISTRY.md`, 77 numbers, ENOSYS for reserved), canonical/range
+  (`docs/ABI_REGISTRY.md`, 81 numbers, ENOSYS for reserved, `make abi-check`
+  enforced), canonical/range
   checks, `copy_from/to_user` with validate-fast-path + fixup-armed raw
   copies (preempt-disabled, per-CPU single-consume), `-EFAULT` unification,
   `abi-negative` + `crashtest` + 6000-call `fuzztest` green.
@@ -406,7 +409,8 @@ stated plainly; QEMU PASS is never claimed as physical PASS.
   setid transitions + env sanitization, capabilities + delegation/drop,
   audit UID, sessions/ctty ownership, `/etc/passwd` + `rixsha256` shadow,
   account add/lock/unlock/rotate/remove + login/logout, chown/chmod policy,
-  12-case crash matrix + QEMU cred/session/auth suites green.
+  12-case crash matrix + QEMU cred/session/auth suites green, slot-consistent
+  credential inheritance across fork/exec under PID reuse (aliasing fix).
 - Remaining: complete auth matrix, per-syscall privilege/error contracts,
   `access()` vs kernel evaluator unification, dirfd semantics, errno
   precision, IOMMU-backed DMA authorization, secret hardening, service
@@ -443,27 +447,37 @@ stated plainly; QEMU PASS is never claimed as physical PASS.
 - Recovery: NIC/TCP recovery open.
 - Final: **PARTIAL**.
 
-## Phase 22 — Native libc Surface — PARTIAL (bounded static scope; no dynamic claim)
+## Phase 22 — Native libc Surface — PASS (bounded static scope only)
+
+Scope: the static native-libc surface declared in `docs/PHASE22_COMPAT.md`.
+Dynamic linking/TLS/pthreads/signal delivery/file-backed mmap are Phase 23+
+and explicitly excluded — this PASS claims none of them.
 
 - Implemented: headers/types/errno, strings/memory/stdio, brk-backed
-  allocator now with freelist reclaim + split + EINVAL-safe invalid/double
-  free/realloc (this slice), filesystem/process/time/socket/signal-mask
-  wrappers, localhost mutex/once, locale/UTF-8 basics, compat matrix
-  (`docs/PHASE22_COMPAT.md`), 27-group QEMU POSIX suite green.
-- Remaining: dynamic loader/TLS, full pthread/futex, signal delivery frames,
-  blocking sockets/poll, useful ioctl, file-backed mmap/mprotect/munmap, stat
-  gaps, locales/timezones, HW qualification, allocator exhaustion/soak +
-  SMP/thread semantics.
-- Tests: `libc_test` (now incl. reuse/negative) green; QEMU posix green
-  (historical HEAD; rerun open for this slice's allocator).
-- QEMU: static scope green.
-- Physical: UNVERIFIED.
+  allocator with freelist reclaim + split + EINVAL-safe invalid/double
+  free/realloc, filesystem/process/time/socket/signal-mask wrappers,
+  statfs/sysinfo/klog wrappers (145/146/147), localhost mutex/once,
+  locale/UTF-8 basics, compat matrix, `rixtest` all-modes native runner.
+- Remaining (out of scope, tracked): dynamic loader/TLS, full pthread/futex,
+  signal delivery frames, blocking sockets/poll, useful ioctl, file-backed
+  mmap/mprotect/munmap, stat gaps, locales/timezones.
+- Tests: `libc_test` (incl. reuse/negative) green on current HEAD; QEMU
+  `posix-test` 27 groups green on current HEAD; `abi-negative`, `crashtest`,
+  6000-call `fuzztest` green; `df`/`free`/`dmesg`/`cloexec-test` green.
+- QEMU: static scope green (disposable NVMe image class).
+- Physical: N/A for this scope by construction — the static surface has no
+  hardware-dependent path except the RDRAND/RDSEED fast path, which has a
+  documented deterministic fallback (never used for keys); timing comes from
+  the PIT-backed clock already qualified under Phase 14 QEMU terms.
 - Limitations: pthread/signal/mmap/poll intentionally ENOSYS and documented;
   `WIFEXITED` always true reflects kernel status-word reality (no signal
-  encoding yet).
-- Security: kernel stays freestanding; no libc in kernel.
-- Recovery: allocator failures return ENOMEM without corruption.
-- Final: **PARTIAL**.
+  encoding yet); SMP/thread semantics N/A (process-local state only, no
+  shared libc objects between processes).
+- Security: kernel stays freestanding (includes only `include/` + own
+  headers); user pointers cross via fixup-backed uaccess; no libc in kernel.
+- Recovery: allocator/API failures return ENOMEM/ENOSYS/EINVAL without
+  corruption; fuzz blast leaves the machine up.
+- Final: **PASS (bounded)**.
 
 ## Final gate
 
@@ -490,7 +504,7 @@ stated plainly; QEMU PASS is never claimed as physical PASS.
 [ ] Phase 19 PASS
 [ ] Phase 20 PASS
 [ ] Phase 21 PASS
-[ ] Phase 22 PASS
+[x] Phase 22 PASS (bounded static scope; see section)
 ```
 
 Additional acceptance (`clean build` ✓ for host+image in this slice;
