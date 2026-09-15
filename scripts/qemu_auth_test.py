@@ -55,12 +55,35 @@ def command(line: bytes, expected: bytes | None = None) -> None:
         raise RuntimeError(f"expected {expected!r} after {line!r}")
     if not read_until(b"\x1b[1;37m:\x1b[0m ", 25.0):
         raise RuntimeError(f"prompt not observed after {line!r}")
+    drain_quiet()
+
+
+def drain_quiet(idle: float = 2.0, cap: float = 15.0) -> None:
+    """Tree-standard serial settle (pipe-close/env discipline): return after
+    `idle` seconds of silence, bounded by `cap`. Without this, the next
+    command's input races still-arriving output and prompt matching flakes
+    (observed 2026-09-15: `auth-pass` timeout with zero kernel fault)."""
+    deadline = time.monotonic() + cap
+    while time.monotonic() < deadline:
+        quiet_until = time.monotonic() + idle
+        while time.monotonic() < quiet_until:
+            ready, _, _ = select.select([proc.stdout], [], [], 0.05)
+            if not ready:
+                continue
+            chunk = os.read(proc.stdout.fileno(), 4096)
+            if not chunk:
+                return
+            output.extend(chunk)
+            quiet_until = time.monotonic() + idle
+        return
 
 
 try:
     if not read_until(b"RIXURI: SHELL READY", 30.0):
         raise RuntimeError("embedded init completion not observed")
-    time.sleep(1.0)
+    if not read_until(b"\x1b[1;37m:\x1b[0m ", 60.0):
+        raise RuntimeError("initial shell prompt not observed")
+    drain_quiet()
     command(b"/usr/bin/authcheck list")
     command(b"/usr/bin/authcheck record operator")
     command(b"/usr/bin/authcheck verify operator phase20-pass")

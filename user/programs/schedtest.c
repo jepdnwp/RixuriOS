@@ -261,8 +261,56 @@ static int fair_mode(void) {
     return 0;
 }
 
+/* Spawn-burst pressure: fork up to BURST_N children WITHOUT reaping so
+ * task slots (32), the thread table (64) and the process table (128)
+ * fill concurrently; each live child sleeps 2 s, then exits. Forks past
+ * the slot limit must fail CLEANLY (-1, no task consumed); afterwards a
+ * waitpid(-1) drain must reap every live child AND every create-failed
+ * zombie (the FORK path exits the child with 127 when the task bind
+ * fails, still owned by us). PASS = reaped == forked-ok (no lost exit,
+ * no hang) — overflow failures are legal and reported, never asserted
+ * (their count is timing-dependent). */
+#define BURST_N 40
+static int burst_mode(void) {
+    /* volatile: fork() returns twice, the counters must survive. */
+    volatile int forked_ok = 0, fork_failed = 0, reaped = 0;
+    for (volatile int i = 0; i < BURST_N; ++i) {
+        rix_pid_t child = fork();
+        if (child == (rix_pid_t)-1) {
+            fork_failed++;
+            continue;
+        }
+        if (child == 0) {
+            sleep(2);
+            _exit(0);
+        }
+        forked_ok++;
+    }
+    for (;;) {
+        uint64_t status = 0;
+        rix_pid_t got = waitpid((rix_pid_t)-1, &status, 0);
+        if (got == (rix_pid_t)-1 || got == 0) break;
+        if (status != 0 && status != 127) return 1;
+        reaped++;
+        if (reaped > forked_ok + fork_failed + 1) return 1;
+    }
+    if (emit_dec("burst-forked=", forked_ok) != 0) return 1;
+    if (emit_dec("burst-failed=", fork_failed) != 0) return 1;
+    if (emit_dec("burst-reaped=", reaped) != 0) return 1;
+    /* Every forked-ok child reaps exactly once; every create-failed fork
+     * left a 127 zombie that the -1 drain also collects, so reaped is
+     * forked_ok or forked_ok + fork_failed — never less, never more. */
+    if (reaped != forked_ok && reaped != forked_ok + fork_failed) return 1;
+    return 0;
+}
+
 int program_main(int argc, char **argv, char **envp) {
     (void)envp;
+    if (argc == 2 && streq(argv[1], "burst")) {
+        if (burst_mode() != 0) return 1;
+        if (emit("burst=PASS\n") != 0) return 1;
+        return 0;
+    }
     if (argc == 3 && streq(argv[1], "churn")) {
         int rounds = 40;
         if (argv[2][0] >= '0' && argv[2][0] <= '9') {
