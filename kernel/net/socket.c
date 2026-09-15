@@ -104,6 +104,8 @@ int rix_net_socket_open(rix_net_socket_table_t *table, rix_net_socket_type_t typ
             socket->shutdown = 0;
             socket->listening = 0;
             socket->backlog = 0;
+            socket->pending_head = 0;
+            socket->pending_count = 0;
             socket->type = type;
             socket->local = (rix_net_endpoint_t){RIX_NET_SOCKET_LOOPBACK,
                                                  (uint16_t)(49152u + i)};
@@ -136,8 +138,22 @@ int rix_net_socket_listen(rix_net_socket_table_t *table, int descriptor, int bac
 }
 int rix_net_socket_accept(rix_net_socket_table_t *table, int descriptor, rix_net_endpoint_t *peer) {
     if (!valid_descriptor(table, descriptor) || !table->sockets[descriptor].listening) return -1;
-    if (peer) *peer = (rix_net_endpoint_t){0, 0};
-    return -2;
+    rix_net_socket_t *listener = &table->sockets[descriptor];
+    if (!listener->pending_count) return -2;
+    int accepted = rix_net_socket_open(table, RIX_NET_SOCKET_TCP);
+    if (accepted < 0) return -3;
+    rix_net_socket_t *child = &table->sockets[accepted];
+    rix_net_endpoint_t remote = listener->pending_peers[listener->pending_head];
+    listener->pending_head = (uint8_t)((listener->pending_head + 1u) % RIX_NET_SOCKET_QUEUE);
+    --listener->pending_count;
+    child->local = listener->local;
+    child->peer = remote;
+    child->connected = 1;
+    child->tcp.state = RIX_TCP_ESTABLISHED;
+    child->tcp.sequence = 100;
+    child->tcp.acknowledgment = 1;
+    if (peer) *peer = remote;
+    return accepted;
 }
 int rix_net_socket_set_option(rix_net_socket_table_t *table, int descriptor, int level, int option, int value) {
     if (!valid_descriptor(table, descriptor) || level != 1 || option != RIX_NET_SOCKET_REUSEADDR || (value != 0 && value != 1)) return -1;
@@ -170,6 +186,21 @@ int rix_net_socket_connect(rix_net_socket_table_t *table, int descriptor,
     rix_net_socket_t *socket = &table->sockets[descriptor];
     if (endpoint.address == RIX_NET_SOCKET_LOOPBACK) {
         if (socket->type == RIX_NET_SOCKET_RAW_ICMP) return -1;
+        for (size_t i = 0; i < RIX_NET_SOCKET_MAX; ++i) {
+            rix_net_socket_t *listener = &table->sockets[i];
+            if (!listener->used || !listener->listening || listener->type != RIX_NET_SOCKET_TCP ||
+                !endpoint_equal(listener->local, endpoint)) continue;
+            if (listener->pending_count >= listener->backlog) return -2;
+            size_t tail = (listener->pending_head + listener->pending_count) % RIX_NET_SOCKET_QUEUE;
+            listener->pending_peers[tail] = socket->local;
+            ++listener->pending_count;
+            socket->peer = endpoint;
+            socket->connected = 1;
+            socket->tcp.state = RIX_TCP_ESTABLISHED;
+            socket->tcp.sequence = 1;
+            socket->tcp.acknowledgment = 100;
+            return 0;
+        }
         if (socket->type == RIX_NET_SOCKET_TCP && tcp_loopback_handshake(socket, endpoint) != 0)
             return -4;
         socket->peer = endpoint;
@@ -337,7 +368,7 @@ static int send_tcp_external(rix_net_socket_t *sender, const void *data, size_t 
     return sent < 0 && sent != -2 ? -1 : (int)length;
 }
 
-static int send_tcp(rix_net_socket_t *sender, const void *data, size_t length,
+static int send_tcp(rix_net_socket_table_t *table, rix_net_socket_t *sender, const void *data, size_t length,
                     rix_net_endpoint_t destination) {
     if (!sender->connected || !rix_tcp_is_connected(&sender->tcp) ||
         !endpoint_equal(sender->peer, destination)) return -1;
@@ -355,7 +386,15 @@ static int send_tcp(rix_net_socket_t *sender, const void *data, size_t length,
         request_header.sequence != sender->tcp.sequence ||
         request_header.acknowledgment != sender->tcp.acknowledgment) return -2;
     sender->tcp.sequence += (uint32_t)length;
-    if (destination.port != 80 || !has_prefix(data, length, "GET ")) return (int)length;
+    if (destination.port != 80 || !has_prefix(data, length, "GET ")) {
+        for (size_t i = 0; i < RIX_NET_SOCKET_MAX; ++i) {
+            rix_net_socket_t *receiver = &table->sockets[i];
+            if (receiver->used && receiver != sender && receiver->connected &&
+                endpoint_equal(receiver->local, destination) && endpoint_equal(receiver->peer, sender->local))
+                return queue_packet(receiver, data, length, sender->local) == 0 ? (int)length : -3;
+        }
+        return (int)length;
+    }
     static const uint8_t response[] =
         "HTTP/1.0 200 OK\r\nContent-Type: text/html\r\nContent-Length: 50\r\n\r\n"
         "<html><body><h1>Hello RixuriOS</h1></body></html>\n";
@@ -398,7 +437,7 @@ int rix_net_socket_send(rix_net_socket_table_t *table, int descriptor,
                    : send_udp_external(sender, data, length, destination);
     if (sender->type == RIX_NET_SOCKET_TCP)
         return destination.address == RIX_NET_SOCKET_LOOPBACK
-                   ? send_tcp(sender, data, length, destination)
+                   ? send_tcp(table, sender, data, length, destination)
                    : send_tcp_external(sender, data, length, destination);
     return -1;
 }

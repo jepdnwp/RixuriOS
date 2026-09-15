@@ -38,6 +38,9 @@ typedef struct {
     uint8_t shutdown;
     uint8_t listening;
     uint8_t backlog;
+    rix_net_endpoint_t pending_peers[RIX_NET_SOCKET_QUEUE];
+    uint8_t pending_head;
+    uint8_t pending_count;
     rix_net_socket_type_t type;
     rix_net_endpoint_t local;
     rix_net_endpoint_t peer;
