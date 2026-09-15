@@ -10,6 +10,7 @@
 #include <poll.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <sys/statfs.h>
 
 static long rix_sys(long n,long a,long b,long c){long r;__asm__ volatile("int $0x80":"=a"(r):"a"(n),"D"(a),"S"(b),"d"(c):"rcx","r11","memory");return r;}
 static long rix_sys4(long n,long a,long b,long c,long d){long r;register long r10 __asm__("r10")=d;__asm__ volatile("int $0x80":"=a"(r):"a"(n),"D"(a),"S"(b),"d"(c),"r"(r10):"rcx","r11","memory");return r;}
@@ -33,6 +34,7 @@ int getdents(int fd,rix_dirent_t *entries,size_t capacity,size_t *count){return(
 int getdents64(int fd,rix_dirent_t *entries,size_t capacity,size_t *count){return getdents(fd,entries,capacity,count);}
 off_t lseek(int fd,off_t offset,int whence){return(off_t)rix_int_result(rix_sys(8,fd,(long)offset,whence));}
 int stat(const char *path,rix_stat_t *out){return(int)rix_int_result(rix_sys(4,(long)path,(long)out,0));}
+int statfs(const char *path,rix_statfs_t *out){if(!path||!out){errno=RIX_EINVAL;return -1;}out->version=RIX_STATFS_VERSION;out->struct_size=sizeof(*out);return(int)rix_int_result(rix_sys(145,(long)path,(long)out,0));}
 int access(const char *path,int mode){if(!path||mode<0||(mode&~(R_OK|W_OK|X_OK))){errno=RIX_EINVAL;return -1;}rix_stat_t st;if(stat(path,&st)!=0)return -1;if(mode==F_OK)return 0;uint32_t permissions=st.mode&0777u;if((mode&R_OK)&&!(permissions&0444u)){errno=RIX_EACCES;return -1;}if((mode&W_OK)&&!(permissions&0222u)){errno=RIX_EACCES;return -1;}if((mode&X_OK)&&!(permissions&0111u)){errno=RIX_EACCES;return -1;}return 0;}
 int fcntl(int fd,int command,...){long argument=0;va_list arguments;va_start(arguments,command);if(command==F_DUPFD||command==F_SETFD||command==F_SETFL)argument=va_arg(arguments,int);va_end(arguments);return(int)rix_int_result(rix_sys(143,fd,command,argument));}
 int close(int fd){return(int)rix_int_result(rix_sys(3,fd,0,0));}
