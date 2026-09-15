@@ -59,6 +59,7 @@ int program_main(int argc,char **argv,char **envp){
     {int metadata_fd=open("/etc/hosts",0);rix_stat_t fd_stat={0};int ok=metadata_fd>=0&&fstat(metadata_fd,&fd_stat)==0&&fd_stat.type==2&&fd_stat.size>0;check("fstat",ok);if(metadata_fd>=0)close(metadata_fd);}
     {rix_stat_t target={0},link_stat={0};int made=symlink("/etc/hosts","/tmp/posix-lstat-link")==0;int ok=made&&stat("/tmp/posix-lstat-link",&target)==0&&lstat("/tmp/posix-lstat-link",&link_stat)==0&&target.type==2&&link_stat.type==3;check("lstat",ok);if(made)unlink("/tmp/posix-lstat-link");}
     check("access",access("/etc/hosts",F_OK|R_OK)==0&&access("/definitely-missing",F_OK)!=0&&errno!=0);
+    {int shut=socket(AF_INET,SOCK_DGRAM,0);char byte='x';int ok=shut>=0&&shutdown(shut,SHUT_WR)==0&&send(shut,&byte,1,0)<0&&shutdown(shut,99)<0&&errno==RIX_EINVAL;if(shut>=0)close(shut);check("shutdown",ok);}
     check("listen",listen(0,1)!=0&&errno==RIX_ENOSYS);
     check("setsockopt",setsockopt(0,SOL_SOCKET,99,0,0)!=0&&errno==RIX_ENOPROTOOPT);
     /* UDP loopback through the POSIX spelling. */

@@ -9,6 +9,8 @@
 #define RIX_NET_SOCKET_ANY 0u
 #define RIX_NET_SOCKET_LOOPBACK 0x7f000001u
 #define RIX_NET_SOCKET_NONBLOCK 0x1u
+#define RIX_NET_SOCKET_SHUT_RD 0x1u
+#define RIX_NET_SOCKET_SHUT_WR 0x2u
 
 typedef enum {
     RIX_NET_SOCKET_UDP = 1,
@@ -32,6 +34,7 @@ typedef struct {
     uint8_t used;
     uint8_t connected;
     uint8_t flags;
+    uint8_t shutdown;
     rix_net_socket_type_t type;
     rix_net_endpoint_t local;
     rix_net_endpoint_t peer;
@@ -71,6 +74,7 @@ int rix_net_socket6_udp_receive(rix_net_socket6_udp_table_t *table, int descript
 void rix_net_socket_table_init(rix_net_socket_table_t *table);
 int rix_net_socket_open(rix_net_socket_table_t *table, rix_net_socket_type_t type);
 int rix_net_socket_close(rix_net_socket_table_t *table, int descriptor);
+int rix_net_socket_shutdown(rix_net_socket_table_t *table, int descriptor, int how);
 int rix_net_socket_bind(rix_net_socket_table_t *table, int descriptor,
                         rix_net_endpoint_t endpoint);
 int rix_net_socket_connect(rix_net_socket_table_t *table, int descriptor,

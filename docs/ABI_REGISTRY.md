@@ -103,6 +103,7 @@ descriptive — any drift between them is a bug. `STATFS 145` / `SYSINFO 146` / 
 | 148 | FSTAT | served (v1 additive) |
 | 149 | LSTAT | served (v1 additive) |
 | 150 | ACCESS | served (v1 additive) |
+| 151 | SHUTDOWN | served (v1 additive) |
 | 247 | WAITPID | served (`NOHANG=1`) |
 | 248 | CLOSE_PIPES_EXCEPT | served |
 

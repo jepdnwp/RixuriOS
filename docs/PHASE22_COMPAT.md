@@ -39,7 +39,7 @@ construction: `kernel/` includes only `include/` + its own headers.
 | 32/33 | DUP/DUP2 | dup/dup2 | dup/dup2 | working |
 | 35 | NANOSLEEP | nanosleep/sleep/usleep | same | working |
 | 39/140 | GETPID/GETPPID | getpid/getppid | same | working |
-| 41–45 | SOCKET/BIND/CONNECT/SEND/RECV | socket_open/... + socket/bind/connect/sendto/... | POSIX socket API (AF_INET loopback; external where device stack serves) | working (loopback QEMU-proven); listen/accept/shutdown ENOSYS |
+| 41–45, 151 | SOCKET/BIND/CONNECT/SEND/RECV/SHUTDOWN | socket_open/... + socket/bind/connect/sendto/.../shutdown | POSIX socket API (AF_INET loopback; external where device stack serves) | working (loopback QEMU-proven); shutdown supports SHUT_RD/WR/RDWR |
 | 57/59/61/247 | FORK/EXECVE/WAIT/WAITPID | fork/execve/wait/waitpid | same; WNOHANG=1; WEXITSTATUS et al in sys/wait.h | working |
 | 60 | EXIT | _exit/exit/_Exit | exit runs ≤16 atexit handlers LIFO, then _exit | working (QEMU-proven, status word checked) |
 | 62/127/142 | KILL/SIGPENDING/SIGPROCMASK | kill/raise/sigpending/sigprocmask/pause | same; signal()/sigaction() declared but ENOSYS (no delivery ABI) | partial |
@@ -76,7 +76,7 @@ netinet/in.h + arpa/inet.h (IPv4 only), sys/socket.h, pthread.h
 wchar.h (strict UTF-8).
 
 Fail-closed stubs (declared, ENOSYS): mmap/munmap/mprotect, poll, ioctl,
-signal/sigaction, listen/accept/shutdown, system,
+signal/sigaction, listen/accept, system,
 pthread_create/join/detach.
 
 Reserved/missing by design: dynamic loading (dlopen — Phase 23),

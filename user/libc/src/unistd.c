@@ -136,7 +136,7 @@ ssize_t sendto(int fd,const void *buffer,size_t length,int flags,const struct so
 ssize_t recvfrom(int fd,void *buffer,size_t length,int flags,struct sockaddr *source,socklen_t *source_len){if(flags){errno=RIX_EINVAL;return -1;}if(!buffer&&length){errno=RIX_EFAULT;return -1;}rix_net_endpoint_t hop={0,0};long rc=rix_sys4(45,fd,(long)buffer,(long)length,(long)(source?&hop:0));rix_ssize_t result=rix_socket_result(rc);if(result>=0&&source&&endpoint_to_sockaddr(hop,source,source_len)!=0)return -1;return result;}
 ssize_t send(int fd,const void *buffer,size_t length,int flags){return sendto(fd,buffer,length,flags,0,0);}
 ssize_t recv(int fd,void *buffer,size_t length,int flags){return recvfrom(fd,buffer,length,flags,0,0);}
-int shutdown(int fd,int how){(void)fd;(void)how;errno=RIX_ENOSYS;return -1;}
+int shutdown(int fd,int how){if(how<SHUT_RD||how>SHUT_RDWR){errno=RIX_EINVAL;return -1;}return(int)rix_int_result(rix_sys(151,fd,how,0));}
 int setsockopt(int fd,int level,int option,const void *value,socklen_t length){(void)fd;(void)value;(void)length;if(level==SOL_SOCKET&&option==SO_REUSEADDR)return 0;errno=RIX_ENOPROTOOPT;return -1;}
 int getsockopt(int fd,int level,int option,void *value,socklen_t *length){(void)fd;if(level==SOL_SOCKET&&option==SO_REUSEADDR&&value&&length&&*length>=sizeof(int)){*(int*)value=1;*length=sizeof(int);return 0;}errno=RIX_ENOPROTOOPT;return -1;}
 int socket_open(int type){return(int)rix_int_result(rix_sys(41,type,0,0));}

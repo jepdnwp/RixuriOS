@@ -101,6 +101,7 @@ int rix_net_socket_open(rix_net_socket_table_t *table, rix_net_socket_type_t typ
             socket->used = 1;
             socket->connected = 0;
             socket->flags = 0;
+            socket->shutdown = 0;
             socket->type = type;
             socket->local = (rix_net_endpoint_t){RIX_NET_SOCKET_LOOPBACK,
                                                  (uint16_t)(49152u + i)};
@@ -117,6 +118,12 @@ int rix_net_socket_open(rix_net_socket_table_t *table, rix_net_socket_type_t typ
 int rix_net_socket_close(rix_net_socket_table_t *table, int descriptor) {
     if (!valid_descriptor(table, descriptor)) return -1;
     table->sockets[descriptor].used = 0;
+    return 0;
+}
+int rix_net_socket_shutdown(rix_net_socket_table_t *table, int descriptor, int how) {
+    if (!valid_descriptor(table, descriptor) || how < 0 || how > 2) return -1;
+    if (how == 0 || how == 2) table->sockets[descriptor].shutdown |= RIX_NET_SOCKET_SHUT_RD;
+    if (how == 1 || how == 2) table->sockets[descriptor].shutdown |= RIX_NET_SOCKET_SHUT_WR;
     return 0;
 }
 
@@ -351,6 +358,7 @@ int rix_net_socket_send(rix_net_socket_table_t *table, int descriptor,
     if (!valid_descriptor(table, descriptor) || !data || !length || length > RIX_NET_MTU)
         return -1;
     rix_net_socket_t *sender = &table->sockets[descriptor];
+    if (sender->shutdown & RIX_NET_SOCKET_SHUT_WR) return -1;
     if (sender->connected) destination = sender->peer;
     if (sender->type == RIX_NET_SOCKET_RAW_ICMP)
         return destination.address == RIX_NET_SOCKET_LOOPBACK
@@ -518,6 +526,7 @@ int rix_net_socket_receive(rix_net_socket_table_t *table, int descriptor,
                            rix_net_endpoint_t *source) {
     if (!valid_descriptor(table, descriptor) || !data || !capacity) return -1;
     rix_net_socket_t *socket = &table->sockets[descriptor];
+    if (socket->shutdown & RIX_NET_SOCKET_SHUT_RD) return 0;
     if (!socket->receive.count && (socket->type == RIX_NET_SOCKET_UDP ||
                                     socket->type == RIX_NET_SOCKET_TCP ||
                                     socket->type == RIX_NET_SOCKET_RAW_ICMP))
