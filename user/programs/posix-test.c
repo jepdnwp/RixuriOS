@@ -31,7 +31,10 @@ static void exit_handler(void){if(exit_pipe_fd>=0)(void)write(exit_pipe_fd,"H",1
 int program_main(int argc,char **argv,char **envp){
     (void)argc;(void)argv;(void)envp;
     struct timespec now={0,0};
-    check("clock",clock_gettime(CLOCK_REALTIME,&now)==0&&now.tv_sec>0);
+    struct timespec mono_before={0,0},mono_after={0,0};
+    int mono_ok=clock_gettime(CLOCK_MONOTONIC,&mono_before)==0&&clock_gettime(CLOCK_MONOTONIC,&mono_after)==0&&
+                (mono_after.tv_sec>mono_before.tv_sec||(mono_after.tv_sec==mono_before.tv_sec&&mono_after.tv_nsec>=mono_before.tv_nsec));
+    check("clock",clock_gettime(CLOCK_REALTIME,&now)==0&&now.tv_sec>0&&mono_ok);
     check("clock-bad",clock_gettime(99,&now)!=0&&errno==RIX_EINVAL&&clock_gettime(CLOCK_REALTIME,0)!=0);
     struct timespec zero={0,0},bad={0,1000000000L};
     check("nanosleep",nanosleep(&zero,0)==0&&nanosleep(&bad,0)!=0&&errno==RIX_EINVAL);

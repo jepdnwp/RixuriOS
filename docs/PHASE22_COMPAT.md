@@ -33,7 +33,7 @@ construction: `kernel/` includes only `include/` + its own headers.
 | 8 | LSEEK | lseek | lseek | working |
 | 9/10/11 | MMAP/MPROTECT/MUNMAP | mmap/munmap/mprotect | same | kernel ENOSYS; heap path is brk/sbrk |
 | 12 | BRK | brk/sbrk | — (malloc backend) | working |
-| 13 | CLOCK_GETTIME | clock_gettime | clock_gettime(CLOCK_REALTIME/MONOTONIC) | working; both clocks share the realtime source |
+| 13 | CLOCK_GETTIME | clock_gettime | clock_gettime(CLOCK_REALTIME/MONOTONIC) | working; realtime uses UTC epoch and monotonic uses tick-backed uptime |
 | 16 | IOCTL | ioctl | ioctl | kernel ENOSYS |
 | 22 | PIPE | pipe | pipe | working |
 | 32/33 | DUP/DUP2 | dup/dup2 | dup/dup2 | working |
@@ -101,7 +101,7 @@ semantics, read()/write() on socket fds (use send/recv).
 - `recv()` on an empty queue returns EAGAIN even on blocking sockets.
 - `mmap`/`poll`/`ioctl`/`signal()`/`listen()` and friends compile, then
   fail closed at runtime; probe with ENOSYS checks, not `#ifdef`.
-- Time is UTC-only; `CLOCK_MONOTONIC == CLOCK_REALTIME` source.
+- Realtime is UTC epoch time; monotonic is a non-decreasing tick-backed uptime source.
 - `rand()` is deterministic LCG; `arc4random()` needs CPU
   RDRAND/RDSEED or it falls back deterministically (never use the
   fallback for keys — documented in source).

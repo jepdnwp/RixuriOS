@@ -66,7 +66,7 @@ unsigned sleep(unsigned seconds){struct timespec request={seconds,0},remaining={
 int usleep(unsigned usec){if(usec>=1000000u){errno=RIX_EINVAL;return -1;}struct timespec request={0,(long)usec*1000L};return nanosleep(&request,0);}
 /* The kernel exposes one realtime source; MONOTONIC is accepted and
  * documented as same-source until Phase 14 splits the clocks. */
-int clock_gettime(clockid_t clock,struct timespec *out){if(!out||(clock!=CLOCK_REALTIME&&clock!=CLOCK_MONOTONIC)){errno=RIX_EINVAL;return -1;}return(int)rix_int_result(rix_sys(13,(long)out,0,0));}
+int clock_gettime(clockid_t clock,struct timespec *out){if(!out||(clock!=CLOCK_REALTIME&&clock!=CLOCK_MONOTONIC)){errno=RIX_EINVAL;return -1;}return(int)rix_int_result(rix_sys(13,(long)out,clock,0));}
 int chdir(const char *path){return(int)rix_int_result(rix_sys(80,(long)path,0,0));}
 int getcwd(char *buffer,size_t capacity){return(int)rix_int_result(rix_sys(79,(long)buffer,(long)capacity,0));}
 uint32_t getuid(void){return(uint32_t)rix_sys(102,0,0,0);}
