@@ -58,6 +58,10 @@
 #define RIX_SYS_SETAUDITUID 136
 #define RIX_SYS_DELEGATECAP 137
 #define RIX_SYS_LIST_PROCESSES 138
+/* Phase R1 (Phase 06: PID/TID lifecycle): read-only thread-table
+ * snapshot. Additive ABI extension; ABI version stays 1. Args mirror
+ * LIST_PROCESSES: rdi=out array, rsi=capacity, rdx=count out. */
+#define RIX_SYS_LIST_THREADS 144
 #define RIX_SYS_GETRANDOM 139
 #define RIX_SYS_GETPPID 140
 #define RIX_SYS_ISATTY 141

@@ -1,5 +1,7 @@
 #pragma once
+#include <stddef.h>
 #include <stdint.h>
+#include "thread.h"
 #include "../sync/waitqueue.h"
 
 typedef uint64_t rix_task_id_t;
@@ -53,10 +55,34 @@ void scheduler_wake_pid(uint64_t pid);/* Phase E2: mark a kernel-thread task AP-
  * 0 ok, -1 unknown id. Tasks[0], user tasks and unaudited workers stay
  * BSP-pinned; APs run only ap_ok kernel threads. */
 int scheduler_task_allow_ap(rix_task_id_t id);
+/* Phase R3: pin a task to a CPU subset (bit c = may run on CPU c).
+ * Narrowing only within the BASE rule (BSP bit always; AP bits only
+ * for ap_ok kernel threads): stranding masks are refused, so pinning
+ * can never silence a task. 0 ok, -1 unknown id / empty / stranded. */
+int scheduler_set_affinity(rix_task_id_t id, uint64_t mask);
+/* Phase R3: cross-CPU claim count of the calling task (migration
+ * accounting; lock-free self-read, see scheduler.c). */
+uint32_t scheduler_current_migrations(void);
+/* Phase R4: priority levels (kernel threads only; user tasks stay
+ * NORMAL) + run-tick self-read. High preference with streak-cap
+ * starvation guard lives in runqueue.h (RIX_RQ_HIPRI_CAP). */
+#define RIX_PRIO_NORMAL 0u
+#define RIX_PRIO_HIGH 1u
+#define RIX_PRIO_MAX 1u
+int scheduler_set_priority(rix_task_id_t id, unsigned level);
+uint64_t scheduler_current_run_ticks(void);
 /* Phase E2: AP idle entry (called once from ap_entry, never returns).
  * Captures the AP stack as the idle context, then hlt-parks, running
  * ap_ok kernel-thread tasks as they appear. */
 __attribute__((noreturn)) void scheduler_ap_idle(void);
-/* Read-only dump of all task slots (id/state/pid) for triage + Phase-34
- * evidence. No locks, no state change; safe pre/post CR3 switch. */
+/* Read-only dump of all task slots (id/tid/state/pid) for triage +
+ * Phase-34 evidence. No locks, no state change; safe pre/post CR3
+ * switch. */
 void scheduler_dump_states(void);
+/* Phase R1 (Phase 06: PID/TID lifecycle). Thread objects live in
+ * thread.[hc] under sched_lock; these wrappers take the lock (safe
+ * under PROCESS_GUARD — same PROC4->sched edge as wake_pid). */
+size_t scheduler_thread_count_for_pid(uint64_t pid);
+void scheduler_thread_detach_pid(uint64_t pid);
+rix_tid_t scheduler_current_tid(void);
+int scheduler_list_threads(rix_thread_info_t *out, size_t capacity, size_t *count);

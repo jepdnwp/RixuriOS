@@ -264,6 +264,43 @@ static void smp_e7_spinner(const char *tag, volatile uint64_t *ctr){
 static void smp_e7_spinner_a(void *arg){(void)arg;smp_e7_spinner("A",&e7_spin_a);}
 static void smp_e7_spinner_b(void *arg){(void)arg;smp_e7_spinner("B",&e7_spin_b);}
 static void smp_e7_spinner_c(void *arg){(void)arg;smp_e7_spinner("C",&e7_spin_c);}
+/* Phase R3 affinity/migration proof: two never-yielding ap_ok spinners.
+ * R3-P is pinned AP-only via scheduler_set_affinity (must NEVER run on
+ * the BSP — the load-bearing verdict: without affinity it floats like
+ * everything else). R3-F floats (must appear on BOTH CPUs — migration/
+ * work-conservation is live, no task sticks to one CPU). Same tick
+ * pacing as E7 (50-tick reports, 8 max, then exit); SMP boots only. */
+#define R3_SPIN_REPORT_TICKS 50u
+#define R3_SPIN_REPORT_MAX 8u
+static volatile uint64_t r3_spin_p, r3_spin_f;
+static void smp_r3_spinner(const char *tag, volatile uint64_t *ctr){
+ unsigned n=0;uint64_t last=scheduler_ticks();
+ for(;;){
+  (*ctr)++;
+  uint64_t now=scheduler_ticks();
+  /* Phase R3: each report carries the task's migration count (cross-CPU
+   * claims). P pinned AP-only must stay mig=0; F floating must climb. */
+  if(now-last>=R3_SPIN_REPORT_TICKS&&n<R3_SPIN_REPORT_MAX){int c=smp_cpu_id();uint32_t m=scheduler_current_migrations();klog_write("SMP: R3 ");klog_write(tag);klog_write(" on cpu=");klog_write_dec((uint64_t)(c<0?99:c));klog_write(" mig=");klog_write_dec(m);klog_write("\r\n");last=now;if(++n>=R3_SPIN_REPORT_MAX)return;}
+ }
+}
+static void smp_r3_spinner_p(void *arg){(void)arg;smp_r3_spinner("P",&r3_spin_p);}
+static void smp_r3_spinner_f(void *arg){(void)arg;smp_r3_spinner("F",&r3_spin_f);}
+/* Phase R4 priority/accounting proof pair (see creation comment in
+ * kernel_main). Wall-paced reports (50 ticks x4) carry run-paced
+ * totals; the final line carries the task's whole-window run_ticks. */
+#define R4_SPIN_REPORT_TICKS 50u
+#define R4_SPIN_REPORT_MAX 4u
+static volatile uint64_t r4_spin_h, r4_spin_n;
+static void smp_r4_spinner(const char *tag, volatile uint64_t *ctr){
+ unsigned n=0;uint64_t last=scheduler_ticks();
+ for(;;){
+  (*ctr)++;
+  uint64_t now=scheduler_ticks();
+  if(now-last>=R4_SPIN_REPORT_TICKS&&n<R4_SPIN_REPORT_MAX){int c=smp_cpu_id();uint64_t t=scheduler_current_run_ticks();klog_write("SMP: R4 ");klog_write(tag);klog_write(" on cpu=");klog_write_dec((uint64_t)(c<0?99:c));klog_write(" ticks=");klog_write_dec(t);klog_write("\r\n");last=now;if(++n>=R4_SPIN_REPORT_MAX){uint64_t f=scheduler_current_run_ticks();klog_write("SMP: R4 ");klog_write(tag);klog_write(" final ticks=");klog_write_dec(f);klog_write("\r\n");return;}}
+ }
+}
+static void smp_r4_spinner_h(void *arg){(void)arg;smp_r4_spinner("H",&r4_spin_h);}
+static void smp_r4_spinner_n(void *arg){(void)arg;smp_r4_spinner("N",&r4_spin_n);}
 static const char *vfs_mount_rc_string(int rc){switch(rc){case 0:return "ok";case -1:return "bad device";case -2:return "no memory";case -3:return "superblock read IO error";case -4:return "superblock too small";case -5:return "not a RixFS superblock";case -6:return "superblock geometry inconsistent";case -7:return "inode table overflow";case -8:return "superblock layout overlap";case -9:return "journal replay failed";default:return "unknown";}}
 static void try_mount_root(void){const char *names[]={"nvme0n1","nvme0n1p1","nvme1n1","nvme1n1p1"};for(size_t b=0;b<block_device_count();b++){const rix_block_device_t*bd=block_device_at(b);if(!bd)continue;klog_write("BLOCK: ");klog_write(bd->name);klog_write(" sectors=");klog_write_dec(bd->sector_count);klog_write(" sector_size=");klog_write_dec(bd->sector_size);klog_write("\r\n");}for(size_t c=0;c<nvme_controller_count();c++){const rix_nvme_controller_t*nc=nvme_controller(c);if(!nc)continue;for(uint32_t ns=0;ns<32u;ns++){if(!nc->namespaces[ns].used)continue;klog_write("NVMe: ctrl=");klog_write_dec(c);klog_write(" ns=");klog_write_dec(nc->namespaces[ns].nsid);klog_write(" sectors=");klog_write_dec(nc->namespaces[ns].size_lba);klog_write(" sector_size=");klog_write_dec(nc->namespaces[ns].lba_size);klog_write("\r\n");}}int last_rc=0,tried=0;for(size_t i=0;i<sizeof(names)/sizeof(names[0]);i++){rix_block_device_t*d=block_find(names[i]);if(!d)continue;tried=1;int rc=vfs_mount_root(d);last_rc=rc;klog_write("VFS: mount ");klog_write(names[i]);klog_write(" rc=");klog_write_dec((uint64_t)(rc<0?-rc:rc));klog_write("\r\n");if(rc==0)return;}if(!tried)klog_write("VFS: no candidate block devices present (embedded init continues)\r\n");else if(last_rc!=0){klog_write("VFS: disk root unavailable (");klog_write(vfs_mount_rc_string(last_rc));klog_write("); using embedded init\r\n");}}
 
@@ -374,8 +411,26 @@ void kernel_main(const rixuri_boot_info_t *boot){
   if(scheduler_create_kernel_thread(smp_e7_spinner_a,0,&e7_a)!=0)panic("failed to create E7 spinner A");
   if(scheduler_create_kernel_thread(smp_e7_spinner_b,0,&e7_b)!=0)panic("failed to create E7 spinner B");
   if(scheduler_create_kernel_thread(smp_e7_spinner_c,0,&e7_c)!=0)panic("failed to create E7 spinner C");
-  if(scheduler_task_allow_ap(e7_a)!=0||scheduler_task_allow_ap(e7_b)!=0||scheduler_task_allow_ap(e7_c)!=0)panic("failed to flag E7 spinners AP-runnable");
- }
+   if(scheduler_task_allow_ap(e7_a)!=0||scheduler_task_allow_ap(e7_b)!=0||scheduler_task_allow_ap(e7_c)!=0)panic("failed to flag E7 spinners AP-runnable");
+   /* Phase R3: pin P to the first AP, float F. allow_ap first (opens the
+    * BASE gate), then narrow affinity (placement). Pin refusal panics:
+    * a stranded pin must never boot silently. */
+   rix_task_id_t r3_p=0,r3_f=0;
+   if(scheduler_create_kernel_thread(smp_r3_spinner_p,0,&r3_p)!=0)panic("failed to create R3 spinner P");
+   if(scheduler_create_kernel_thread(smp_r3_spinner_f,0,&r3_f)!=0)panic("failed to create R3 spinner F");
+   if(scheduler_task_allow_ap(r3_p)!=0||scheduler_task_allow_ap(r3_f)!=0)panic("failed to flag R3 spinners AP-runnable");
+   {int bsp=smp_bsp_index(),ap=-1;for(int c=0;c<SMP_MAX_CPUS;c++)if(c!=bsp){ap=c;break;}
+    if(ap<0||scheduler_set_affinity(r3_p,(1ULL<<(uint64_t)ap))!=0)panic("failed to pin R3 spinner P to AP");}
+  }
+  /* Phase R4 pair, ALL boots (UP measures the forced ~4:1 high share;
+   * SMP inherits the shared pick path). allow_ap is harmless on UP.
+   * H boosted HIGH after creation; boost refusal panics (a silently
+   * unboosted H would false-pass nothing but prove nothing). */
+  {rix_task_id_t r4_h=0,r4_n=0;
+   if(scheduler_create_kernel_thread(smp_r4_spinner_h,0,&r4_h)!=0)panic("failed to create R4 spinner H");
+   if(scheduler_create_kernel_thread(smp_r4_spinner_n,0,&r4_n)!=0)panic("failed to create R4 spinner N");
+   if(scheduler_task_allow_ap(r4_h)!=0||scheduler_task_allow_ap(r4_n)!=0)panic("failed to flag R4 spinners AP-runnable");
+   if(scheduler_set_priority(r4_h,RIX_PRIO_HIGH)!=0)panic("failed to boost R4 spinner H");}
 	 klog_write("USER: embedded init prepared, pid=");klog_write_dec(user_pid);klog_write(" task=");klog_write_dec(user_task);klog_write("\r\n");
 	 klog_write("BOOT: ps2 init begin\r\n");
 	 ps2_keyboard_init();

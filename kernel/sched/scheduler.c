@@ -1,4 +1,6 @@
 #include "scheduler.h"
+#include "thread.h"
+#include "runqueue.h"
 #include "../arch/x86_64/irq.h"
 #include "../arch/x86_64/smp.h"
 #include "../sync/lock.h"
@@ -15,6 +17,10 @@ typedef enum { TASK_UNUSED=0, TASK_RUNNABLE=1, TASK_RUNNING=2, TASK_DEAD=3, TASK
 typedef struct {
     rix_task_id_t id;
     task_state_t state;
+    /* Phase R1: bound thread object (0 = none; only tasks[0] starts
+     * without one until scheduler_init reserves TID 1). Freed exactly
+     * once, at task death, via task_mark_dead_locked. */
+    rix_tid_t tid;
     uint64_t rsp;
     rix_kernel_thread_fn entry;
     void *arg;
@@ -28,6 +34,28 @@ typedef struct {
      * only — user tasks and tasks[0] never migrate). Workers flip to 1
      * one by one with per-driver concurrency audits, never silently. */
     uint8_t ap_ok;
+    /* Phase R3: placement mask (bit c = may run on CPU c, up to 64).
+     * Defaults to all-CPUs; the BASE rule (BSP: any, AP: ap_ok kernel
+     * threads, never slot 0) stays the hard gate, so the default
+     * changes nothing until scheduler_set_affinity narrows a task.
+     * rq_eligible intersects both; the masks cache the intersection. */
+    uint64_t affinity;
+    /* Phase R3 migration accounting: last CPU that claimed this slot
+     * (~0u = never ran) + cross-CPU claim count. Written only at claim
+     * sites under sched_lock; a RUNNING task's own row is stable, so
+     * the owner reads it lock-free. */
+    uint32_t run_cpu;
+    uint32_t migrations;
+    /* Phase R4: priority (0 normal, 1 high; kernel threads only — user
+     * tasks stay 0) + quantum accounting. run_ticks accumulates whole
+     * RUNNING intervals [claim-stamp, yield-old/block/death] in PIT
+     * ticks; voluntary/involuntary counts genuine yields from RUNNING
+     * (armed-flag consumed = preempted). Owner self-reads lock-free. */
+    uint8_t prio;
+    uint64_t run_ticks;
+    uint64_t stamp;
+    uint32_t voluntary;
+    uint32_t involuntary;
     rix_user_context_t user_context;
     uint8_t stack[RIX_STACK_SIZE] __attribute__((aligned(16)));
     /* Phase P3 backend: wait binding. Set by scheduler_wait_prepare,
@@ -68,6 +96,14 @@ static rix_task_t tasks[RIX_MAX_TASKS];
 static uint32_t cpu_current[SMP_MAX_CPUS];
 static rix_spinlock_t sched_lock;
 static rix_task_id_t next_id;
+/* Phase R2: per-CPU runqueues. cpu_rq[c].mask caches the RUNNABLE +
+ * eligible set for CPU c (BSP: any RUNNABLE; AP: RUNNABLE kernel-thread
+ * ap_ok, never slot 0); the cursor gives per-CPU round-robin instead of
+ * the old global scan's head-of-line. Every state transition maintains
+ * the masks (see rq_add_eligible/remove_all call sites); rq_verify
+ * fail-stops on any drift. All accesses under sched_lock. */
+static rix_runqueue_t cpu_rq[SMP_MAX_CPUS];
+_Static_assert(RIX_MAX_TASKS==RIX_RQ_SLOTS,"runqueue slots cover tasks");
 /* Phase E2 AP idle slots: captured AP stack (switch target when no task
  * is runnable) + validity. The BSP never sets its slot. cpu_idle_tmp is
  * the dummy save area for the yield-to-idle switch: the dead task's own
@@ -92,8 +128,17 @@ static uint32_t sched_cpu(void){
     if(b>=0&&b<SMP_MAX_CPUS)return (uint32_t)b;
     return 0;
 }
-/* Forward: exit paths (below) drop live waiter bindings. */
 static void task_drop_waiter(rix_task_t *t);
+/* Forward: single task-death choke point (defined below, used by the
+ * early exit paths above). */
+static void task_mark_dead_locked(rix_task_t *t);
+/* Forward: Phase R2 mask-cache helpers (defined below with the rest of
+ * the R2 block, used by allow_ap above) + cli (defined below, used by
+ * the fail-stop verify). */
+static void rq_add_eligible_locked(uint32_t i);
+static void rq_remove_all_locked(uint32_t i);
+static void rq_resync_locked(uint32_t i);
+static void cli(void);
 int scheduler_task_allow_ap(rix_task_id_t id){
     if(!id)return -1;
     uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);
@@ -102,26 +147,187 @@ int scheduler_task_allow_ap(rix_task_id_t id){
         if(tasks[i].id==id&&tasks[i].state!=TASK_UNUSED){
             /* Kernel threads only: user tasks never migrate (checked
              * again at selection). tasks[0] excluded by the scan. */
-            if(tasks[i].process_pid==0){tasks[i].ap_ok=1;rc=0;}
+            if(tasks[i].process_pid==0){
+                tasks[i].ap_ok=1;
+                /* Phase R2/R3: a RUNNABLE task whose eligibility just
+                 * widened must re-sync its mask bits now (the old global
+                 * scan read ap_ok live; the masks are a cache).
+                 * RUNNING tasks re-add with fresh eligibility at their
+                 * next yield-old; BLOCKED/DEAD tasks never hold bits. */
+                rq_resync_locked(i);
+                rc=0;
+            }
             break;
         }
     }
     rix_spin_unlock_irqrestore(&sched_lock,irq);
     return rc;
 }
+/* Phase R3: narrow (or restore) a task's placement mask. The BASE rule
+ * stays the hard gate: bits outside it (AP bits for non-ap_ok/user
+ * tasks, slot-0-on-AP) grant nothing, and a mask intersecting the base
+ * rule nowhere is refused (-1) so a task can never be pinned into
+ * never-runnable silence. A RUNNING task on a now-excluded CPU keeps
+ * running until its next yield (standard); its next pick obeys the new
+ * mask. 0 ok, -1 unknown id / empty mask / stranded placement. */
+int scheduler_set_affinity(rix_task_id_t id,uint64_t mask){
+    uint64_t base_allowed;
+    int b,rc=-1;
+    uint64_t irq;
+    if(!id||!mask)return -1;
+    b=smp_bsp_index();
+    if(b<0||b>=SMP_MAX_CPUS)return -1;
+    rix_spin_lock_irqsave(&sched_lock,&irq);
+    for(uint32_t i=1;i<RIX_MAX_TASKS;i++){
+        if(tasks[i].id!=id||tasks[i].state==TASK_UNUSED)continue;
+        base_allowed=(1ULL<<(uint64_t)b);
+        if(tasks[i].process_pid==0&&tasks[i].ap_ok)base_allowed=~0ULL;
+        if(!(mask&base_allowed))break;
+        tasks[i].affinity=mask;
+        rq_resync_locked(i);
+        rc=0;
+        break;
+    }
+    rix_spin_unlock_irqrestore(&sched_lock,irq);
+    return rc;
+}
 
-/* Phase E2 shared selection. Scheduler lock must be held. BSP keeps
- * today's any-RUNNABLE rule; APs take only RUNNABLE kernel-thread
- * ap_ok tasks, never slot 0 (BSP boot context). */
-static uint32_t sched_select_locked(uint32_t me,uint32_t old){
-    int bsp=(me==(uint32_t)smp_bsp_index());
-    for(uint32_t n=1;n<RIX_MAX_TASKS;n++){
-        uint32_t i=(old+n)%RIX_MAX_TASKS;
-        if(tasks[i].state!=TASK_RUNNABLE)continue;
-        if(bsp)return i;
-        if(i!=0&&tasks[i].process_pid==0&&tasks[i].ap_ok)return i;
+/* Phase R2 selection. Eligibility mirrors the old global scan exactly
+ * (BSP takes any RUNNABLE; APs take only RUNNABLE kernel-thread ap_ok
+ * tasks, never slot 0) but reads the calling CPU's own mask + cursor,
+ * so CPUs no longer scan past each other's ineligible tasks.
+ * sched_lock must be held. Pure selection: the caller flips states and
+ * maintains mask bits at the flip lines. Stale bits (impossible if all
+ * transition sites are correct) are healed on the spot, bounded to one
+ * full rotation; the cursor advances once, on success. */
+static int rq_cpu_is_bsp(uint32_t c){return (int)c==smp_bsp_index();}
+static int rq_eligible(uint32_t c,uint32_t i){
+    if(i>=RIX_MAX_TASKS||c>=(uint32_t)SMP_MAX_CPUS)return 0;
+    if(!(tasks[i].affinity&(1ULL<<(uint64_t)c)))return 0;
+    if(rq_cpu_is_bsp(c))return 1;
+    return i!=0&&tasks[i].process_pid==0&&tasks[i].ap_ok;
+}
+static void rq_add_eligible_locked(uint32_t i){
+    for(uint32_t c=0;c<(uint32_t)SMP_MAX_CPUS;c++)
+        if(rq_eligible(c,i))rq_add_locked(&cpu_rq[c],i);
+}
+static void rq_remove_all_locked(uint32_t i){
+    for(uint32_t c=0;c<(uint32_t)SMP_MAX_CPUS;c++)rq_remove_locked(&cpu_rq[c],i);
+}
+/* Phase R3: re-sync one slot's bits after an eligibility change
+ * (ap_ok flip, affinity narrowing): drop everywhere, re-add where the
+ * new rule admits it. RUNNING/BLOCKED/DEAD slots hold no bits, so the
+ * re-add is conditional on RUNNABLE. */
+static void rq_resync_locked(uint32_t i){
+    rq_remove_all_locked(i);
+    if(i<RIX_MAX_TASKS&&tasks[i].state==TASK_RUNNABLE)rq_add_eligible_locked(i);
+}
+static uint32_t sched_pick_locked(uint32_t me,uint32_t old){
+    /* Phase R4: high-priority subset for this pick (bit i = prio>0).
+     * Built live every pick — no mask coupling (prio never moves bits;
+     * rq_eligible/verify are prio-blind by design). */
+    uint32_t himask=0;
+    if(me>=(uint32_t)SMP_MAX_CPUS)return old;
+    for(uint32_t i=0;i<RIX_MAX_TASKS;i++)if(tasks[i].prio)himask|=(1u<<i);
+    for(uint32_t n=0;n<RIX_MAX_TASKS;n++){
+        int pi=rq_pick_locked(&cpu_rq[me],himask);
+        if(pi<0)break;
+        uint32_t i=(uint32_t)pi;
+        if(tasks[i].state==TASK_RUNNABLE&&rq_eligible(me,i))return i;
+        rq_remove_locked(&cpu_rq[me],i);
+    }
+    /* Phase R3 work conservation: an AP whose own mask is empty steals
+     * AP-eligible work from the BSP mask instead of parking while
+     * runnable work waits. The thief's cursor/streak rotate over the
+     * victim mask via a temporary (written back on success only); the
+     * claim path (remove_all at the RUNNING flip) keeps every mask
+     * consistent; eligibility is re-checked for the thief, so
+     * BSP-pinned tasks are never stolen. BSP never falls back (its mask
+     * already holds every RUNNABLE). Stale snapshot bits are dropped
+     * from the temporary (the BSP mask owner heals its own; death and
+     * block already remove_all, so staleness is impossible — the bound
+     * is defense in depth). */
+    if(!rq_cpu_is_bsp(me)){
+        uint32_t b=(uint32_t)smp_bsp_index();
+        if(b<(uint32_t)SMP_MAX_CPUS){
+            rix_runqueue_t tmp;
+            tmp.mask=cpu_rq[b].mask;tmp.cursor=cpu_rq[me].cursor;tmp.hipri_streak=cpu_rq[me].hipri_streak;
+            for(uint32_t n=0;n<RIX_MAX_TASKS;n++){
+                int pi=rq_pick_locked(&tmp,himask);
+                if(pi<0)break;
+                uint32_t i=(uint32_t)pi;
+                if(tasks[i].state==TASK_RUNNABLE&&rq_eligible(me,i)){
+                    cpu_rq[me].cursor=tmp.cursor;cpu_rq[me].hipri_streak=tmp.hipri_streak;
+                    return i;
+                }
+                tmp.mask&=~(1u<<i);
+            }
+        }
     }
     return old;
+}
+/* Phase R3 migration accounting (sched_lock held at both claim sites:
+ * scheduler_yield and scheduler_ap_idle). First claim sets run_cpu;
+ * later claims from another CPU bump migrations. */
+static void rq_note_claim_locked(uint32_t me,uint32_t next){
+    if(next>=RIX_MAX_TASKS||me>=(uint32_t)SMP_MAX_CPUS)return;
+    if(tasks[next].run_cpu!=~0u&&tasks[next].run_cpu!=me)tasks[next].migrations++;
+    tasks[next].run_cpu=me;
+}
+/* Lock-free self-read: the caller's own slot is RUNNING, hence holds
+ * no mask bits and cannot be claimed elsewhere — its row is stable. */
+uint32_t scheduler_current_migrations(void){
+    uint32_t me=sched_cpu();
+    if(me>=SMP_MAX_CPUS)return 0;
+    return tasks[cpu_current[me]].migrations;
+}
+/* Phase R4 self-reads (same stability argument as migrations). */
+uint64_t scheduler_current_run_ticks(void){
+    uint32_t me=sched_cpu();
+    if(me>=SMP_MAX_CPUS)return 0;
+    return tasks[cpu_current[me]].run_ticks;
+}
+/* Phase R4: boost a kernel thread to HIGH priority (audited scope,
+ * mirroring allow_ap's kernel-only rule — user tasks stay NORMAL so
+ * userspace keeps round-robin fairness). Prio never moves mask bits
+ * (picks read it live), so no resync is needed on any state. 0 ok,
+ * -1 unknown id / bad level / user task boost. */
+int scheduler_set_priority(rix_task_id_t id,unsigned level){
+    int rc=-1;
+    uint64_t irq;
+    if(!id||level>RIX_PRIO_MAX)return -1;
+    rix_spin_lock_irqsave(&sched_lock,&irq);
+    for(uint32_t i=1;i<RIX_MAX_TASKS;i++){
+        if(tasks[i].id!=id||tasks[i].state==TASK_UNUSED)continue;
+        if(level>0&&tasks[i].process_pid!=0)break;
+        tasks[i].prio=(uint8_t)level;
+        rc=0;
+        break;
+    }
+    rix_spin_unlock_irqrestore(&sched_lock,irq);
+    return rc;
+}
+/* Phase R2 fail-stop invariant: bit i in mask c ⟺ tasks[i] RUNNABLE and
+ * eligible on c. Runs at every pick (both yield and AP-idle paths):
+ * O(CPUs×slots), a few hundred cycles against a context switch. Any
+ * drift logs once and freezes (cli+hlt) — a missed transition site must
+ * brick the boot loudly, never starve a task silently. */
+static void rq_verify_locked(void){
+    for(uint32_t c=0;c<(uint32_t)SMP_MAX_CPUS;c++){
+        for(uint32_t i=0;i<RIX_MAX_TASKS;i++){
+            int bit=rq_contains_locked(&cpu_rq[c],i);
+            int want=(tasks[i].state==TASK_RUNNABLE&&rq_eligible(c,i));
+            if(bit!=want){
+                kernel_log("RQVERIFY drift cpu=");kernel_log_dec(c);
+                kernel_log(" idx=");kernel_log_dec(i);
+                kernel_log(" bit=");kernel_log_dec((uint64_t)bit);
+                kernel_log(" want=");kernel_log_dec((uint64_t)want);
+                kernel_log(" st=");kernel_log_dec((uint64_t)tasks[i].state);
+                kernel_log("\r\n");
+                for(;;){cli();__asm__ volatile("hlt" ::: "memory");}
+            }
+        }
+    }
 }
 
 static uint64_t read_rflags(void){uint64_t v;__asm__ volatile("pushfq; popq %0":"=r"(v)::"memory");return v;}
@@ -150,7 +356,7 @@ static volatile uint64_t cpu_quantum_left[SMP_MAX_CPUS];
  * scheduler state. A missed pickup from the gate's races only delays an
  * AP (the BSP backstops every ap_ok task), never hangs. */
 static volatile uint8_t cpu_in_idle[SMP_MAX_CPUS];
-static __attribute__((noreturn)) void task_returned(void){ uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);tasks[cpu_current[sched_cpu()]].state=TASK_DEAD;task_drop_waiter(&tasks[cpu_current[sched_cpu()]]);rix_spin_unlock_irqrestore(&sched_lock,irq);for(;;) scheduler_yield(); }
+static __attribute__((noreturn)) void task_returned(void){ uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);task_mark_dead_locked(&tasks[cpu_current[sched_cpu()]]);rix_spin_unlock_irqrestore(&sched_lock,irq);for(;;) scheduler_yield(); }
 static void boot_user_entry_marker(void){serial_write("BOOT: USER ENTRY READY\r\n");}
 static void trace_yield_begin(void){}
 static void trace_flags(void){}
@@ -160,7 +366,7 @@ static void trace_old_updated(uint32_t old){(void)old;}
 static void trace_activating(uint64_t pid){(void)pid;}
 /* First user task selected: full transition inputs in one bounded block. */
 static void trace_first_task(uint32_t idx){static unsigned n=0;if(n<1&&tasks[idx].process_pid){kernel_log("DEBUG: first task id=");kernel_log_dec(tasks[idx].id);kernel_log(" state=");kernel_log_dec(tasks[idx].state);kernel_log(" pid=");kernel_log_dec(tasks[idx].process_pid);kernel_log(" rsp=");kernel_log_hex(tasks[idx].rsp);kernel_log(" entry=");kernel_log_hex(tasks[idx].user_entry);kernel_log(" user_stack=");kernel_log_hex(tasks[idx].user_stack);kernel_log("\r\n");n++;}}
-static void trace_selected(uint64_t id,uint64_t pid){static unsigned n=0;if(n<4){kernel_log("DEBUG: scheduler selected task=");kernel_log_dec(id);kernel_log(" pid=");kernel_log_dec(pid);kernel_log("\r\n");n++;}}
+static void trace_selected(uint64_t id,uint64_t pid,uint64_t tid){static unsigned n=0;if(n<4){kernel_log("DEBUG: scheduler selected task=");kernel_log_dec(id);kernel_log(" tid=");kernel_log_dec(tid);kernel_log(" pid=");kernel_log_dec(pid);kernel_log("\r\n");n++;}}
 static void trace_switched(void){static unsigned n=0;if(n<4){kernel_log("DEBUG: context_switch returned\r\n");n++;}}
 static void trace_switching(void){static unsigned n=0;if(n<4){kernel_log("DEBUG: switching context\r\n");n++;}}
 static void trace_resumed(void){static unsigned n=0;if(n<4){kernel_log("DEBUG: resumed task id=");kernel_log_dec(tasks[cpu_current[sched_cpu()]].id);kernel_log("\r\n");n++;}}
@@ -198,13 +404,18 @@ int scheduler_init(void){
      * (vmm_early_init), and CR0.TS/EM are clear, so fxsave/fxrstor are
      * legal from the first switch on. Rows/tasks copy this template. */
     __asm__ volatile("fninit; fxsave %0" : "=m"(fpu_template) :: "memory");
-    for(uint32_t c=0;c<SMP_MAX_CPUS;c++){cpu_current[c]=0;cpu_idle_rsp[c]=0;cpu_idle_valid[c]=0;cpu_idle_tmp[c]=0;cpu_preempt_depth[c]=0;cpu_need_resched[c]=0;cpu_quantum_left[c]=RIX_PREEMPT_QUANTUM_TICKS;cpu_in_idle[c]=0;for(unsigned i=0;i<512;i++)cpu_idle_fpu[c][i]=fpu_template[i];}
+    for(uint32_t c=0;c<SMP_MAX_CPUS;c++){cpu_current[c]=0;cpu_idle_rsp[c]=0;cpu_idle_valid[c]=0;cpu_idle_tmp[c]=0;cpu_preempt_depth[c]=0;cpu_need_resched[c]=0;cpu_quantum_left[c]=RIX_PREEMPT_QUANTUM_TICKS;cpu_in_idle[c]=0;rq_init_locked(&cpu_rq[c]);for(unsigned i=0;i<512;i++)cpu_idle_fpu[c][i]=fpu_template[i];}
     for(uint32_t i=0;i<RIX_MAX_TASKS;i++){
         tasks[i].id=0;tasks[i].state=TASK_UNUSED;tasks[i].rsp=0;tasks[i].entry=NULL;tasks[i].arg=NULL;
         tasks[i].process_pid=0;tasks[i].user_entry=0;tasks[i].user_stack=0;tasks[i].user_return=UINT64_MAX;
-        tasks[i].user_context_valid=0;tasks[i].ap_ok=0;
+        tasks[i].user_context_valid=0;tasks[i].ap_ok=0;tasks[i].tid=0;tasks[i].affinity=~0ULL;tasks[i].run_cpu=~0u;tasks[i].migrations=0;tasks[i].prio=0;tasks[i].run_ticks=0;tasks[i].stamp=0;tasks[i].voluntary=0;tasks[i].involuntary=0;
     }
     tasks[0].id=0;tasks[0].state=TASK_RUNNING;
+    /* Phase R1: the BSP boot context owns reserved TID 1 (owner pid 0).
+     * thread_alloc for pid 0 cannot fail on a fresh table; a 0 tid here
+     * would only mean table exhaustion, which init treats as no-thread. */
+    thread_table_init();
+    {rix_tid_t boot_tid=0;(void)thread_alloc_locked(0,&boot_tid);tasks[0].tid=boot_tid;}
     return 0;
 }
 void scheduler_tick(void){ticks++;}
@@ -300,7 +511,14 @@ void scheduler_block_current(void){
     if(me>=SMP_MAX_CPUS)return;
     uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);
     rix_task_t *t=&tasks[cpu_current[me]];
-    if(t->state==TASK_RUNNING||t->state==TASK_RUNNABLE)t->state=TASK_BLOCKED;
+    /* Phase R4: blocking bypasses the yield-old flip, so close the
+     * RUNNING interval here (the later yield sees BLOCKED and skips —
+     * no double count; the next claim re-stamps). */
+    if(t->state==TASK_RUNNING){t->run_ticks+=ticks-t->stamp;t->state=TASK_BLOCKED;}
+    else if(t->state==TASK_RUNNABLE)t->state=TASK_BLOCKED;
+    /* Phase R2: BLOCKED is selectable by nobody — drop all bits (no-op
+     * when the task was RUNNING, whose bits are already absent). */
+    rq_remove_all_locked((uint32_t)(t-tasks));
     rix_spin_unlock_irqrestore(&sched_lock,irq);
 }
 int scheduler_wait_take(void){
@@ -319,7 +537,10 @@ void scheduler_wait_abort(void){
     uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);
     rix_task_t *t=&tasks[cpu_current[me]];
     if(t->wait_wq){(void)rix_waitqueue_remove(t->wait_wq,t->wait_handle);t->wait_wq=NULL;t->wait_handle=(rix_wait_handle_t){0,0};}
-    if(t->state==TASK_BLOCKED)t->state=TASK_RUNNABLE;
+    /* Phase R2: only a genuine BLOCKED->RUNNABLE flip re-adds bits (a
+     * task woken concurrently is already present — the add would be a
+     * harmless no-op, but the state test keeps the invariant exact). */
+    if(t->state==TASK_BLOCKED){t->state=TASK_RUNNABLE;rq_add_eligible_locked((uint32_t)(t-tasks));}
     rix_spin_unlock_irqrestore(&sched_lock,irq);
 }
 void scheduler_wake_queue(rix_waitqueue_t *wq){
@@ -328,7 +549,7 @@ void scheduler_wake_queue(rix_waitqueue_t *wq){
     int ap_work=0;
     uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);
     for(uint32_t i=0;i<RIX_MAX_TASKS;i++){
-        if(tasks[i].state==TASK_BLOCKED&&tasks[i].wait_wq==wq){tasks[i].state=TASK_RUNNABLE;if(i!=0&&tasks[i].process_pid==0&&tasks[i].ap_ok)ap_work=1;}
+        if(tasks[i].state==TASK_BLOCKED&&tasks[i].wait_wq==wq){tasks[i].state=TASK_RUNNABLE;rq_add_eligible_locked(i);if(i!=0&&tasks[i].process_pid==0&&tasks[i].ap_ok)ap_work=1;}
     }
     rix_spin_unlock_irqrestore(&sched_lock,irq);
     /* Phase E7: an AP parked in hlt sleeps through state flips, and the
@@ -341,31 +562,84 @@ void scheduler_wake_pid(uint64_t pid){
     int ap_work=0;
     uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);
     for(uint32_t i=0;i<RIX_MAX_TASKS;i++){
-        if(tasks[i].state==TASK_BLOCKED&&tasks[i].process_pid==pid){tasks[i].state=TASK_RUNNABLE;if(i!=0&&tasks[i].process_pid==0&&tasks[i].ap_ok)ap_work=1;}
+        if(tasks[i].state==TASK_BLOCKED&&tasks[i].process_pid==pid){tasks[i].state=TASK_RUNNABLE;rq_add_eligible_locked(i);if(i!=0&&tasks[i].process_pid==0&&tasks[i].ap_ok)ap_work=1;}
     }
     rix_spin_unlock_irqrestore(&sched_lock,irq);
     /* Phase E7: same cross-CPU kick as wake_queue (signal/exit wakes). */
     if(ap_work)smp_wakeup_aps();
+}
+/* Phase R1 cross-module wrappers. Both take sched_lock (irqsave — the
+ * callers may hold PROCESS_GUARD, the same PROC4->sched edge
+ * process_exit_locked already uses for scheduler_wake_pid above).
+ * thread_table state itself is only ever touched under sched_lock. */
+size_t scheduler_thread_count_for_pid(uint64_t pid){
+    uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);
+    size_t n=thread_count_locked(pid);
+    rix_spin_unlock_irqrestore(&sched_lock,irq);
+    return n;
+}
+void scheduler_thread_detach_pid(uint64_t pid){
+    uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);
+    thread_detach_pid_locked(pid);
+    rix_spin_unlock_irqrestore(&sched_lock,irq);
+}
+rix_tid_t scheduler_current_tid(void){
+    uint32_t me=sched_cpu();
+    if(me>=SMP_MAX_CPUS)return 0;
+    return tasks[cpu_current[me]].tid;
+}
+int scheduler_list_threads(rix_thread_info_t *out,size_t capacity,size_t *count){
+    if(!count)return -1;
+    uint64_t irq;rix_spin_lock_irqsave(&sched_lock,&irq);
+    int rc=thread_list_locked(out,capacity,count);
+    rix_spin_unlock_irqrestore(&sched_lock,irq);
+    return rc;
 }
 static void task_drop_waiter(rix_task_t *t){
     if(!t||!t->wait_wq)return;
     (void)rix_waitqueue_remove(t->wait_wq,t->wait_handle);
     t->wait_wq=NULL;t->wait_handle=(rix_wait_handle_t){0,0};
 }
+/* Phase R1: single choke point for task death (sched_lock held at all
+ * three call sites: task_returned, scheduler_exit_current, and the
+ * resumed-path activate-failure). Marks DEAD, drops the waiter binding,
+ * and frees the bound thread exactly once (tid cleared so a recycled
+ * slot can never double-free). */
+static void task_mark_dead_locked(rix_task_t *t){
+    if(!t)return;
+    /* Phase R4: close the final RUNNING interval (death bypasses the
+     * yield-old flip, so without this the last interval leaks). */
+    if(t->state==TASK_RUNNING){t->run_ticks+=ticks-t->stamp;}
+    t->state=TASK_DEAD;
+    task_drop_waiter(t);
+    if(t->tid){thread_free_locked(t->tid);t->tid=0;}
+    /* Phase R2: a dead slot is selectable by nobody — drop all bits. */
+    rq_remove_all_locked((uint32_t)(t-tasks));
+}
 void scheduler_dump_states(void){
  kernel_log("DEBUG: TASKS run=");kernel_log_dec(scheduler_runnable_count());kernel_log(" curidx=");
  kernel_log_dec(cpu_current[sched_cpu()]);kernel_log("\r\n");
- for(uint32_t i=0;i<RIX_MAX_TASKS;i++){
-  if(tasks[i].state==TASK_UNUSED)continue;
-  kernel_log("DEBUG: TASK i=");kernel_log_dec(i);kernel_log(" id=");kernel_log_dec(tasks[i].id);
-  kernel_log(" st=");kernel_log_dec((uint64_t)tasks[i].state);kernel_log(" pid=");kernel_log_dec(tasks[i].process_pid);
-  kernel_log(i==cpu_current[sched_cpu()]?" CUR":"");kernel_log("\r\n");
- }
+  for(uint32_t i=0;i<RIX_MAX_TASKS;i++){
+   if(tasks[i].state==TASK_UNUSED)continue;
+   kernel_log("DEBUG: TASK i=");kernel_log_dec(i);kernel_log(" id=");kernel_log_dec(tasks[i].id);
+   kernel_log(" tid=");kernel_log_dec(tasks[i].tid);
+   kernel_log(" st=");kernel_log_dec((uint64_t)tasks[i].state);kernel_log(" pid=");kernel_log_dec(tasks[i].process_pid);
+   kernel_log(i==cpu_current[sched_cpu()]?" CUR":"");kernel_log("\r\n");
+  }
 }
 
 static int task_alloc(rix_task_t **out){
-    for(uint32_t i=1;i<RIX_MAX_TASKS;i++){if(tasks[i].state==TASK_UNUSED||tasks[i].state==TASK_DEAD){*out=&tasks[i];(*out)->wait_wq=NULL;(*out)->wait_handle=(rix_wait_handle_t){0,0};return 0;}}
+    for(uint32_t i=1;i<RIX_MAX_TASKS;i++){if(tasks[i].state==TASK_UNUSED||tasks[i].state==TASK_DEAD){*out=&tasks[i];(*out)->wait_wq=NULL;(*out)->wait_handle=(rix_wait_handle_t){0,0};(*out)->tid=0;(*out)->affinity=~0ULL;(*out)->run_cpu=~0u;(*out)->migrations=0;(*out)->prio=0;(*out)->run_ticks=0;(*out)->stamp=0;(*out)->voluntary=0;(*out)->involuntary=0;return 0;}}
     return -1;
+}
+/* Phase R1: bind a thread object to a freshly allocated slot (lock
+ * held). On failure the slot is released back to UNUSED and the caller
+ * reports thread exhaustion (-4): no half-created task ever runs. */
+static int task_bind_thread_locked(rix_task_t *t){
+    rix_tid_t tid=0;
+    if(thread_alloc_locked(t->process_pid,&tid)!=0){t->state=TASK_UNUSED;t->tid=0;return -4;}
+    t->tid=tid;
+    return 0;
 }
 static void task_init_stack(rix_task_t *t){
     uintptr_t top=(uintptr_t)t->stack+RIX_STACK_SIZE;top&=~(uintptr_t)0xFULL;uint64_t *sp=(uint64_t*)top;
@@ -385,6 +659,9 @@ int scheduler_create_kernel_thread(rix_kernel_thread_fn entry,void *arg,rix_task
     rix_task_t*t;if(task_alloc(&t)!=0){rix_spin_unlock_irqrestore(&sched_lock,irq);return -1;}
     t->id=next_id++;if(!t->id)t->id=next_id++;t->entry=entry;t->arg=arg;t->process_pid=0;
     t->user_entry=0;t->user_stack=0;t->user_return=UINT64_MAX;t->user_context_valid=0;t->state=TASK_RUNNABLE;t->ap_ok=0;task_init_stack(t);
+    if(task_bind_thread_locked(t)!=0){rix_spin_unlock_irqrestore(&sched_lock,irq);return -4;}
+    /* Phase R2: a fresh RUNNABLE joins every eligible CPU's mask. */
+    rq_add_eligible_locked((uint32_t)(t-tasks));
     rix_spin_unlock_irqrestore(&sched_lock,irq);
     /* E2: parked APs predate the scheduler and only hlt-wake on IPI.
      * Broadcast after unlock (never holding the lock across IPI send);
@@ -401,6 +678,8 @@ int scheduler_create_user_process(uint64_t pid,uint64_t entry,uint64_t user_stac
     rix_task_t*t;if(task_alloc(&t)!=0){kernel_log("DEBUG: scheduler task create fail stage=task-alloc\r\n");rix_spin_unlock_irqrestore(&sched_lock,irq);return -3;}
     t->id=next_id++;if(!t->id)t->id=next_id++;t->entry=NULL;t->arg=NULL;t->process_pid=pid;
     t->user_entry=entry;t->user_stack=user_stack;t->user_return=UINT64_MAX;t->user_context_valid=0;t->state=TASK_RUNNABLE;t->ap_ok=0;task_init_stack(t);
+    if(task_bind_thread_locked(t)!=0){kernel_log("DEBUG: scheduler task create fail stage=thread-alloc\r\n");rix_spin_unlock_irqrestore(&sched_lock,irq);return -4;}
+    rq_add_eligible_locked((uint32_t)(t-tasks));
     rix_spin_unlock_irqrestore(&sched_lock,irq);
     /* E2: parked APs predate the scheduler and only hlt-wake on IPI.
      * Broadcast after unlock (never holding the lock across IPI send);
@@ -417,6 +696,8 @@ int scheduler_create_fork_child(uint64_t pid,uint64_t entry,uint64_t user_stack,
     rix_task_t*t;if(task_alloc(&t)!=0){rix_spin_unlock_irqrestore(&sched_lock,irq);return -1;}
     t->id=next_id++;if(!t->id)t->id=next_id++;t->entry=NULL;t->arg=NULL;t->process_pid=pid;
     t->user_entry=entry;t->user_stack=user_stack;t->user_return=return_value;t->user_context_valid=0;t->state=TASK_RUNNABLE;t->ap_ok=0;task_init_stack(t);
+    if(task_bind_thread_locked(t)!=0){rix_spin_unlock_irqrestore(&sched_lock,irq);return -4;}
+    rq_add_eligible_locked((uint32_t)(t-tasks));
     rix_spin_unlock_irqrestore(&sched_lock,irq);
     /* E2: parked APs predate the scheduler and only hlt-wake on IPI.
      * Broadcast after unlock (never holding the lock across IPI send);
@@ -434,6 +715,8 @@ int scheduler_create_fork_child_context(uint64_t pid,const rix_user_context_t*co
     t->id=next_id++;if(!t->id)t->id=next_id++;t->entry=NULL;t->arg=NULL;t->process_pid=pid;
     t->user_entry=context->rip;t->user_stack=context->rsp;t->user_return=0;t->user_context=*context;t->user_context.rax=0;
     t->user_context_valid=1;t->state=TASK_RUNNABLE;t->ap_ok=0;task_init_stack(t);
+    if(task_bind_thread_locked(t)!=0){rix_spin_unlock_irqrestore(&sched_lock,irq);return -4;}
+    rq_add_eligible_locked((uint32_t)(t-tasks));
     rix_spin_unlock_irqrestore(&sched_lock,irq);
     /* E2: parked APs predate the scheduler and only hlt-wake on IPI.
      * Broadcast after unlock (never holding the lock across IPI send);
@@ -446,8 +729,7 @@ int scheduler_create_fork_child_context(uint64_t pid,const rix_user_context_t*co
 __attribute__((noreturn)) void scheduler_exit_current(void){
     cli();
     rix_spin_lock(&sched_lock);
-    tasks[cpu_current[sched_cpu()]].state=TASK_DEAD;
-    task_drop_waiter(&tasks[cpu_current[sched_cpu()]]);
+    task_mark_dead_locked(&tasks[cpu_current[sched_cpu()]]);
     rix_spin_unlock(&sched_lock);
     for(;;) scheduler_yield();
 }
@@ -470,11 +752,16 @@ void scheduler_yield(void){
     trace_flags();
     cli();
     uint32_t self=sched_cpu();
+    /* Phase R4: capture the armed flag BEFORE the E7 block below clears
+     * it — a yield that consumes an armed quantum is an involuntary
+     * (preempted) yield, otherwise voluntary. The flag belongs to this
+     * CPU, and yield always acts on this CPU's current task. */
+    int yield_armed=0;
     /* Phase E7: bounded AP-quantum consumption proof. Fires when an AP
      * enters a yield with its tick-armed flag set (voluntary or
      * IPI-return): the mechanism is live on that CPU. It does not by
      * itself prove time-sharing — the spinner-trio placement lines do. */
-    if(self<SMP_MAX_CPUS){int bsp=(int)self==smp_bsp_index();int ap_armed=!bsp&&cpu_need_resched[self];cpu_need_resched[self]=0;cpu_quantum_left[self]=RIX_PREEMPT_QUANTUM_TICKS;{static unsigned n=0;if(ap_armed&&n<3){kernel_log("APREEMPT cpu=");kernel_log_dec(self);kernel_log("\r\n");n++;}}}
+    if(self<SMP_MAX_CPUS){yield_armed=cpu_need_resched[self];int bsp=(int)self==smp_bsp_index();int ap_armed=!bsp&&cpu_need_resched[self];cpu_need_resched[self]=0;cpu_quantum_left[self]=RIX_PREEMPT_QUANTUM_TICKS;{static unsigned n=0;if(ap_armed&&n<3){kernel_log("APREEMPT cpu=");kernel_log_dec(self);kernel_log("\r\n");n++;}}}
     trace_yield_begin();
     /* E1: selection + publish under the scheduler lock (IRQs already off,
      * so plain lock/unlock; IRQ posture across the switch is unchanged).
@@ -484,9 +771,31 @@ void scheduler_yield(void){
     uint32_t me=sched_cpu();
     uint32_t old=cpu_current[me],next=old;
     trace_searching();
-    next=sched_select_locked(me,old);
+    /* Phase R4 flip-first: the yielding task rejoins BEFORE the pick so
+     * preference/streak see the full contending set, and the RUNNING
+     * interval closes exactly once per deschedule. (Pick-before-flip
+     * structurally bars self-pick — the yielder is bit-absent at pick
+     * time, so every yield is forced to switch and streak can never
+     * exceed 1. Measured live 2026-09-15 as a 7,8,7,8 lockstep on UP
+     * that neutralized priority while host tests passed in isolation.
+     * Flip-first restores the forced share; rotation dynamics for equal
+     * priority are unchanged — the cursor still bars head-of-line.) */
+    int old_flipped=0;
+    if(tasks[old].state==TASK_RUNNING){tasks[old].state=TASK_RUNNABLE;tasks[old].run_ticks+=ticks-tasks[old].stamp;old_flipped=1;rq_add_eligible_locked(old);}
+    /* Phase R2: verify the mask cache, then pick from this CPU's own
+     * runqueue (fail-stops on drift — see rq_verify_locked). */
+    rq_verify_locked();
+    next=sched_pick_locked(me,old);
     trace_old_next(old,next);
     if(next==old){
+        if(old_flipped){
+            /* Sole runnable (or lone pick): reclaim — back to RUNNING
+             * with bits dropped and the interval re-stamped, then
+             * continue on this stack. Same critical section, so no AP
+             * can steal mid-reclaim. Yield classification counts real
+             * switches only (switch branch below). */
+            tasks[old].state=TASK_RUNNING;rq_remove_all_locked(old);tasks[old].stamp=ticks;
+        }
         /* Nothing else runnable. A RUNNING current simply continues
          * (legacy). A DEAD current on an AP returns to its idle hlt
          * loop (scratch save slot: the dead slot may already be
@@ -502,7 +811,11 @@ void scheduler_yield(void){
         }
         rix_spin_unlock(&sched_lock);if(flags&0x200ULL)sti();return;
     }
-    if(tasks[old].state==TASK_RUNNING)tasks[old].state=TASK_RUNNABLE;
+    /* Genuine switch (next != old): classify the yield — an armed
+     * quantum consumed means preempted, else voluntary. Only a flipped
+     * old descheduled here (BLOCKED/DEAD olds blocked/died elsewhere
+     * and are not yields). */
+    if(old_flipped){if(yield_armed)tasks[old].involuntary++;else tasks[old].voluntary++;}
     trace_old_updated(old);
     trace_activating(tasks[next].process_pid);
     /* Keep the current CR3 until the stack switch completes.  Loading the
@@ -512,13 +825,24 @@ void scheduler_yield(void){
        The resumed-task path below activates the selected process after the
        switch; task_bootstrap defers the first user load to x86_enter_user(). */
     tasks[next].state=TASK_RUNNING;cpu_current[sched_cpu()]=next;
+    /* Phase R2: claim — RUNNING is selectable by nobody. */
+    rq_remove_all_locked(next);
+    /* Phase R3: migration accounting. Phase R4: stamp the claim (the
+     * RUNNING interval starts now; closed at the next yield-old, block
+     * or death — exactly one close per claim by construction). */
+    rq_note_claim_locked(me,next);
+    tasks[next].stamp=ticks;
     cr3trace_push(3,(uint64_t)tasks[old].id,(uint64_t)tasks[next].id,0);
-    trace_selected(tasks[next].id,tasks[next].process_pid);
+    trace_selected(tasks[next].id,tasks[next].process_pid,tasks[next].tid);
     trace_first_task(next);
     trace_switching();
 #if RIX_DEBUG_NO_CTX_SWITCH
     {static unsigned n=0;if(n<4){kernel_log("DEBUG: context switch SKIPPED\r\n");n++;}}
     if(tasks[old].state==TASK_RUNNABLE)tasks[old].state=TASK_RUNNING;
+    /* Phase R2: the debug path restores old to RUNNING — drop the bits
+     * the yield-old flip above just added (next stays claimed: it
+     * remains TASK_RUNNING with no bits, consistent). */
+    rq_remove_all_locked(old);
     if(tasks[old].process_pid){(void)process_activate(tasks[old].process_pid);}
     else if(tasks[old].id==0){(void)process_activate(0);}
     cpu_current[sched_cpu()]=old;
@@ -540,7 +864,7 @@ void scheduler_yield(void){
        function. The address space must follow the resumed task, not the task
        that ran immediately before it. */
     rix_task_t*resumed=&tasks[cpu_current[sched_cpu()]];
-    if(resumed->process_pid){if(process_activate(resumed->process_pid)!=0){rix_spin_lock(&sched_lock);resumed->state=TASK_DEAD;task_drop_waiter(resumed);rix_spin_unlock(&sched_lock);}}
+    if(resumed->process_pid){if(process_activate(resumed->process_pid)!=0){rix_spin_lock(&sched_lock);task_mark_dead_locked(resumed);rix_spin_unlock(&sched_lock);}}
     else if(resumed->id==0){(void)process_activate(0);}
     if(flags&0x200ULL)sti();
 }
@@ -569,7 +893,11 @@ __attribute__((noreturn)) void scheduler_ap_idle(void){
         uint64_t ap_irq;
         rix_spin_lock_irqsave(&sched_lock, &ap_irq);
         uint32_t old=cpu_current[me];
-        uint32_t next=sched_select_locked(me,old);
+        /* Phase R2: same verify+pick as the yield path (behavior
+         * preserved exactly: next==old still hlt-parks, relying on the
+         * next wake kick like before). */
+        rq_verify_locked();
+        uint32_t next=sched_pick_locked(me,old);
         if(next==old||tasks[next].state!=TASK_RUNNABLE){
             /* Phase E7: mark the hlt window BEFORE unlock (IF is masked
              * here, so no IPI can slip between the mark and the hlt
@@ -584,6 +912,11 @@ __attribute__((noreturn)) void scheduler_ap_idle(void){
         }
         cpu_in_idle[me]=0;
         tasks[next].state=TASK_RUNNING;cpu_current[me]=next;
+        /* Phase R2: claim — RUNNING is selectable by nobody. */
+        rq_remove_all_locked(next);
+        /* Phase R3: migration accounting. Phase R4: stamp the claim. */
+        rq_note_claim_locked(me,next);
+        tasks[next].stamp=ticks;
         cr3trace_push(3,(uint64_t)tasks[old].id,(uint64_t)tasks[next].id,0);
         rix_spin_unlock_irqrestore(&sched_lock, ap_irq);
         fpu_switch(cpu_idle_fpu[me],tasks[next].fpu);

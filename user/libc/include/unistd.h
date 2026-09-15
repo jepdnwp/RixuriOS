@@ -16,6 +16,14 @@ typedef struct { rix_pid_t pid; rix_pid_t parent; uint32_t uid; uint32_t gid; ui
 #define RIX_PROC_RUNNING 1u
 #define RIX_PROC_SLEEPING 2u
 #define RIX_PROC_ZOMBIE 3u
+/* Phase R1: kernel thread objects (mirrors kernel/sched/thread.h
+ * rix_thread_info_t; layout must stay identical). */
+typedef uint64_t rix_tid_t;
+#define RIX_THREAD_MAX 64u
+#define RIX_THREAD_UNUSED 0u
+#define RIX_THREAD_ACTIVE 1u
+#define RIX_THREAD_DETACHED 2u
+typedef struct { uint64_t tid; uint64_t owner_pid; uint32_t state; uint32_t flags; } rix_thread_info_t;
 typedef struct { uint64_t sec; uint64_t nsec; } rix_timespec_t;
 typedef struct { uint64_t inode; uint8_t type; char name[256]; } rix_dirent_t;
 typedef struct { uint64_t inode; uint8_t type; uint32_t mode; uint32_t uid; uint32_t gid; uint64_t size; } rix_stat_t;
@@ -109,6 +117,7 @@ int login_session(uint32_t tty_id, rix_pid_t *out_session);
 int logout_session(void);
 int list_sessions(rix_session_info_t *sessions,size_t capacity,size_t *count);
 int list_processes(rix_process_info_t *procs,size_t capacity,size_t *count);
+int list_threads(rix_thread_info_t *threads,size_t capacity,size_t *count);
 int get_capabilities(uint64_t *out);
 int drop_capabilities(uint64_t mask);
 int get_audit_uid(uint32_t *out);

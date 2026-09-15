@@ -9,15 +9,15 @@ CFLAGS := -std=c17 -ffreestanding -fno-stack-protector -fno-pie -fcf-protection=
 LDFLAGS := -nostdlib -z max-page-size=0x1000 -T linker/kernel.ld
 OBJ := kernel/boot.o kernel/main.o kernel/serial.o kernel/user_init_blob.o \
  kernel/arch/x86_64/cpu.o kernel/arch/x86_64/gdt.o kernel/arch/x86_64/idt.o kernel/arch/x86_64/interrupts.o kernel/arch/x86_64/irq.o kernel/arch/x86_64/apic.o kernel/arch/x86_64/acpi.o kernel/arch/x86_64/smp.o kernel/arch/x86_64/smp_trampoline.o kernel/arch/x86_64/ioapic.o kernel/arch/x86_64/pic.o kernel/arch/x86_64/pit.o kernel/arch/x86_64/ps2_keyboard.o kernel/arch/x86_64/user_entry.o kernel/arch/x86_64/cr3.o \
- kernel/pci/pci.o kernel/pci/dma.o kernel/pci/iommu.o kernel/pci/msix.o kernel/sched/scheduler.o kernel/sched/switch.o kernel/process/process.o kernel/process/signal.o kernel/process/address_space.o kernel/syscall/syscall.o kernel/vfs/vfs.o kernel/fs/rixfs.o kernel/fs/rixfs_ops.o kernel/fs/rixfs_dir.o kernel/fs/rixfs_fsck.o kernel/elf/elf.o kernel/elf/loader.o \
+ kernel/pci/pci.o kernel/pci/dma.o kernel/pci/iommu.o kernel/pci/msix.o kernel/sched/scheduler.o kernel/sched/thread.o kernel/sched/runqueue.o kernel/sched/switch.o kernel/process/process.o kernel/process/signal.o kernel/process/address_space.o kernel/syscall/syscall.o kernel/vfs/vfs.o kernel/fs/rixfs.o kernel/fs/rixfs_ops.o kernel/fs/rixfs_dir.o kernel/fs/rixfs_fsck.o kernel/elf/elf.o kernel/elf/loader.o \
  kernel/mm/pmm.o kernel/mm/vmm.o kernel/mm/ptmap.o kernel/mm/uaccess.o kernel/mm/heap.o kernel/sync/lock.o kernel/sync/waitqueue.o kernel/sync/mutex.o kernel/sync/rwlock.o kernel/sync/sem.o kernel/sync/lockdep.o kernel/ipc/channel.o kernel/ipc/pipe.o kernel/ipc/shared_memory.o kernel/tty/tty.o \
          kernel/storage/block.o kernel/storage/block_cache.o kernel/storage/nvme.o kernel/net/net.o kernel/net/ethernet.o kernel/net/arp.o kernel/net/ipv4.o kernel/net/ipv6.o kernel/net/udp.o kernel/net/tcp.o kernel/net/loopback.o kernel/net/socket.o kernel/net/device.o kernel/net/stack.o kernel/net/dhcp.o kernel/net/rtl8125.o kernel/net/e1000.o kernel/usb/xhci.o kernel/usb/usb.o kernel/usb/hid.o kernel/usb/xhci_caps.o kernel/usb/xhci_profile.o kernel/time/rtc.o kernel/time/time.o kernel/power/power.o kernel/tty/font_psf.o
 
-PROGRAM_NAMES := echo cat args grep true false sleep ls mkdir rm rmdir touch stat ln head tail wc cut tr sort uniq env printf pwd which kill ps uname du cp mv find xargs sed test tee basename dirname seq id whoami date ping curl host help hostname credtest auditcheck capdelegatecheck capdelegatetest accountctl sessiontest sessionlisttest killtest metatest renametest authcheck abi-negative proc-test pipe-stress rixtest posix-test schedtest pipetest
+PROGRAM_NAMES := echo cat args grep true false sleep ls mkdir rm rmdir touch stat ln head tail wc cut tr sort uniq env printf pwd which kill ps uname du cp mv find xargs sed test tee basename dirname seq id whoami date ping curl host help hostname credtest auditcheck capdelegatecheck capdelegatetest accountctl sessiontest sessionlisttest killtest metatest renametest authcheck abi-negative proc-test pipe-stress rixtest posix-test schedtest pipetest threads
 PROGRAM_ELFS := $(addprefix build/programs/,$(addsuffix .elf,$(PROGRAM_NAMES)))
 PROGRAM_START_OBJ := build/programs/start.o
 
-.PHONY: all clean check image iso-test powerloss-test test-all run qemu build-run test user-init programs rixfs-image usb-test hid-test tty-test shell-test pipe-test net-test hosts-test rtl-test e1000-test acpi-test smp-test gdt-test pmm-test heap-test rixfs-mount-test auth-test phase20-test ring3-test sysroot
+.PHONY: all clean check image iso-test powerloss-test test-all run qemu build-run test user-init programs rixfs-image usb-test hid-test tty-test shell-test pipe-test net-test hosts-test rtl-test e1000-test acpi-test smp-test gdt-test pmm-test heap-test rixfs-mount-test auth-test phase20-test ring3-test sysroot thread-test runqueue-test
 all: build/kernel.elf
 
 build:
@@ -156,6 +156,7 @@ build/rixfs.img: programs scripts/build-rixfs-image.py etc/hosts etc/hostname et
 		--file /usr/bin/pipe-stress=build/programs/pipe-stress.elf \
 		--file /usr/bin/pipetest=build/programs/pipetest.elf \
 		--file /usr/bin/schedtest=build/programs/schedtest.elf \
+		--file /usr/bin/threads=build/programs/threads.elf \
 		--file /usr/bin/rixtest=build/programs/rixtest.elf \
 		--file /sbin/false=build/programs/false.elf \
 		--file /usr/sbin/true=build/programs/true.elf
@@ -283,7 +284,15 @@ sync-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -DRIX_HOST_TEST -I. tests/sync_test.c kernel/sync/lock.c kernel/sync/waitqueue.c kernel/sync/mutex.c kernel/sync/rwlock.c kernel/sync/sem.c kernel/sync/lockdep.c -o build/sync_test
 		build/sync_test
 
-test: check usb-test hid-test tty-test shell-test pipe-test net-test libc-test hosts-test rtl-test e1000-test acpi-test smp-test gdt-test pmm-test heap-test xhci-caps-test xhci-profile-test rixfs-mount-test symlink-test sync-test
+thread-test: | build
+	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -DRIX_HOST_TEST -I. tests/thread_test.c kernel/sched/thread.c -o build/thread_test
+		build/thread_test
+
+runqueue-test: | build
+	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -DRIX_HOST_TEST -I. tests/runqueue_test.c kernel/sched/runqueue.c -o build/runqueue_test
+		build/runqueue_test
+
+test: check usb-test hid-test tty-test shell-test pipe-test net-test libc-test hosts-test rtl-test e1000-test acpi-test smp-test gdt-test pmm-test heap-test xhci-caps-test xhci-profile-test rixfs-mount-test symlink-test sync-test thread-test runqueue-test
 	@echo 'Static kernel build checks completed.'
 
 sysroot:
