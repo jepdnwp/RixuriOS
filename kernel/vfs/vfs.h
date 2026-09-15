@@ -59,6 +59,7 @@ int vfs_readdir(uint64_t pid,int fd,uint64_t *offset,rix_vfs_dirent_t *out,char 
 int vfs_stat(const char *path,rix_vnode_t *out);
 int vfs_lstat(const char *path,rix_vnode_t *out);
 int vfs_fstat(uint64_t pid,int fd,rix_vnode_t *out);
+int vfs_access(const char *path,unsigned mode);
 int vfs_chmod(const char *path,uint32_t mode);
 int vfs_chown(const char *path,uint32_t uid,uint32_t gid);
 int vfs_rename(const char *old_path,const char *new_path);

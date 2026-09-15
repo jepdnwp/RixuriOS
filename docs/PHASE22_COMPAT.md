@@ -45,7 +45,7 @@ construction: `kernel/` includes only `include/` + its own headers.
 | 62/127/142 | KILL/SIGPENDING/SIGPROCMASK | kill/raise/sigpending/sigprocmask/pause | same; signal()/sigaction() declared but ENOSYS (no delivery ABI) | partial |
 | 78–87, 148–149 | GETDENTS/GETCWD/CHDIR/MKDIR/.../LINK/FSTAT/LSTAT | getdents/opendir/readdir/.../fstat/lstat | dirent + fcntl F_DUPFD/F_GETFD/F_SETFD/F_GETFL/F_SETFL | working; lstat preserves final symlink type; O_CLOEXEC + FD_CLOEXEC QEMU-proven (cloexec-test) |
 | 79/80 | GETCWD/CHDIR | getcwd/chdir | same + getopt/sysconf/getpagesize (pure) | working |
-| 102–119 | credentials/ACL/caps/sessions | getuid/.../access/fcntl | access (stat-based), chmod/chown/rename/link | working within bounded model |
+| 102–119, 150 | credentials/ACL/caps/sessions/ACCESS | getuid/.../access/fcntl | access uses kernel UID/GID/ACL permission evaluation; chmod/chown/rename/link | working within bounded model |
 | 139 | GETRANDOM | getrandom/arc4random | getrandom | working where CPU has RDRAND/RDSEED else ENOSYS fallback |
 | 141/143 | ISATTY/FCNTL | isatty/fcntl | same | working subset |
 
