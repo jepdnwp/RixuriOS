@@ -1,5 +1,6 @@
 #include "xhci.h"
 #include "xhci_caps.h"
+#include "xhci_portsc.h"
 #include "../pci/pci.h"
 #include "../mm/vmm.h"
 #include "../mm/pmm.h"
@@ -49,27 +50,6 @@
 #define XHCI_CONFIG 0x38
 #define XHCI_PORTSC_BASE 0x400
 #define XHCI_PORT_STRIDE 0x10
-#define XHCI_PORT_CCS (1u << 0)
-#define XHCI_PORT_PED (1u << 1)
-#define XHCI_PORT_OCA (1u << 3)
-#define XHCI_PORT_PR (1u << 4)
-#define XHCI_PORT_PLS_MASK (0xFu << 5)
-#define XHCI_PORT_PP (1u << 9)
-#define XHCI_PORT_SPEED_SHIFT 10
-#define XHCI_PORT_SPEED_MASK (0xFu << XHCI_PORT_SPEED_SHIFT)
-#define XHCI_PORT_LWS (1u << 16)
-#define XHCI_PORT_WPR (1u << 31)
-#define XHCI_PORT_CSC (1u << 17)
-#define XHCI_PORT_PEC (1u << 18)
-#define XHCI_PORT_WRC (1u << 19)
-#define XHCI_PORT_OCC (1u << 20)
-#define XHCI_PORT_PRC (1u << 21)
-#define XHCI_PORT_PLC (1u << 22)
-#define XHCI_PORT_CEC (1u << 23)
-/* All port-change W1C bits cleared by writing 1. */
-#define XHCI_PORT_CHANGE_MASK (XHCI_PORT_CSC | XHCI_PORT_PEC | XHCI_PORT_WRC | \
-                               XHCI_PORT_OCC | XHCI_PORT_PRC | XHCI_PORT_PLC | \
-                               XHCI_PORT_CEC)
 #define XHCI_CMD_RS (1u << 0)
 #define XHCI_CMD_HCRST (1u << 1)
 #define XHCI_CMD_INTE (1u << 2)
@@ -115,8 +95,14 @@
 #define XHCI_HCC_AC64 (1u << 0)
 #define XHCI_HCC_CSZ (1u << 2)
 #define XHCI_HCC_PPC (1u << 3)
-#define XHCI_INPUT_ADD_SLOT (1u << 1)
-#define XHCI_INPUT_ADD_EP0 (1u << 2)
+/* Input Control Context Add flags (xHCI 6.2.5.1): bit n = Add Context n.
+ * Context 0 is the Slot Context, context 1 is the Default Control Endpoint
+ * (EP0) context. The old (1<<1)/(1<<2) encoding addressed contexts 1 and 2
+ * and never installed the Slot Context, so Address Device ran with
+ * Speed=0/RH-Port=0/Context-Entries=0 in the device context and failed
+ * with rc=7 on real silicon. */
+#define XHCI_INPUT_ADD_SLOT (1u << 0)
+#define XHCI_INPUT_ADD_EP0 (1u << 1)
 #define XHCI_SLOT_CONTEXT_ENTRIES (1u << 27)
 #define XHCI_SLOT_CONTEXT_ENTRIES_MASK (0x1Fu << 27)
 #define XHCI_EP0_TYPE_CONTROL 4u
@@ -584,9 +570,9 @@ static void xhci_power_all_ports(const rix_xhci_controller_t *c) {
             XHCI_PORTSC_BASE + (uint32_t)(port - 1u) * XHCI_PORT_STRIDE);
         uint32_t v = *reg;
         if (v & XHCI_PORT_PP) continue;
-        /* Set PP, keep PED/PLS untouched (LWS=0, PR=0), clear stale W1C. */
-        v = (v & ~(XHCI_PORT_PR | XHCI_PORT_LWS)) |
-            XHCI_PORT_PP | XHCI_PORT_CHANGE_MASK;
+        /* Neutral base: a raw readback must never round-trip PED/PR/LWS.
+         * Set PP, clear stale W1C change bits. */
+        v = xhci_portsc_neutralize(v) | XHCI_PORT_PP | XHCI_PORT_CHANGE_MASK;
         *reg = v;
     }
     /* USB 2.0 power-stable delay (TPPWR ~20ms). */
@@ -855,14 +841,175 @@ int xhci_port_status(size_t controller, uint8_t port, rix_xhci_port_status_t *ou
     return 0;
 }
 
-static void xhci_clear_port_change(volatile uint32_t *reg) {
+/* Instrumentation for the reset path (set XHCI_RESET_TRACE to 0 to drop
+ * the lines). Each line carries the raw PORTSC plus the decoded
+ * CCS/PED/PR/PRC/PLS/PP/speed so the PED-disable regression is directly
+ * visible on the serial log of real hardware. */
+#define XHCI_RESET_TRACE 1
+#if XHCI_RESET_TRACE
+static void xhci_trace_portsc(const char *tag, volatile uint32_t *reg) {
+    size_t ctl = 0;
+    uint8_t port = 0;
+    int found = 0;
+    for (size_t ci = 0; ci < count; ++ci) {
+        const rix_xhci_controller_t *c = &controllers[ci];
+        uintptr_t base = (uintptr_t)c->mmio_va;
+        uintptr_t portsc0 = base + c->cap_length + XHCI_PORTSC_BASE;
+        uintptr_t r = (uintptr_t)reg;
+        if (c->mmio_va && c->max_ports &&
+            r >= portsc0 &&
+            r < portsc0 + (uintptr_t)c->max_ports * XHCI_PORT_STRIDE &&
+            ((r - portsc0) % XHCI_PORT_STRIDE) == 0u) {
+            ctl = ci;
+            port = (uint8_t)((r - portsc0) / XHCI_PORT_STRIDE + 1u);
+            found = 1;
+            break;
+        }
+    }
+    if (!found) return;
     uint32_t v = *reg;
-    /* Preserve RW bits, force PR=0/WPR=0/LWS=0, write 1 to all W1C to clear. */
-    v = (v & ~(XHCI_PORT_PR | XHCI_PORT_WPR | XHCI_PORT_LWS)) | XHCI_PORT_CHANGE_MASK;
-    /* Never clear PP here. */
-    v |= (*reg & XHCI_PORT_PP);
-    *reg = v;
+    serial_write("xHCI: ");
+    serial_write(tag);
+    serial_write(" ctl=");
+    serial_write_dec(ctl);
+    serial_write(" port=");
+    serial_write_dec(port);
+    serial_write(" PORTSC=");
+    serial_write_hex(v);
+    serial_write(" CCS=");
+    serial_write_dec((uint64_t)((v & XHCI_PORT_CCS) != 0u));
+    serial_write(" PED=");
+    serial_write_dec((uint64_t)((v & XHCI_PORT_PED) != 0u));
+    serial_write(" PR=");
+    serial_write_dec((uint64_t)((v & XHCI_PORT_PR) != 0u));
+    serial_write(" PRC=");
+    serial_write_dec((uint64_t)((v & XHCI_PORT_PRC) != 0u));
+    serial_write(" PLS=");
+    serial_write_dec((uint64_t)((v & XHCI_PORT_PLS_MASK) >> 5));
+    serial_write(" PP=");
+    serial_write_dec((uint64_t)((v & XHCI_PORT_PP) != 0u));
+    serial_write(" speed=");
+    serial_write_dec((uint64_t)((v & XHCI_PORT_SPEED_MASK) >> XHCI_PORT_SPEED_SHIFT));
+    serial_write("\r\n");
 }
+#else
+#define xhci_trace_portsc(tag, reg) ((void)0)
+#endif
+
+static void xhci_clear_port_change(volatile uint32_t *reg) {
+    /* The raw readback must never round-trip: PED is RW1CS, so writing
+     * PED=1 back DISABLES the port. After a completed reset PED=1, and
+     * the old write-back turned every just-enabled port into
+     * PED=0/PLS=Polling (the 0x6e1/0xae1/0xee1 attach failures).
+     * Neutralize, then write 1 only to the W1C change bits. */
+    *reg = xhci_portsc_clear_changes(*reg);
+}
+
+/* Instrumentation for the Enable Slot / Address Device path (set
+ * XHCI_ADDR_TRACE to 0 to drop the lines). Logs completion codes decoded
+ * per xHCI 6.4.5 Table 6-35 so a failure is attributable without guesswork. */
+#define XHCI_ADDR_TRACE 1
+#if XHCI_ADDR_TRACE
+static const char *xhci_cc_name(uint8_t cc) {
+    static const char *const names[] = {
+        "Invalid", "Success", "Data Buffer Error", "Babble Detected",
+        "USB Transaction Error", "TRB Error", "Stall Error",
+        "Resource Error", "Bandwidth Error", "No Slots Available",
+        "Invalid Stream Type", "Slot Not Enabled", "Endpoint Not Enabled",
+        "Short Packet", "Ring Underrun", "Ring Overrun",
+        "VF Event Ring Full", "Parameter Error", "Bandwidth Overrun",
+        "Context State Error", "No Ping Response", "Event Ring Full",
+        "Incompatible Device", "Missed Service", "Command Ring Stopped",
+        "Command Aborted", "Stopped", "Stopped - Length Invalid",
+        "Stopped - Short Packet", "Max Exit Latency Too Large",
+        "Isoch Buffer Overrun", "Event Lost", "Undefined",
+        "Invalid Stream ID", "Secondary Bandwidth", "Split Transaction"
+    };
+    if (cc < sizeof(names) / sizeof(names[0])) return names[cc];
+    return "Unknown";
+}
+
+static void xhci_log_address_device_begin(size_t controller, uint8_t slot_id,
+                                          uint8_t port, uint8_t speed) {
+    const rix_xhci_controller_t *c = &controllers[controller];
+    const xhci_slot_runtime_t *slot = &runtimes[controller].slots[slot_id];
+    uint32_t context_size = (c->hcc_params1 & XHCI_HCC_CSZ) != 0u ? 64u : 32u;
+    serial_write("xHCI: ADDRESS DEVICE BEGIN ctl=");
+    serial_write_dec(controller);
+    serial_write(" port=");
+    serial_write_dec(port);
+    serial_write(" slot=");
+    serial_write_dec(slot_id);
+    serial_write(" speed=");
+    serial_write_dec(speed);
+    serial_write(" route=");
+    serial_write_hex(slot->route_string);
+    serial_write(" input=");
+    serial_write_hex(slot->input_context_phys);
+    serial_write(" devctx=");
+    serial_write_hex(slot->device_context_phys);
+    serial_write(" ep0ring=");
+    serial_write_hex(slot->ep0_ring_phys);
+    serial_write(" cmd_enq=");
+    serial_write_dec(runtimes[controller].command_enqueue);
+    serial_write(" cmd_cycle=");
+    serial_write_dec(runtimes[controller].command_cycle);
+    serial_write(" csz=");
+    serial_write_dec(context_size);
+    serial_write("\r\n");
+    /* Raw dump of what the HC will consume: input control context
+     * (always 32 bytes), then slot context and EP0 context (context_size
+     * each), plus the DCBAA entry the HC resolves the slot against. */
+    const volatile uint32_t *ictl =
+        (const volatile uint32_t *)(uintptr_t)slot->input_context_phys;
+    const volatile uint32_t *sctx = (const volatile uint32_t *)
+        (uintptr_t)(slot->input_context_phys + context_size);
+    const volatile uint32_t *ep0 = (const volatile uint32_t *)
+        (uintptr_t)(slot->input_context_phys + (uint64_t)context_size * 2u);
+    volatile uint64_t *dcbaa = (volatile uint64_t *)(uintptr_t)c->dcbaa_phys;
+    serial_write("xHCI: ADDRESS INPUT CONTEXT DUMP slot=");
+    serial_write_dec(slot_id);
+    serial_write(" port=");
+    serial_write_dec(port);
+    serial_write(" speed=");
+    serial_write_dec(speed);
+    serial_write(" csz=");
+    serial_write_dec(context_size);
+    serial_write(" DCBAA[slot]=");
+    serial_write_hex(dcbaa[slot_id]);
+    serial_write(" input_phys=");
+    serial_write_hex(slot->input_context_phys);
+    serial_write(" devctx_phys=");
+    serial_write_hex(slot->device_context_phys);
+    serial_write(" ep0_ring_phys=");
+    serial_write_hex(slot->ep0_ring_phys);
+    serial_write("\r\n");
+    for (unsigned i = 0; i < 8u; ++i) {
+        serial_write("xHCI: INPUT CTRL dw");
+        serial_write_dec(i);
+        serial_write("=");
+        serial_write_hex(ictl[i]);
+        serial_write("\r\n");
+    }
+    for (unsigned i = 0; i < 8u; ++i) {
+        serial_write("xHCI: SLOT CTX dw");
+        serial_write_dec(i);
+        serial_write("=");
+        serial_write_hex(sctx[i]);
+        serial_write("\r\n");
+    }
+    for (unsigned i = 0; i < 8u; ++i) {
+        serial_write("xHCI: EP0 CTX dw");
+        serial_write_dec(i);
+        serial_write("=");
+        serial_write_hex(ep0[i]);
+        serial_write("\r\n");
+    }
+}
+#else
+#define xhci_cc_name(cc) "?"
+#define xhci_log_address_device_begin(controller, slot_id, port, speed) ((void)0)
+#endif
 
 /* One-time boot inventory: one line per controller plus one line per
  * connected port with raw PORTSC. kernel_log renders on the framebuffer
@@ -919,12 +1066,14 @@ void xhci_dump_ports(void) {
  * the PR sequence. Speed>=4 means SuperSpeed; speed==0 means the link has
  * not reported yet (early USB3 training or pre-reset USB2). */
 static int xhci_wait_usb3_trained(volatile uint32_t *reg) {
+    xhci_trace_portsc("USB3 TRAIN WAIT", reg);
     for (uint32_t i = 0; i < XHCI_RESET_POLL_LIMIT; ++i) {
         uint32_t s = *reg;
         if ((s & XHCI_PORT_CCS) == 0u) return -3;
         if ((s & XHCI_PORT_PED) != 0u) {
             uint32_t speed = (s & XHCI_PORT_SPEED_MASK) >> XHCI_PORT_SPEED_SHIFT;
             if (speed != 0u) {
+                xhci_trace_portsc("USB3 TRAINED", reg);
                 xhci_clear_port_change(reg);
                 return 0;
             }
@@ -935,22 +1084,26 @@ static int xhci_wait_usb3_trained(volatile uint32_t *reg) {
 }
 
 static int xhci_warm_reset_port(volatile uint32_t *reg) {
-    uint32_t v = (*reg & ~(XHCI_PORT_PR | XHCI_PORT_LWS)) |
-        XHCI_PORT_PP | XHCI_PORT_CHANGE_MASK | XHCI_PORT_WPR;
+    xhci_trace_portsc("WARM RESET START", reg);
+    /* Neutral base (PED/PR/LWS/WPR never round-trip), clear stale change
+     * bits, assert WPR. PP and PLS come from the neutral value. */
+    uint32_t v = xhci_portsc_neutralize(*reg) |
+                 XHCI_PORT_CHANGE_MASK | XHCI_PORT_WPR;
     *reg = v;
     for (uint32_t i = 0; i < XHCI_RESET_POLL_LIMIT; ++i) {
         uint32_t s = *reg;
         if ((s & XHCI_PORT_CCS) == 0u) return -3;
         if (((s & XHCI_PORT_WPR) == 0u) || (s & XHCI_PORT_WRC) != 0u) {
+            xhci_trace_portsc("WARM RESET DONE", reg);
             xhci_clear_port_change(reg);
             return xhci_wait_usb3_trained(reg);
         }
         if ((i & 0x3ffu) == 0u) xhci_udelay(50u);
     }
-    v = *reg;
-    v &= ~XHCI_PORT_WPR;
-    v = (v & ~XHCI_PORT_LWS) | XHCI_PORT_CHANGE_MASK | (*reg & XHCI_PORT_PP);
-    *reg = v;
+    xhci_trace_portsc("WARM RESET TIMEOUT", reg);
+    /* WPR is RW1S (writing 0 is a no-op, hardware clears it on completion),
+     * so on timeout just clear the change bits and report failure. */
+    *reg = xhci_portsc_clear_changes(*reg);
     return -5;
 }
 
@@ -959,10 +1112,12 @@ static int xhci_warm_reset_port(volatile uint32_t *reg) {
  * known, PED never set) ignores PR forever; asking for RxDetect
  * re-arms detection first. Ignored by ports that don't need it. */
 static void xhci_force_rxdetect(volatile uint32_t *reg) {
-    uint32_t v = (*reg & ~(XHCI_PORT_PR | XHCI_PORT_WPR | XHCI_PORT_LWS |
-                           XHCI_PORT_PLS_MASK)) |
-                 XHCI_PORT_PP | XHCI_PORT_CHANGE_MASK | XHCI_PORT_LWS |
-                 (5u << 5);
+    /* xHCI 4.19.5: a link must be Disabled before it is moved to RxDetect.
+     * PED is RW1CS, so writing 1 here intentionally disables the port (and
+     * is a no-op when PED is already 0). Neutral base first: nothing else
+     * from the readback may round-trip. */
+    uint32_t v = xhci_portsc_neutralize(*reg);
+    v |= XHCI_PORT_CHANGE_MASK | XHCI_PORT_PED | XHCI_PORT_LWS | (5u << 5);
     *reg = v;
     xhci_udelay(10000u);
 }
@@ -971,12 +1126,11 @@ static void xhci_force_rxdetect(volatile uint32_t *reg) {
  * enumerate after a power drop; also clears electrically stuck links.
  * Returns 0 with CCS still set, -2 if the device vanished. */
 static int xhci_power_cycle_port(volatile uint32_t *reg) {
-    uint32_t v = (*reg & ~(XHCI_PORT_PR | XHCI_PORT_WPR | XHCI_PORT_LWS |
-                           XHCI_PORT_PP)) | XHCI_PORT_CHANGE_MASK;
+    uint32_t v = xhci_portsc_neutralize(*reg);
+    v = (v & ~XHCI_PORT_PP) | XHCI_PORT_CHANGE_MASK;
     *reg = v;
     xhci_udelay(100000u);
-    v = (*reg & ~(XHCI_PORT_PR | XHCI_PORT_WPR | XHCI_PORT_LWS)) |
-        XHCI_PORT_PP | XHCI_PORT_CHANGE_MASK;
+    v = xhci_portsc_neutralize(*reg) | XHCI_PORT_PP | XHCI_PORT_CHANGE_MASK;
     *reg = v;
     xhci_udelay(100000u);
     if ((*reg & XHCI_PORT_CCS) == 0u) return -2;
@@ -994,28 +1148,43 @@ static int xhci_port_enabled(volatile uint32_t *reg) {
 /* Pure USB2 bus-reset attempt (PR sequence only, no fallbacks).
  * Returns 0 with PRC observed, -3 on disconnect, -4/-5 on timeout. */
 static int xhci_usb2_reset(volatile uint32_t *reg) {
-    // Start the reset: set PR bit, preserve PP, set change bits to clear, clear WPR and LWS
-    uint32_t v = (*reg & ~(XHCI_PORT_PR | XHCI_PORT_WPR | XHCI_PORT_LWS));
-    v |= XHCI_PORT_PP | XHCI_PORT_CHANGE_MASK | XHCI_PORT_PR;
+    xhci_trace_portsc("RESET BEFORE", reg);
+    /* Start the reset from a neutral base: PED/PR/WPR/LWS never round-trip
+     * from the readback (PED=1 would disable the port, PR=1 re-resets it),
+     * stale W1C change bits are cleared so the completion PRC below is
+     * unambiguous, and only PR is asserted. PP/PLS come from the neutral
+     * value. */
+    uint32_t v = xhci_portsc_neutralize(*reg);
+    v |= XHCI_PORT_CHANGE_MASK | XHCI_PORT_PR;
     *reg = v;
     /* Give hardware time to react to PR assertion before polling for PRC. */
     xhci_udelay(100);
+    xhci_trace_portsc("PR ASSERTED", reg);
 
-    // Wait for the reset to complete (PRC set) and port enable/disable change (PEC set)
+    // Wait for the reset to complete: PRC is the spec's completion signal
+    // (set on the 1->0 transition of PR; PED is already 1 by then per
+    // xHCI 4.19.2). PEC is not required — some controllers (and QEMU's
+    // nec-xhci) never set it, and PRC alone is the canonical criterion.
     for (uint32_t i = 0; i < XHCI_RESET_POLL_LIMIT; ++i) {
         uint32_t s = *reg;
         if ((s & XHCI_STS_HSE) != 0u) { (void)s; }
-        if ((s & XHCI_PORT_PRC) != 0u && (s & XHCI_PORT_PEC) != 0u) {
+        if ((s & XHCI_PORT_PRC) != 0u) {
             // Reset complete, clear the change bits
+            xhci_trace_portsc("RESET COMPLETE", reg);
+            xhci_trace_portsc("BEFORE CHANGE CLEAR", reg);
             xhci_clear_port_change(reg);
+            xhci_trace_portsc("AFTER CHANGE CLEAR", reg);
             // Post-reset: device must still be present
             uint32_t after = *reg;
             if ((after & XHCI_PORT_CCS) == 0u) return -3;
+            xhci_trace_portsc("RESET FINAL", reg);
             return 0;
         }
         if ((i & 0x3ffu) == 0u) xhci_udelay(50u);
     }
-    /* Timeout with PRC still not set: deassert PR to leave the port sane. */
+    /* Timeout with PRC still not set: clear the change bits to leave the
+     * port sane. */
+    xhci_trace_portsc("RESET TIMEOUT", reg);
     xhci_clear_port_change(reg);
     return -5;
 }
@@ -1027,8 +1196,7 @@ int xhci_reset_port(size_t controller, uint8_t port) {
     uint32_t v = *reg;
     /* Real silicon: unpowered ports report CCS=0 forever. Power first. */
     if ((v & XHCI_PORT_PP) == 0u) {
-        v = (v & ~(XHCI_PORT_PR | XHCI_PORT_LWS)) |
-            XHCI_PORT_PP | XHCI_PORT_CHANGE_MASK;
+        v = xhci_portsc_neutralize(v) | XHCI_PORT_PP | XHCI_PORT_CHANGE_MASK;
         *reg = v;
         xhci_udelay(20000u);
         v = *reg;
@@ -1439,6 +1607,23 @@ static int wait_command(const rix_xhci_controller_t *c, xhci_runtime_t *rt,
                                   slot, 0u);
         acknowledge_event(c, rt);
         if (type != XHCI_TRB_COMMAND_COMPLETION || parameter != command_phys) continue;
+#if XHCI_ADDR_TRACE
+        {
+            serial_write("xHCI: COMMAND COMPLETION ctl=");
+            serial_write_dec(controller_index);
+            serial_write(" cmd_trb=");
+            serial_write_hex(command_phys);
+            serial_write(" event_trb=");
+            serial_write_hex(event_phys);
+            serial_write(" slot=");
+            serial_write_dec(slot);
+            serial_write(" cc=");
+            serial_write_dec(completion);
+            serial_write(" (");
+            serial_write(xhci_cc_name(completion));
+            serial_write(")\r\n");
+        }
+#endif
         if (out_slot) *out_slot = slot;
         if (completion == XHCI_COMPLETION_SUCCESS) return 0;
         return completion != 0u ? -(int)completion : -90;
@@ -1581,6 +1766,13 @@ int xhci_enable_slot(size_t controller, uint8_t *out_slot) {
     if (slot->allocated) return -4;
     slot->allocated = 1;
     *out_slot = slot_id;
+#if XHCI_ADDR_TRACE
+    serial_write("xHCI: ENABLE SLOT SUCCESS ctl=");
+    serial_write_dec(controller);
+    serial_write(" slot=");
+    serial_write_dec(slot_id);
+    serial_write("\r\n");
+#endif
     return 0;
 }
 
@@ -1604,14 +1796,44 @@ int xhci_address_device(size_t controller, uint8_t slot_id, uint8_t port, uint8_
     xhci_slot_runtime_t *slot = &runtimes[controller].slots[slot_id];
     if (!slot->allocated || slot->addressed) return -2;
     if (prepare_address_context(controller, slot_id, port, speed) != 0) return -3;
+    xhci_log_address_device_begin(controller, slot_id, port, speed);
     int rc = submit_command(controller, slot->input_context_phys,
                             (XHCI_TRB_ADDRESS_DEVICE << XHCI_TRB_TYPE_SHIFT) |
                             ((uint32_t)slot_id << XHCI_TRB_SLOT_SHIFT), NULL);
+#if XHCI_ADDR_TRACE
+    {
+        serial_write("xHCI: ADDRESS DEVICE COMPLETION ctl=");
+        serial_write_dec(controller);
+        serial_write(" port=");
+        serial_write_dec(port);
+        serial_write(" slot=");
+        serial_write_dec(slot_id);
+        serial_write(" cc=");
+        if (rc == 0) serial_write("1 (Success)");
+        else if (rc == -100 || rc <= -90) serial_write("NO COMPLETION");
+        else {
+            serial_write_dec((uint64_t)(-rc));
+            serial_write(" (");
+            serial_write(xhci_cc_name((uint8_t)(-rc)));
+            serial_write(")");
+        }
+        serial_write("\r\n");
+    }
+#endif
     if (rc != 0) {
         release_slot_context(&controllers[controller], slot_id);
         return rc;
     }
     slot->addressed = 1;
+#if XHCI_ADDR_TRACE
+    serial_write("xHCI: ADDRESS DEVICE SUCCESS ctl=");
+    serial_write_dec(controller);
+    serial_write(" port=");
+    serial_write_dec(port);
+    serial_write(" slot=");
+    serial_write_dec(slot_id);
+    serial_write("\r\n");
+#endif
     return 0;
 }
 
@@ -1888,7 +2110,7 @@ int xhci_configure_endpoint(size_t controller, uint8_t slot_id,
     uint8_t context_entries = endpoint_id > 1u ? endpoint_id : 1u;
     slot_context[0] = (slot_context[0] & ~XHCI_SLOT_CONTEXT_ENTRIES_MASK) |
                       ((uint32_t)context_entries << 27);
-    input[1] = XHCI_INPUT_ADD_SLOT | (1u << (endpoint_id + 1u));
+    input[1] = XHCI_INPUT_ADD_SLOT | (1u << endpoint_id);
     /* Phase H3: Max ESIT Payload (dword0 low half) for SuperSpeed
      * periodic endpoints; 0 elsewhere keeps the USB2 path identical.
      * Prefer the companion value, else derive MPS*(burst+1). */
@@ -1989,10 +2211,28 @@ int xhci_device_attach(size_t controller, uint8_t port, rix_xhci_device_t *out) 
     if (xhci_port_status(controller, port, &status) != 0 || !status.connected || !status.speed) return -5;
 
     uint8_t slot_id = 0;
+#if XHCI_ADDR_TRACE
+    serial_write("xHCI: ENABLE SLOT BEGIN controller=");
+    serial_write_dec(controller);
+    serial_write(" port=");
+    serial_write_dec(port);
+    serial_write("\r\n");
+#endif
     int rc = xhci_enable_slot(controller, &slot_id);
     if (rc != 0) return -6;
     rc = xhci_address_device(controller, slot_id, port, status.speed);
     if (rc != 0) {
+#if XHCI_ADDR_TRACE
+        serial_write("xHCI: attach: address device failed (enable slot OK) ctl=");
+        serial_write_dec(controller);
+        serial_write(" port=");
+        serial_write_dec(port);
+        serial_write(" slot=");
+        serial_write_dec(slot_id);
+        serial_write(" rc=");
+        serial_write_dec((uint64_t)(rc < 0 ? -rc : rc));
+        serial_write("\r\n");
+#endif
         (void)xhci_disable_slot(controller, slot_id);
         return -7;
     }

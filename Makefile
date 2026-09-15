@@ -278,7 +278,11 @@ xhci-caps-test: | build
 
 xhci-profile-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/xhci_profile_test.c kernel/usb/xhci_profile.c -o build/xhci_profile_test
-		build/xhci_profile_test
+	build/xhci_profile_test
+
+xhci-portsc-test: | build
+	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/xhci_portsc_test.c -o build/xhci_portsc_test
+	build/xhci_portsc_test
 
 rixfs-mount-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/rixfs_mount_test.c kernel/fs/rixfs.c -o build/rixfs_mount_test
@@ -333,7 +337,7 @@ klog-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -DRIX_HOST_TEST -I. tests/klog_test.c kernel/log/klog.c kernel/sync/lock.c -o build/klog_test
 		build/klog_test
 
-test: check usb-test hid-test tty-test shell-test pipe-test net-test libc-test hosts-test rtl-test e1000-test acpi-test smp-test gdt-test pmm-test heap-test xhci-caps-test xhci-profile-test rixfs-mount-test symlink-test sync-test thread-test runqueue-test block-cache-test elf-test dma-test nvme-prp-test statfs-test klog-test abi-check
+test: check usb-test hid-test tty-test shell-test pipe-test net-test libc-test hosts-test rtl-test e1000-test acpi-test smp-test gdt-test pmm-test heap-test xhci-caps-test xhci-profile-test xhci-portsc-test rixfs-mount-test symlink-test sync-test thread-test runqueue-test block-cache-test elf-test dma-test nvme-prp-test statfs-test klog-test abi-check
 	@echo 'Static kernel build checks completed.'
 
 abi-check:
