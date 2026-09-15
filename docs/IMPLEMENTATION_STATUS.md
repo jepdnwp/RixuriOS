@@ -892,3 +892,10 @@ No hosted CI by owner decision (workflow removed). Replacements, all local:
 toolchain, artifact hashes), `make abi-check` (81 syscalls header-vs-registry,
 wired into `make test`), plus the documented `test` / `image` / `iso` / fast
 QEMU / `repro-twice.sh` flow. Phase 23 stays LOCKED.
+
+## Phase 00 skip-enforcement checkpoint — 2026-09-15
+
+`rixtest` counts skips (`PASS WITH SKIPS`, `--strict` fails); the unified
+matrix fails on any `SKIP` in its log; `docs/RELEASE_BLOCKERS.md` records the
+gates. Automated harnesses never skip — they fail on missing markers. Phase 23
+stays LOCKED.

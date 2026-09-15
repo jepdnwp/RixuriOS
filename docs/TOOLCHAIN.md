@@ -51,7 +51,9 @@ explicit:
 - Fast QEMU subset: `qemu_pipe_stress_test.py`, `qemu_crash_test.py`,
   `qemu_fuzz_test.py`
 - Repro: `bash scripts/repro-twice.sh [epoch]` (three-artifact identity)
-- Full matrix: `bash scripts/run-all-tests.sh` (QEMU-heavy, ~30 min)
+- Full matrix: `bash scripts/run-all-tests.sh` (QEMU-heavy, ~30 min, includes
+  the skip-enforcement step)
+- Release gates: `docs/RELEASE_BLOCKERS.md` (all open; no release claimed)
 - Provenance: `make provenance` writes `build/provenance.json`
 - ABI check: `make abi-check` verifies `docs/ABI_REGISTRY.md` against
   `kernel/syscall/syscall.h` (any drift fails the build)

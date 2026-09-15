@@ -35,10 +35,10 @@ stated plainly; QEMU PASS is never claimed as physical PASS.
   `REPRO_ALL_PASS` over two clean builds), local verification only (no hosted
   CI by owner decision): `make test`/`image`/`iso`, fast QEMU subset,
   `repro-twice.sh`, `make provenance`, `make abi-check`.
-- Remaining: SBOM, artifact retention, test-skip enforcement, ABI/version
-  ledger automation beyond the wired `abi-check`, release-blocker policy.
-  (Provenance manifest exists locally via `make provenance`; no hosted CI
-  by owner decision.)
+- Remaining: SBOM, artifact retention, ABI/version ledger automation beyond
+  the wired `abi-check`. (Provenance via `make provenance`, skip enforcement
+  via matrix log scan + `rixtest --strict`, release gates in
+  `docs/RELEASE_BLOCKERS.md`; no hosted CI by owner decision.)
 - Tests: host suite green incl. new tests; `git diff --check` clean.
 - QEMU: fast subset green; full matrix rerun open.
 - Physical: none (build-to-HW artifact chain unproven).

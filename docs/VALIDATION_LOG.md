@@ -2066,6 +2066,33 @@ Explicitly NOT in this slice: SBOM/provenance manifest, artifact retention,
 test-skip enforcement automation, ABI ledger automation, release-blocker
 policy. Phase 23 stays LOCKED.
 
+## 2026-09-15 — Phase 00 slice: skip enforcement + release blockers, no hosted CI
+
+- Audit: the only runtime `SKIP` source is the manual on-device `rixtest`
+  (fixture + pipe-stress modes print explicit `SKIP name (why)`); the fuzz
+  destructive-number skip lives only in a source comment, never in output.
+  Automated harnesses fail (never skip) on missing markers.
+- `user/programs/rixtest.c`: skips counted; summary prints `PASS WITH SKIPS
+  (n)` instead of bare `PASS`, and new `--strict` returns non-zero when any
+  skip occurred. Default exit unchanged (owner runs smoke knowingly), but the
+  output can no longer be mistaken for full evidence.
+- `scripts/run-all-tests.sh`: final skip-enforcement step fails the whole
+  matrix if `SKIP` appears anywhere in the run log.
+- `docs/RELEASE_BLOCKERS.md`: release gates checklist (all phase gates PASS,
+  test + abi-check, matrix + skip-check, repro, provenance dirty=false,
+  hardware acceptance, no P0, docs sync). Current status: all gates open.
+
+Validation:
+
+```text
+make image RC=0 (-Werror, rixtest --strict builds clean)
+grep audit: no SKIP in any automated harness output
+git diff --check clean
+```
+
+Explicitly NOT in this slice: SBOM, artifact retention, full-matrix rerun,
+hardware evidence. Phase 23 stays LOCKED.
+
 ## 2026-09-15 — Phase 00 slice: no hosted CI, local provenance + ABI check
 
 Owner decision: no hosted CI workflow in this tree (`.github/workflows/ci.yml`
