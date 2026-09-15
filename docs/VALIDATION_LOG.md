@@ -2128,15 +2128,21 @@ qemu rixtest smoke: 15 PASS, PASS WITH SKIPS
 qemu rixtest --sched: burst (24+16/40) + churn-10 PASS
 qemu rixtest --crash: null + ud crash-reap PASS
 qemu proc-test bare: proc_pipe_wait=PASS
+qemu_fullgroup_test.py (new, matrix): posix 27/27 + pipetest 3/3 + credtest
+  full + metatest init/policy + renametest 6/6 + proc-test PASS, 11/11
+  markers, no FAIL, no fault markers
 git diff --check clean
 ```
 
-Explicitly NOT closed here: one `--full` run showed eaten line prefixes +
-`proc-test status=127` AFTER metatest/renametest churn; bare and
-divergent-prefix runs of the same binaries are clean, so a filesystem-
-aftermath vs TTY-output-path discriminator is still open (tracked, not
-claimed). `mount`/`umount` + GPT, SBOM, retention, hardware evidence remain
-open. Phase 23 stays LOCKED.
+Follow-up on the single pre-fix `--full` anomaly (eaten line prefixes +
+`proc-test status=127` after metatest/renametest churn): after the aliasing
+fix and the test-list corrections, the full fixture group passes cleanly
+with zero garbling, and no recurrence appeared across six subsequent QEMU
+runs. Best explanation on current evidence is fallout of the pre-fix failure
+cascade (failed credential tests perturbing task/credential/FS-journal
+state); no independent mechanism was ever isolated, so the TTY-output-path
+audit stays a watch item rather than a claimed root cause. `mount`/`umount`
++ GPT, SBOM, retention, hardware evidence remain open. Phase 23 stays LOCKED.
 
 ## 2026-09-15 — Phase 00 slice: no hosted CI, local provenance + ABI check
 

@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
-"""Run shell commands in QEMU and check for a marker. Usage:
-qemu_onecmd_test.py "<marker>" <timeout_s> "<command>" ["<command>" ...]"""
+"""Full fixture group after a divergent fork prefix (PID/slot aliasing gate).
+
+Runs posix-test + pipetest (advance next_pid past the reused table slots),
+then credtest, metatest init/policy, renametest and proc-test. Before the
+slot_of() fix, credtest failed at its audit child here while passing bare;
+commands with arguments travel intact (no shell quoting involved).
+"""
 import os
 import select
 import shutil
@@ -10,27 +15,37 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-TAG = os.environ.get("RIXURI_TEST_TAG", "onecmd")
-IMAGE = ROOT / "build" / f"rixfs-{TAG}.img"
-ESP = ROOT / "build" / "uefi" / f"esp-{TAG}"
-LOG = ROOT / "build" / f"qemu-{TAG}.log"
+IMAGE = ROOT / "build" / "rixfs-fullgroup.img"
+ESP = ROOT / "build" / "uefi" / "esp-fullgroup"
+LOG = ROOT / "build" / "qemu-fullgroup.log"
+COMMANDS = [
+    b"/usr/bin/posix-test",
+    b"/usr/bin/pipetest",
+    b"/usr/bin/credtest",
+    b"/usr/bin/metatest init",
+    b"/usr/bin/metatest policy",
+    b"/usr/bin/renametest",
+    b"/usr/bin/proc-test",
+]
+REQUIRED = [
+    b"posix=PASS",
+    b"pipe-backpressure=PASS",
+    b"cap=PASS",
+    b"acl=PASS",
+    b"matrix=PASS",
+    b"audit=PASS",
+    b"setid=PASS",
+    b"metadata-source=PASS",
+    b"chown-policy=PASS",
+    b"rename-roundtrip=PASS",
+    b"proc_pipe_wait=PASS",
+]
 shutil.copyfile(ROOT / "build" / "rixfs.img", IMAGE)
 shutil.rmtree(ESP, ignore_errors=True)
 shutil.copytree(ROOT / "build" / "uefi" / "esp", ESP)
 env = os.environ.copy()
 env["RIXURI_RIXFS_IMAGE"] = str(IMAGE)
 env["RIXURI_ESP"] = str(ESP)
-marker = sys.argv[1].encode()
-timeout = float(sys.argv[2])
-commands = [a.encode() for a in sys.argv[3:]]
-# Multi-word commands cannot survive nested shell quoting (wsl/powershell
-# split on spaces), so a batch file wins whenever it is provided: one
-# command per line, blanks ignored.
-batch = os.environ.get("RIXURI_CMDS_FILE", "")
-if batch:
-    with open(batch, "rb") as f:
-        commands = [ln.strip() for ln in f.read().split(b"\n")]
-    commands = [c for c in commands if c]
 proc = subprocess.Popen(
     ["bash", "./scripts/run-qemu.sh"], cwd=ROOT, stdin=subprocess.PIPE,
     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
@@ -67,24 +82,17 @@ try:
     if not read_until(b"RIXURI: SHELL READY", 30.0):
         raise RuntimeError("embedded init completion not observed")
     time.sleep(1.0)
-    # One command at a time: sync to the idle prompt first, then send each
-    # command only after the previous one returned to the prompt. Blind
-    # back-to-back sends overflow the bounded TTY input queue under fork/exec
-    # load and arrive truncated (observed: eaten command bytes, silent
-    # no-op commands).
     if not read_until(b"\x1b[1;37m:\x1b[0m ", 15.0):
         raise RuntimeError("idle shell prompt not observed")
-    deadline = time.monotonic() + timeout
-    for command in commands:
+    deadline = time.monotonic() + 300.0
+    for command in COMMANDS:
         send(command)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            raise RuntimeError(f"marker {marker!r} not observed")
+            raise RuntimeError("fullgroup timed out")
         if not read_until(b"\x1b[1;37m:\x1b[0m ", remaining):
             raise RuntimeError("shell prompt did not return")
         time.sleep(0.5)
-    if marker not in output:
-        raise RuntimeError(f"marker {marker!r} not observed")
 finally:
     proc.terminate()
     try:
@@ -97,7 +105,11 @@ finally:
     LOG.write_bytes(output)
 
 LOG.write_bytes(output)
-sys.stdout.buffer.write(output)
+for marker in REQUIRED:
+    if marker not in output:
+        raise SystemExit(f"missing {marker!r}")
+if b"FAIL " in output or b"=FAIL" in output:
+    raise SystemExit("FAIL marker observed")
 if b"page fault" in output.lower() or b"panic" in output.lower():
     raise SystemExit("kernel fault marker observed")
-print("qemu onecmd test: PASS")
+print("qemu fullgroup test: PASS")
