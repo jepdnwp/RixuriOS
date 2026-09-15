@@ -17,7 +17,7 @@ PROGRAM_NAMES := echo cat args grep true false sleep ls mkdir rm rmdir touch sta
 PROGRAM_ELFS := $(addprefix build/programs/,$(addsuffix .elf,$(PROGRAM_NAMES)))
 PROGRAM_START_OBJ := build/programs/start.o
 
-.PHONY: all clean check image iso-test powerloss-test test-all run qemu build-run test user-init programs rixfs-image usb-test hid-test tty-test shell-test pipe-test net-test hosts-test rtl-test e1000-test acpi-test smp-test gdt-test pmm-test heap-test rixfs-mount-test auth-test phase20-test ring3-test sysroot thread-test runqueue-test
+.PHONY: all clean check image iso-test powerloss-test test-all run qemu build-run test user-init programs rixfs-image usb-test hid-test tty-test shell-test pipe-test net-test hosts-test rtl-test e1000-test acpi-test smp-test gdt-test pmm-test heap-test rixfs-mount-test auth-test phase20-test ring3-test sysroot thread-test runqueue-test block-cache-test elf-test
 all: build/kernel.elf
 
 build:
@@ -25,8 +25,19 @@ build:
 
 FORCE:
 
+# Reproducible release mode: SOURCE_DATE_EPOCH=<unix-seconds> makes the
+# embedded build ID deterministic (no wall-clock, no dirty suffix).
+# Clean tree is required for byte-identical artifacts; a dirty tree in
+# reproducible mode keeps the hash but appends -dirty so it can never be
+# mistaken for a release artifact.
 build/build_id.h: FORCE | build
-	printf '#pragma once\n#define RIXURI_BUILD_ID "%s"\n' "$$(git rev-parse --short HEAD 2>/dev/null)$$(git diff --quiet 2>/dev/null || echo -dirty)-$$(date -u +%Y%m%d-%H%M%S)" > $@
+	if [ -n "$${SOURCE_DATE_EPOCH:-}" ]; then \
+		epoch="$${SOURCE_DATE_EPOCH}"; \
+		stamp="$$(date -u -d "@$${epoch}" +%Y%m%d-%H%M%S 2>/dev/null || date -u -r "$${epoch}" +%Y%m%d-%H%M%S)"; \
+		printf '#pragma once\n#define RIXURI_BUILD_ID "%s"\n' "$$(git rev-parse --short HEAD 2>/dev/null)$$(git diff --quiet 2>/dev/null || echo -dirty)-$${stamp}" > $@; \
+	else \
+		printf '#pragma once\n#define RIXURI_BUILD_ID "%s"\n' "$$(git rev-parse --short HEAD 2>/dev/null)$$(git diff --quiet 2>/dev/null || echo -dirty)-$$(date -u +%Y%m%d-%H%M%S)" > $@; \
+	fi
 
 kernel/main.o: build/build_id.h
 
@@ -294,7 +305,15 @@ runqueue-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -DRIX_HOST_TEST -I. tests/runqueue_test.c kernel/sched/runqueue.c -o build/runqueue_test
 		build/runqueue_test
 
-test: check usb-test hid-test tty-test shell-test pipe-test net-test libc-test hosts-test rtl-test e1000-test acpi-test smp-test gdt-test pmm-test heap-test xhci-caps-test xhci-profile-test rixfs-mount-test symlink-test sync-test thread-test runqueue-test
+block-cache-test: | build
+	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -DRIX_HOST_TEST -I. tests/block_cache_test.c kernel/storage/block_cache.c kernel/sync/lock.c -o build/block_cache_test
+		build/block_cache_test
+
+elf-test: | build
+	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/elf_test.c kernel/elf/elf.c -o build/elf_test
+		build/elf_test
+
+test: check usb-test hid-test tty-test shell-test pipe-test net-test libc-test hosts-test rtl-test e1000-test acpi-test smp-test gdt-test pmm-test heap-test xhci-caps-test xhci-profile-test rixfs-mount-test symlink-test sync-test thread-test runqueue-test block-cache-test elf-test
 	@echo 'Static kernel build checks completed.'
 
 sysroot:
