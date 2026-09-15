@@ -16,17 +16,59 @@ static int io(rix_block_device_t*d,rix_bio_op_t op,uint64_t sector,void*b){if(!d
 static cache_entry_t *find(rix_block_device_t*d,uint64_t s){for(size_t i=0;i<CACHE_ENTRIES;i++)if(cache[i].valid&&cache[i].device==d&&cache[i].sector==s)return &cache[i];return NULL;}
 static cache_entry_t *victim(void){cache_entry_t*v=NULL;for(size_t i=0;i<CACHE_ENTRIES;i++)if(!cache[i].valid)return &cache[i];else if(!v||cache[i].age<v->age)v=&cache[i];return v;}
 static void invalidate(cache_entry_t*e){e->valid=0;e->dirty=0;e->device=NULL;e->sector=0;e->age=0;}
+/* Evict one victim slot, preserving dirty data on writeback failure.
+ * Returns 0 with a free (invalid) slot ready in *out_slot, or -1 when the
+ * chosen dirty victim could not be written back (its entry is left
+ * valid+dirty, never discarded). Uses the victim device's own sector size,
+ * never the incoming device's size. Bounded: single victim, no recursion. */
+static int evict_one(cache_entry_t **out_slot){
+    uint64_t f=0;rix_spin_lock_irqsave(&cache_lock,&f);
+    cache_entry_t*e=victim();
+    if(!e){rix_spin_unlock_irqrestore(&cache_lock,f);return -1;}
+    if(!e->valid||!e->dirty){
+        invalidate(e);
+        rix_spin_unlock_irqrestore(&cache_lock,f);
+        *out_slot=e;
+        return 0;
+    }
+    rix_block_device_t*old_d=e->device;uint64_t old_s=e->sector;uint64_t old_age=e->age;
+    uint32_t old_sz=old_d?old_d->sector_size:0;
+    if(!old_d||old_sz==0||old_sz>CACHE_SECTOR_BYTES){rix_spin_unlock_irqrestore(&cache_lock,f);return -1;}
+    uint8_t old_data[CACHE_SECTOR_BYTES];
+    for(uint32_t i=0;i<old_sz;i++)old_data[i]=e->data[i];
+    rix_spin_unlock_irqrestore(&cache_lock,f);
+    if(io(old_d,RIX_BIO_WRITE,old_s,old_data)!=0)return -1;
+    rix_spin_lock_irqsave(&cache_lock,&f);
+    /* Only reclaim when nobody touched the entry while we wrote. A
+     * concurrent update bumps age, so the new dirty data must survive. */
+    cache_entry_t*cur=find(old_d,old_s);
+    if(cur&&cur->age==old_age)invalidate(cur);
+    /* The invalidated slot (or another free one) is now available. */
+    e=victim();
+    if(!e||e->valid){
+        /* Concurrent fill raced us; leave state intact and let the caller
+         * retry its outer loop (bounded by the caller). */
+        rix_spin_unlock_irqrestore(&cache_lock,f);
+        return -1;
+    }
+    rix_spin_unlock_irqrestore(&cache_lock,f);
+    *out_slot=e;
+    return 0;
+}
 int block_cache_read(rix_block_device_t*d,uint64_t s,void*b){
  if(!d||!b||d->sector_size==0||d->sector_size>CACHE_SECTOR_BYTES)return -1;
- uint64_t f=0;rix_spin_lock_irqsave(&cache_lock,&f);cache_entry_t*e=find(d,s);if(e){e->age=++clock_tick;for(uint32_t i=0;i<d->sector_size;i++)((uint8_t*)b)[i]=e->data[i];rix_spin_unlock_irqrestore(&cache_lock,f);return 0;}e=victim();int dirty=e->valid&&e->dirty;rix_block_device_t*old_d=e->device;uint64_t old_s=e->sector;uint8_t old_data[CACHE_SECTOR_BYTES];if(dirty)for(uint32_t i=0;i<d->sector_size;i++)old_data[i]=e->data[i];invalidate(e);rix_spin_unlock_irqrestore(&cache_lock,f);
- if(dirty&&io(old_d,RIX_BIO_WRITE,old_s,old_data)!=0)return -1;
+ uint64_t f=0;rix_spin_lock_irqsave(&cache_lock,&f);cache_entry_t*e=find(d,s);if(e){e->age=++clock_tick;for(uint32_t i=0;i<d->sector_size;i++)((uint8_t*)b)[i]=e->data[i];rix_spin_unlock_irqrestore(&cache_lock,f);return 0;}rix_spin_unlock_irqrestore(&cache_lock,f);
+ cache_entry_t*slot=NULL;
+ for(int i=0;i<3;i++){if(evict_one(&slot)==0)break;slot=NULL;if(i==2)return -1;}
  uint8_t fresh[CACHE_SECTOR_BYTES];if(io(d,RIX_BIO_READ,s,fresh)!=0)return -1;
- rix_spin_lock_irqsave(&cache_lock,&f);if(find(d,s)){rix_spin_unlock_irqrestore(&cache_lock,f);for(uint32_t i=0;i<d->sector_size;i++)((uint8_t*)b)[i]=fresh[i];return 0;}e=victim();for(uint32_t i=0;i<d->sector_size;i++)e->data[i]=fresh[i];e->device=d;e->sector=s;e->valid=1;e->dirty=0;e->age=++clock_tick;for(uint32_t i=0;i<d->sector_size;i++)((uint8_t*)b)[i]=e->data[i];rix_spin_unlock_irqrestore(&cache_lock,f);return 0;
+ rix_spin_lock_irqsave(&cache_lock,&f);if(find(d,s)){rix_spin_unlock_irqrestore(&cache_lock,f);for(uint32_t i=0;i<d->sector_size;i++)((uint8_t*)b)[i]=fresh[i];return 0;}e=victim();if(e->valid){rix_spin_unlock_irqrestore(&cache_lock,f);for(uint32_t i=0;i<d->sector_size;i++)((uint8_t*)b)[i]=fresh[i];return 0;}for(uint32_t i=0;i<d->sector_size;i++)e->data[i]=fresh[i];e->device=d;e->sector=s;e->valid=1;e->dirty=0;e->age=++clock_tick;for(uint32_t i=0;i<d->sector_size;i++)((uint8_t*)b)[i]=e->data[i];rix_spin_unlock_irqrestore(&cache_lock,f);return 0;
 }
 int block_cache_write(rix_block_device_t*d,uint64_t s,const void*b){
  if(!d||!b||d->sector_size==0||d->sector_size>CACHE_SECTOR_BYTES)return -1;
- uint8_t input[CACHE_SECTOR_BYTES];for(uint32_t i=0;i<d->sector_size;i++)input[i]=((const uint8_t*)b)[i];uint64_t f=0;rix_spin_lock_irqsave(&cache_lock,&f);cache_entry_t*e=find(d,s);if(e){for(uint32_t i=0;i<d->sector_size;i++)e->data[i]=input[i];e->dirty=1;e->age=++clock_tick;rix_spin_unlock_irqrestore(&cache_lock,f);return 0;}e=victim();int dirty=e->valid&&e->dirty;rix_block_device_t*old_d=e->device;uint64_t old_s=e->sector;uint8_t old_data[CACHE_SECTOR_BYTES];if(dirty)for(uint32_t i=0;i<d->sector_size;i++)old_data[i]=e->data[i];invalidate(e);rix_spin_unlock_irqrestore(&cache_lock,f);if(dirty&&io(old_d,RIX_BIO_WRITE,old_s,old_data)!=0)return -1;
- rix_spin_lock_irqsave(&cache_lock,&f);e=victim();for(uint32_t i=0;i<d->sector_size;i++)e->data[i]=input[i];e->device=d;e->sector=s;e->valid=1;e->dirty=1;e->age=++clock_tick;rix_spin_unlock_irqrestore(&cache_lock,f);return 0;
+ uint8_t input[CACHE_SECTOR_BYTES];for(uint32_t i=0;i<d->sector_size;i++)input[i]=((const uint8_t*)b)[i];uint64_t f=0;rix_spin_lock_irqsave(&cache_lock,&f);cache_entry_t*e=find(d,s);if(e){for(uint32_t i=0;i<d->sector_size;i++)e->data[i]=input[i];e->dirty=1;e->age=++clock_tick;rix_spin_unlock_irqrestore(&cache_lock,f);return 0;}rix_spin_unlock_irqrestore(&cache_lock,f);
+ cache_entry_t*slot=NULL;
+ for(int i=0;i<3;i++){if(evict_one(&slot)==0)break;slot=NULL;if(i==2)return -1;}
+ rix_spin_lock_irqsave(&cache_lock,&f);e=victim();if(e->valid){rix_spin_unlock_irqrestore(&cache_lock,f);return io(d,RIX_BIO_WRITE,s,input);}for(uint32_t i=0;i<d->sector_size;i++)e->data[i]=input[i];e->device=d;e->sector=s;e->valid=1;e->dirty=1;e->age=++clock_tick;rix_spin_unlock_irqrestore(&cache_lock,f);return 0;
 }
 int block_cache_flush(rix_block_device_t*d){if(!d||!d->submit)return -1;for(;;){uint64_t f=0;rix_spin_lock_irqsave(&cache_lock,&f);cache_entry_t*e=NULL;for(size_t i=0;i<CACHE_ENTRIES;i++)if(cache[i].valid&&cache[i].device==d&&cache[i].dirty){e=&cache[i];break;}if(!e){rix_spin_unlock_irqrestore(&cache_lock,f);break;}uint64_t sector=e->sector;uint8_t data[CACHE_SECTOR_BYTES];for(uint32_t i=0;i<d->sector_size;i++)data[i]=e->data[i];e->dirty=0;rix_spin_unlock_irqrestore(&cache_lock,f);if(io(d,RIX_BIO_WRITE,sector,data)!=0){rix_spin_lock_irqsave(&cache_lock,&f);cache_entry_t*x=find(d,sector);if(x)x->dirty=1;rix_spin_unlock_irqrestore(&cache_lock,f);return -1;}}
  rix_bio_t bio={RIX_BIO_FLUSH,0,0,NULL,0,RIX_BIO_PENDING,0};return d->submit(d,&bio);}
