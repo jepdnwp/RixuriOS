@@ -82,6 +82,7 @@
 #define XHCI_TRB_DIR (1u << 16)
 #define XHCI_TRB_CYCLE (1u << 0)
 #define XHCI_COMPLETION_SUCCESS 1u
+#define XHCI_COMPLETION_SHORT_PACKET 13u
 #define XHCI_COMPLETION_CONTEXT_STATE 11u
 /* Real-silicon timing: port reset needs ~50ms (USB2 TDRST) plus link
  * training; command/event polls must survive millisecond stalls. The raw
@@ -930,6 +931,17 @@ static const char *xhci_cc_name(uint8_t cc) {
     return "Unknown";
 }
 
+static const char *xhci_speed_name(uint8_t speed) {
+    switch (speed) {
+    case 1u: return "Full";
+    case 2u: return "Low";
+    case 3u: return "High";
+    case 4u: return "Super";
+    case 5u: return "SuperPlus";
+    default: return "?";
+    }
+}
+
 static void xhci_log_address_device_begin(size_t controller, uint8_t slot_id,
                                           uint8_t port, uint8_t speed) {
     const rix_xhci_controller_t *c = &controllers[controller];
@@ -1004,6 +1016,115 @@ static void xhci_log_address_device_begin(size_t controller, uint8_t slot_id,
         serial_write_dec(i);
         serial_write("=");
         serial_write_hex(ep0[i]);
+        serial_write("\r\n");
+    }
+    /* Decoded field dump (xHCI 6.2.2/6.2.3 bit positions) so the raw
+     * dwords above are checked against the spec without manual math. */
+    {
+        uint32_t s0 = sctx[0], s1 = sctx[1], s2 = sctx[2], s3 = sctx[3];
+        uint32_t e0 = ep0[0], e1 = ep0[1];
+        uint64_t deq = ((uint64_t)ep0[3] << 32) | ep0[2];
+        serial_write("xHCI: INPUT CONTEXT DECODE\r\n");
+        serial_write("xHCI: ICTX drop=");
+        serial_write_hex(ictl[0]);
+        serial_write(" add=");
+        serial_write_hex(ictl[1]);
+        serial_write(" (A0=slot A1=ep0)\r\n");
+        serial_write("xHCI: SLOT route=");
+        serial_write_dec((uint64_t)(s0 & 0xfffffu));
+        serial_write(" speed=");
+        serial_write_dec((uint64_t)((s0 >> 20) & 0xfu));
+        serial_write(" (");
+        serial_write(xhci_speed_name((uint8_t)((s0 >> 20) & 0xfu)));
+        serial_write(") entries=");
+        serial_write_dec((uint64_t)((s0 >> 27) & 0x1fu));
+        serial_write(" rhport=");
+        serial_write_dec((uint64_t)((s1 >> 16) & 0xffu));
+        serial_write(" mel=");
+        serial_write_dec((uint64_t)(s1 & 0xffffu));
+        serial_write(" nports=");
+        serial_write_dec((uint64_t)((s1 >> 24) & 0xffu));
+        serial_write("\r\n");
+        serial_write("xHCI: SLOT tt_hub=");
+        serial_write_dec((uint64_t)(s2 & 0xffu));
+        serial_write(" tt_port=");
+        serial_write_dec((uint64_t)((s2 >> 8) & 0xffu));
+        serial_write(" ttt=");
+        serial_write_dec((uint64_t)((s2 >> 16) & 0x3u));
+        serial_write(" intr=");
+        serial_write_dec((uint64_t)((s2 >> 22) & 0x3ffu));
+        serial_write(" addr=");
+        serial_write_dec((uint64_t)(s3 & 0xffu));
+        serial_write(" state=");
+        serial_write_dec((uint64_t)((s3 >> 27) & 0x1fu));
+        serial_write("\r\n");
+        serial_write("xHCI: EP0 state=");
+        serial_write_dec((uint64_t)(e0 & 0x7u));
+        serial_write(" mult=");
+        serial_write_dec((uint64_t)((e0 >> 5) & 0x7u));
+        serial_write(" mpstreams=");
+        serial_write_dec((uint64_t)((e0 >> 10) & 0x7u));
+        serial_write(" interval=");
+        serial_write_dec((uint64_t)((e0 >> 16) & 0xffu));
+        serial_write("\r\n");
+        serial_write("xHCI: EP0 cerr=");
+        serial_write_dec((uint64_t)((e1 >> 1) & 0x3u));
+        serial_write(" type=");
+        serial_write_dec((uint64_t)((e1 >> 3) & 0x7u));
+        serial_write(" maxburst=");
+        serial_write_dec((uint64_t)((e1 >> 8) & 0xffu));
+        serial_write(" mps=");
+        serial_write_dec((uint64_t)((e1 >> 16) & 0xffffu));
+        serial_write(" deq=");
+        serial_write_hex(deq);
+        serial_write(" DCS=");
+        serial_write_dec((uint64_t)(ep0[2] & 1u));
+        serial_write(" avgtrb=");
+        serial_write_dec((uint64_t)(ep0[4] & 0xffffu));
+        serial_write(" maxesit=");
+        serial_write_dec((uint64_t)((ep0[4] >> 16) & 0xffffu));
+        serial_write("\r\n");
+    }
+    /* EP0 transfer ring at Address Device time: the HC does not fetch it
+     * for a BSR=0 Address Device (no data stage), so TRB0..2 are still
+     * zero; only the Link TRB at index 63 is live. */
+    {
+        const volatile xhci_trb_t *ring0 = (const volatile xhci_trb_t *)(uintptr_t)slot->ep0_ring_phys;
+        const volatile xhci_trb_t *link = ring0 + (XHCI_CMD_RING_TRBS - 1u);
+        for (unsigned i = 0; i < 3u; ++i) {
+            serial_write("xHCI: EP0 RING TRB");
+            serial_write_dec(i);
+            serial_write(" phys=");
+            serial_write_hex(slot->ep0_ring_phys + (uint64_t)i * 16u);
+            serial_write(" parameter=");
+            serial_write_hex(((uint64_t)ring0[i].parameter_hi << 32) | ring0[i].parameter_lo);
+            serial_write(" status=");
+            serial_write_hex(ring0[i].status);
+            serial_write(" control=");
+            serial_write_hex(ring0[i].control);
+            serial_write("\r\n");
+        }
+        serial_write("xHCI: EP0 RING LINK phys=");
+        serial_write_hex(slot->ep0_ring_phys + (uint64_t)(XHCI_CMD_RING_TRBS - 1u) * 16u);
+        serial_write(" parameter=");
+        serial_write_hex(((uint64_t)link->parameter_hi << 32) | link->parameter_lo);
+        serial_write(" control=");
+        serial_write_hex(link->control);
+        serial_write("\r\n");
+    }
+    /* Device context BEFORE the command: freshly zeroed page; anything
+     * nonzero here would mean the HC is looking at stale state. */
+    {
+        const volatile uint32_t *devctx = (const volatile uint32_t *)(uintptr_t)slot->device_context_phys;
+        const volatile uint32_t *ep0dev = devctx + context_size / 4u;
+        serial_write("xHCI: DEVICE CONTEXT BEFORE SCTX.dw0=");
+        serial_write_hex(devctx[0]);
+        serial_write(" dw3=");
+        serial_write_hex(devctx[3]);
+        serial_write(" E0CTX.dw0=");
+        serial_write_hex(ep0dev[0]);
+        serial_write(" dw1=");
+        serial_write_hex(ep0dev[1]);
         serial_write("\r\n");
     }
 }
@@ -1916,9 +2037,60 @@ int xhci_address_device(size_t controller, uint8_t slot_id, uint8_t port, uint8_
     if (!slot->allocated || slot->addressed) return -2;
     if (prepare_address_context(controller, slot_id, port, speed) != 0) return -3;
     xhci_log_address_device_begin(controller, slot_id, port, speed);
-    int rc = submit_command(controller, slot->input_context_phys,
+    /* Bounded retry on cc=4 (USB Transaction Error): the HC executed the
+     * command and the SET_ADDRESS transaction failed on the wire. Real
+     * devices routinely finish their post-reset recovery after the HC's
+     * CErr retry window (an emulated device answers instantly, so this
+     * never reproduces on QEMU). Linux applies the same SET_ADDRESS
+     * retry strategy in hub_port_init. Re-issuing Address Device against
+     * the same input context is legal while the slot is in Default state.
+     * Only the wire error is retried — parameter/context errors are
+     * deterministic and fail immediately. */
+    int rc = 0;
+    for (unsigned attempt = 1; attempt <= 3u; ++attempt) {
+        rc = submit_command(controller, slot->input_context_phys,
                             (XHCI_TRB_ADDRESS_DEVICE << XHCI_TRB_TYPE_SHIFT) |
                             ((uint32_t)slot_id << XHCI_TRB_SLOT_SHIFT), NULL);
+#if XHCI_ADDR_TRACE
+        {
+            serial_write("xHCI: ADDRESS DEVICE COMPLETION ctl=");
+            serial_write_dec(controller);
+            serial_write(" port=");
+            serial_write_dec(port);
+            serial_write(" slot=");
+            serial_write_dec(slot_id);
+            serial_write(" attempt=");
+            serial_write_dec(attempt);
+            serial_write(" cc=");
+            if (rc == 0) serial_write("1 (Success)");
+            else if (rc == -100) serial_write("NO COMPLETION (timeout)");
+            else if (rc <= -90) serial_write("NO COMPLETION");
+            else {
+                serial_write_dec((uint64_t)(-rc));
+                serial_write(" (");
+                serial_write(xhci_cc_name((uint8_t)(-rc)));
+                serial_write(")");
+            }
+            serial_write("\r\n");
+        }
+#endif
+        if (rc == 0 || rc != -4) break;
+        /* Abort the retry if the device vanished mid-attempt. */
+        rix_xhci_port_status_t st;
+        if (xhci_port_status(controller, port, &st) != 0 || !st.connected) break;
+#if XHCI_ADDR_TRACE
+        serial_write("xHCI: ADDRESS DEVICE RETRY ctl=");
+        serial_write_dec(controller);
+        serial_write(" port=");
+        serial_write_dec(port);
+        serial_write(" slot=");
+        serial_write_dec(slot_id);
+        serial_write(" next=");
+        serial_write_dec(attempt + 1u);
+        serial_write("\r\n");
+#endif
+        xhci_udelay(50000u);
+    }
 #if XHCI_ADDR_TRACE
     {
         const rix_xhci_controller_t *c = &controllers[controller];
@@ -1927,6 +2099,8 @@ int xhci_address_device(size_t controller, uint8_t slot_id, uint8_t port, uint8_
         volatile uint64_t *dcbaa = (volatile uint64_t *)(uintptr_t)c->dcbaa_phys;
         const volatile uint32_t *devctx =
             (const volatile uint32_t *)(uintptr_t)slot->device_context_phys;
+        uint32_t context_size = (c->hcc_params1 & XHCI_HCC_CSZ) != 0u ? 64u : 32u;
+        const volatile uint32_t *ep0ctx = devctx + context_size / 4u;
         serial_write("=== ADDRESS DEVICE AFTER ===\r\nxHCI: ctl=");
         serial_write_dec(controller);
         serial_write(" slot=");
@@ -1935,49 +2109,24 @@ int xhci_address_device(size_t controller, uint8_t slot_id, uint8_t port, uint8_
         serial_write_dec((uint64_t)(rc < 0 ? (uint64_t)(-rc) : (uint64_t)rc));
         serial_write(" AC64=");
         serial_write_dec((uint64_t)((c->hcc_params1 & XHCI_HCC_AC64) != 0u));
-        serial_write(" dcbaa_phys=");
-        serial_write_hex(c->dcbaa_phys);
         serial_write(" DCBAA[slot]=");
         serial_write_hex(dcbaa[slot_id]);
         serial_write(" devctx_phys=");
         serial_write_hex(slot->device_context_phys);
         serial_write(" SCTX.dw0=");
         serial_write_hex(devctx[0]);
-        serial_write(" dw1=");
-        serial_write_hex(devctx[1]);
-        serial_write(" dw2=");
-        serial_write_hex(devctx[2]);
         serial_write(" dw3=");
         serial_write_hex(devctx[3]);
-        {
-            uint32_t context_size = (c->hcc_params1 & XHCI_HCC_CSZ) != 0u ? 64u : 32u;
-            const volatile uint32_t *ep0ctx = devctx + context_size / 4u;
-            serial_write(" E0CTX.dw0=");
-            serial_write_hex(ep0ctx[0]);
-            serial_write(" dw1=");
-            serial_write_hex(ep0ctx[1]);
-            serial_write(" dw2=");
-            serial_write_hex(ep0ctx[2]);
-            serial_write(" dw3=");
-            serial_write_hex(ep0ctx[3]);
-        }
-        serial_write("\r\n");
-        serial_write("xHCI: ADDRESS DEVICE COMPLETION ctl=");
-        serial_write_dec(controller);
-        serial_write(" port=");
-        serial_write_dec(port);
-        serial_write(" slot=");
-        serial_write_dec(slot_id);
-        serial_write(" cc=");
-        if (rc == 0) serial_write("1 (Success)");
-        else if (rc == -100) serial_write("NO COMPLETION (timeout)");
-        else if (rc <= -90) serial_write("NO COMPLETION");
-        else {
-            serial_write_dec((uint64_t)(-rc));
-            serial_write(" (");
-            serial_write(xhci_cc_name((uint8_t)(-rc)));
-            serial_write(")");
-        }
+        serial_write(" (addr=");
+        serial_write_dec((uint64_t)(devctx[3] & 0xffu));
+        serial_write(" state=");
+        serial_write_dec((uint64_t)((devctx[3] >> 27) & 0x1fu));
+        serial_write(") E0CTX.dw0=");
+        serial_write_hex(ep0ctx[0]);
+        serial_write(" (epstate=");
+        serial_write_dec((uint64_t)(ep0ctx[0] & 0x7u));
+        serial_write(") dw2=");
+        serial_write_hex(ep0ctx[2]);
         serial_write("\r\n");
     }
 #endif
@@ -2122,8 +2271,13 @@ static int wait_transfer(const rix_xhci_controller_t *c, xhci_runtime_t *rt,
         }
 #endif
         if (actual) *actual = residual >= requested ? 0u : (uint16_t)(requested - residual);
-        return completion == XHCI_COMPLETION_SUCCESS ? 0 :
-               (completion != 0u ? -(int)completion : -90);
+        if (completion == XHCI_COMPLETION_SUCCESS) return 0;
+        /* Short Packet (13) is a NORMAL completion for control IN reads:
+         * the device sent fewer bytes than requested (an 8-byte FS/LS EP0
+         * answering an 18-byte GET_DESCRIPTOR). Treating it as an error
+         * made every FS/LS device fail enumeration deterministically. */
+        if (completion == XHCI_COMPLETION_SHORT_PACKET) return 0;
+        return completion != 0u ? -(int)completion : -90;
     }
     return -100;
 }
@@ -2210,26 +2364,71 @@ int xhci_control_transfer(size_t controller, uint8_t slot_id,
         serial_write("\r\n");
     }
 #endif
-    size_t needed = setup->length != 0u ? 3u : 2u;
-    if ((size_t)slot->ep0_enqueue + needed > XHCI_CMD_RING_TRBS - 1u) ep0_write_link(c, slot);
-    uint64_t setup_trb = ep0_emit(c, slot, setup_parameter, setup_status, setup_control);
-    xhci_log_ep0_trb("SETUP TRB", setup_trb);
-    if (setup->length != 0u) {
-        uint64_t data_trb = ep0_emit(c, slot, data_pa, setup->length,
-                        (XHCI_TRB_DATA_STAGE << XHCI_TRB_TYPE_SHIFT) | XHCI_TRB_CH |
-                        (data_in ? XHCI_TRB_DIR : 0u));
-        xhci_log_ep0_trb("DATA TRB", data_trb);
+    /* Bounded retry on wire errors (cc=4 USB Transaction Error, cc=6
+     * Stall Error): real devices routinely miss the first control request
+     * issued right after SET_ADDRESS while their firmware settles (an
+     * emulated device answers instantly, so this never reproduces on
+     * QEMU). On a failed TD the HC halts EP0 and rewinds its dequeue to
+     * the first TRB of the TD, so the retry re-emits at the SAME ring
+     * position; the next Setup Stage TRB transitions EP0 Halted->Running
+     * per xHCI 4.8.3, and the SETUP packet clears the device-side stall
+     * (USB2 8.4.5). Only wire errors are retried. */
+    uint16_t attempt_start = slot->ep0_enqueue;
+    int rc;
+    for (unsigned attempt = 1; attempt <= 3u; ++attempt) {
+        slot->ep0_enqueue = attempt_start;
+        size_t needed = setup->length != 0u ? 3u : 2u;
+        if ((size_t)slot->ep0_enqueue + needed > XHCI_CMD_RING_TRBS - 1u)
+            ep0_write_link(c, slot);
+#if XHCI_EP0_TRACE
+        serial_write("xHCI: EP0 TRANSFER ATTEMPT ctl=");
+        serial_write_dec(controller);
+        serial_write(" slot=");
+        serial_write_dec(slot_id);
+        serial_write(" attempt=");
+        serial_write_dec(attempt);
+        serial_write(" enqueue=");
+        serial_write_dec(slot->ep0_enqueue);
+        serial_write(" cycle=");
+        serial_write_dec(slot->ep0_cycle);
+        serial_write("\r\n");
+#endif
+        uint64_t setup_trb = ep0_emit(c, slot, setup_parameter, setup_status, setup_control);
+        xhci_log_ep0_trb("SETUP TRB", setup_trb);
+        if (setup->length != 0u) {
+            uint64_t data_trb = ep0_emit(c, slot, data_pa, setup->length,
+                            (XHCI_TRB_DATA_STAGE << XHCI_TRB_TYPE_SHIFT) | XHCI_TRB_CH |
+                            (data_in ? XHCI_TRB_DIR : 0u));
+            xhci_log_ep0_trb("DATA TRB", data_trb);
+        }
+        uint64_t status_trb = ep0_emit(c, slot, 0, 0,
+            (XHCI_TRB_STATUS_STAGE << XHCI_TRB_TYPE_SHIFT) | XHCI_TRB_IOC |
+            ((setup->length == 0u || !data_in) ? XHCI_TRB_DIR : 0u));
+        xhci_log_ep0_trb("STATUS TRB", status_trb);
+        __asm__ volatile("mfence" ::: "memory");
+        volatile uint8_t *base = (volatile uint8_t *)(uintptr_t)c->mmio_va;
+        uint32_t db_off = *(volatile uint32_t *)(base + XHCI_DBOFF) & ~0x3u;
+        *(volatile uint32_t *)(base + db_off + (uint32_t)slot_id * 4u) = 1u;
+        rc = wait_transfer(c, &runtimes[controller], status_trb, slot_id, 1u,
+                           setup->length, actual_length);
+        if (rc == 0) return 0;
+        if (rc != -4 && rc != -6) return rc;
+        /* Abort the retry if the device vanished mid-attempt. */
+        rix_xhci_port_status_t st;
+        if (xhci_port_status(controller, slot->port, &st) != 0 || !st.connected)
+            return rc;
+#if XHCI_EP0_TRACE
+        serial_write("xHCI: EP0 TRANSFER RETRY ctl=");
+        serial_write_dec(controller);
+        serial_write(" slot=");
+        serial_write_dec(slot_id);
+        serial_write(" next=");
+        serial_write_dec(attempt + 1u);
+        serial_write("\r\n");
+#endif
+        xhci_udelay(50000u);
     }
-    uint64_t status_trb = ep0_emit(c, slot, 0, 0,
-        (XHCI_TRB_STATUS_STAGE << XHCI_TRB_TYPE_SHIFT) | XHCI_TRB_IOC |
-        ((setup->length == 0u || !data_in) ? XHCI_TRB_DIR : 0u));
-    xhci_log_ep0_trb("STATUS TRB", status_trb);
-    __asm__ volatile("mfence" ::: "memory");
-    volatile uint8_t *base = (volatile uint8_t *)(uintptr_t)c->mmio_va;
-    uint32_t db_off = *(volatile uint32_t *)(base + XHCI_DBOFF) & ~0x3u;
-    *(volatile uint32_t *)(base + db_off + (uint32_t)slot_id * 4u) = 1u;
-    return wait_transfer(c, &runtimes[controller], status_trb, slot_id, 1u,
-                         setup->length, actual_length);
+    return rc;
 }
 
 int xhci_get_descriptor(size_t controller, uint8_t slot_id, uint8_t descriptor_type,
