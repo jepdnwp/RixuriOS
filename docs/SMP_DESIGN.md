@@ -434,8 +434,8 @@ intervals. UP-measured 4:1 forced share (H=160 N=60), A/B controlled.
   no NUL — POSIX). Traversal gains a follow flag + depth cap 8
   (`RIX_VFS_ERR_LOOP` → `ELOOP 40` both sides). `unlink`/`rename`/
   hard-`link` use no-follow for the final component (POSIX: they act
-  on the link); `open`/`exec`/`stat` follow. No `O_NOFOLLOW` flag and
-  no `lstat` syscall in v1 — documented, not silent.
+  on the link); `open`/`exec`/`stat` follow. `lstat` uses the no-follow
+  lookup for the final component; `O_NOFOLLOW` remains outside the bounded ABI scope.
 - Syscalls `RIX_SYS_SYMLINK 85`, `RIX_SYS_READLINK 88` (verified free;
   avoids the 137-139 collision zone); libc `symlink()`/`readlink()`;
   `/bin/ln -s`.

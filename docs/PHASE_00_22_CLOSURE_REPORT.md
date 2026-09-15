@@ -460,7 +460,7 @@ and explicitly excluded — this PASS claims none of them.
   locale/UTF-8 basics, compat matrix, `rixtest` all-modes native runner.
 - Remaining (out of scope, tracked): dynamic loader/TLS, full pthread/futex,
   signal delivery frames, blocking sockets/poll, useful ioctl, file-backed
-  mmap/mprotect/munmap, stat gaps, locales/timezones.
+  mmap/mprotect/munmap, timestamps in stat, locales/timezones.
 - Tests: `libc_test` (incl. reuse/negative) green on current HEAD; QEMU
   `posix-test` 27 groups green on current HEAD; `abi-negative`, `crashtest`,
   6000-call `fuzztest` green; `df`/`free`/`dmesg`/`cloexec-test` green.

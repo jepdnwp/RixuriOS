@@ -53,8 +53,8 @@ int program_main(int argc,char **argv,char **envp){
     {sigset_t pending=0;check("sigpending",sigpending(&pending)==0&&pending==0);}
     check("socket-domain",socket(99,SOCK_DGRAM,0)<0&&errno==RIX_EAFNOSUPPORT);
     check("socket-raw",socket(AF_INET,SOCK_RAW,0)<0&&errno==RIX_EPROTONOSUPPORT);
-    check("fstat",0==0&&fstat(1,0)!=0&&errno==RIX_ENOSYS);
-    {rix_stat_t st;check("lstat",lstat("/",(rix_stat_t*)&st)!=0&&errno==RIX_ENOSYS);}
+    {int metadata_fd=open("/etc/hosts",0);rix_stat_t fd_stat={0};int ok=metadata_fd>=0&&fstat(metadata_fd,&fd_stat)==0&&fd_stat.type==2&&fd_stat.size>0;check("fstat",ok);if(metadata_fd>=0)close(metadata_fd);}
+    {rix_stat_t target={0},link_stat={0};int made=symlink("/etc/hosts","/tmp/posix-lstat-link")==0;int ok=made&&stat("/tmp/posix-lstat-link",&target)==0&&lstat("/tmp/posix-lstat-link",&link_stat)==0&&target.type==2&&link_stat.type==3;check("lstat",ok);if(made)unlink("/tmp/posix-lstat-link");}
     check("listen",listen(0,1)!=0&&errno==RIX_ENOSYS);
     check("setsockopt",setsockopt(0,SOL_SOCKET,99,0,0)!=0&&errno==RIX_ENOPROTOOPT);
     /* UDP loopback through the POSIX spelling. */

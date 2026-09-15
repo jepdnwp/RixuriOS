@@ -36,6 +36,8 @@ int getdents(int fd,rix_dirent_t *entries,size_t capacity,size_t *count){return(
 int getdents64(int fd,rix_dirent_t *entries,size_t capacity,size_t *count){return getdents(fd,entries,capacity,count);}
 off_t lseek(int fd,off_t offset,int whence){return(off_t)rix_int_result(rix_sys(8,fd,(long)offset,whence));}
 int stat(const char *path,rix_stat_t *out){return(int)rix_int_result(rix_sys(4,(long)path,(long)out,0));}
+int fstat(int fd,rix_stat_t *out){return(int)rix_int_result(rix_sys(148,fd,(long)out,0));}
+int lstat(const char *path,rix_stat_t *out){return(int)rix_int_result(rix_sys(149,(long)path,(long)out,0));}
 int statfs(const char *path,rix_statfs_t *out){if(!path||!out){errno=RIX_EINVAL;return -1;}out->version=RIX_STATFS_VERSION;out->struct_size=sizeof(*out);return(int)rix_int_result(rix_sys(145,(long)path,(long)out,0));}
 int sysinfo(rix_sysinfo_t *out){if(!out){errno=RIX_EINVAL;return -1;}out->version=RIX_SYSINFO_VERSION;out->struct_size=sizeof(*out);return(int)rix_int_result(rix_sys(146,(long)out,0,0));}
 rix_ssize_t klog_read(void *buffer,size_t capacity,uint64_t cursor,uint64_t *next){if(!buffer&&capacity){errno=RIX_EFAULT;return(rix_ssize_t)-1;}if(!next){errno=RIX_EINVAL;return(rix_ssize_t)-1;}return rix_ssize_result(rix_sys4(147,(long)buffer,(long)capacity,(long)cursor,(long)next));}
@@ -111,8 +113,6 @@ sighandler_t signal(int number,sighandler_t handler){(void)number;(void)handler;
 int sigaction(int number,const struct sigaction *action,struct sigaction *old){(void)number;(void)action;(void)old;errno=RIX_ENOSYS;return -1;}
 int pause(void){for(;;){sigset_t pending=0;if(sigpending(&pending)!=0)return -1;if(pending){errno=RIX_EINTR;return -1;}struct timespec step={0,1000000L};if(nanosleep(&step,0)!=0)return -1;}}
 _Noreturn void _Exit(int status){_exit(status);}
-int fstat(int fd,rix_stat_t *out){(void)fd;(void)out;errno=RIX_ENOSYS;return -1;}
-int lstat(const char *path,rix_stat_t *out){(void)path;(void)out;errno=RIX_ENOSYS;return -1;}
 /* RIX_SYS_MMAP/MPROTECT/MUNMAP have no kernel handler: length is still
  * validated so callers get EINVAL for empty ranges and ENOSYS otherwise. */
 void *mmap(void *address,size_t length,int protection,int flags,int fd,off_t offset){(void)protection;(void)flags;(void)fd;(void)offset;if(!length){errno=RIX_EINVAL;return MAP_FAILED;}long rc=rix_sys6(9,(long)address,(long)length,(long)protection,(long)flags,(long)fd,(long)offset);if(rc<0){errno=(int)-rc;return MAP_FAILED;}return(void*)rc;}

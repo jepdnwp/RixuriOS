@@ -43,7 +43,7 @@ construction: `kernel/` includes only `include/` + its own headers.
 | 57/59/61/247 | FORK/EXECVE/WAIT/WAITPID | fork/execve/wait/waitpid | same; WNOHANG=1; WEXITSTATUS et al in sys/wait.h | working |
 | 60 | EXIT | _exit/exit/_Exit | exit runs ≤16 atexit handlers LIFO, then _exit | working (QEMU-proven, status word checked) |
 | 62/127/142 | KILL/SIGPENDING/SIGPROCMASK | kill/raise/sigpending/sigprocmask/pause | same; signal()/sigaction() declared but ENOSYS (no delivery ABI) | partial |
-| 78–87 | GETDENTS/GETCWD/CHDIR/MKDIR/.../LINK | getdents/opendir/readdir/... | dirent + fcntl F_DUPFD/F_GETFD/F_SETFD/F_GETFL/F_SETFL | working; fstat/lstat ENOSYS; O_CLOEXEC + FD_CLOEXEC QEMU-proven (cloexec-test) |
+| 78–87, 148–149 | GETDENTS/GETCWD/CHDIR/MKDIR/.../LINK/FSTAT/LSTAT | getdents/opendir/readdir/.../fstat/lstat | dirent + fcntl F_DUPFD/F_GETFD/F_SETFD/F_GETFL/F_SETFL | working; lstat preserves final symlink type; O_CLOEXEC + FD_CLOEXEC QEMU-proven (cloexec-test) |
 | 79/80 | GETCWD/CHDIR | getcwd/chdir | same + getopt/sysconf/getpagesize (pure) | working |
 | 102–119 | credentials/ACL/caps/sessions | getuid/.../access/fcntl | access (stat-based), chmod/chown/rename/link | working within bounded model |
 | 139 | GETRANDOM | getrandom/arc4random | getrandom | working where CPU has RDRAND/RDSEED else ENOSYS fallback |
@@ -68,15 +68,15 @@ stdin/out/err, tmpfile), stdlib (malloc/calloc/realloc, strtol/ul,
 qsort/bsearch, getenv/setenv/putenv/clearenv, rand/arc4random,
 exit/atexit/abort-N/A-system-ENOSYS), string (+strnlen/strtok_r/memccpy),
 signal (sets/mask/pending/raise/pause), time (+struct timespec,
-clock_gettime/nanosleep POSIX signatures), unistd, sys/stat (+fstat/lstat
-stubs), sys/statfs.h, sys/sysinfo.h, sys/klog.h, sys/types, sys/wait
+ clock_gettime/nanosleep POSIX signatures), unistd, sys/stat (+fstat/lstat
+working), sys/statfs.h, sys/sysinfo.h, sys/klog.h, sys/types, sys/wait
 (macros), sys/time (gettimeofday),
 netinet/in.h + arpa/inet.h (IPv4 only), sys/socket.h, pthread.h
 (mutex/once local; create/join/detach ENOSYS), locale.h (C locale only),
 wchar.h (strict UTF-8).
 
 Fail-closed stubs (declared, ENOSYS): mmap/munmap/mprotect, poll, ioctl,
-fstat/lstat, signal/sigaction, listen/accept/shutdown, system,
+signal/sigaction, listen/accept/shutdown, system,
 pthread_create/join/detach.
 
 Reserved/missing by design: dynamic loading (dlopen — Phase 23),

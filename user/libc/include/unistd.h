@@ -78,6 +78,8 @@ int getdents(int fd, rix_dirent_t *entries, size_t capacity, size_t *count);
 int getdents64(int fd, rix_dirent_t *entries, size_t capacity, size_t *count);
 off_t lseek(int fd, off_t offset, int whence);
 int stat(const char *path, rix_stat_t *out);
+int fstat(int fd, rix_stat_t *out);
+int lstat(const char *path, rix_stat_t *out);
 int access(const char *path, int mode);
 int close(int fd);
 int pipe(int fds[2]);
