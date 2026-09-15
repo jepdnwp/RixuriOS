@@ -909,7 +909,8 @@ static void xhci_clear_port_change(volatile uint32_t *reg) {
  * XHCI_ADDR_TRACE to 0 to drop the lines). Logs completion codes decoded
  * per xHCI 6.4.5 Table 6-35 so a failure is attributable without guesswork. */
 #define XHCI_ADDR_TRACE 1
-#if XHCI_ADDR_TRACE
+#define XHCI_EP0_TRACE 1
+#if XHCI_ADDR_TRACE || XHCI_EP0_TRACE
 static const char *xhci_cc_name(uint8_t cc) {
     static const char *const names[] = {
         "Invalid", "Success", "Data Buffer Error", "Babble Detected",
@@ -1007,8 +1008,31 @@ static void xhci_log_address_device_begin(size_t controller, uint8_t slot_id,
     }
 }
 #else
-#define xhci_cc_name(cc) "?"
 #define xhci_log_address_device_begin(controller, slot_id, port, speed) ((void)0)
+#endif
+
+#if XHCI_ADDR_TRACE && XHCI_EP0_TRACE
+static void xhci_log_ep0_trb(const char *tag, uint64_t phys) {
+    const volatile xhci_trb_t *trb = (const volatile xhci_trb_t *)(uintptr_t)phys;
+    serial_write("=== ");
+    serial_write(tag);
+    serial_write(" ===\r\n");
+    serial_write("xHCI: phys=");
+    serial_write_hex(phys);
+    serial_write(" parameter=");
+    serial_write_hex(((uint64_t)trb->parameter_hi << 32) | trb->parameter_lo);
+    serial_write(" status=");
+    serial_write_hex(trb->status);
+    serial_write(" control=");
+    serial_write_hex(trb->control);
+    serial_write(" type=");
+    serial_write_dec((uint64_t)((trb->control >> XHCI_TRB_TYPE_SHIFT) & 0x3fu));
+    serial_write(" cycle=");
+    serial_write_dec((uint64_t)((trb->control & XHCI_TRB_CYCLE) != 0u));
+    serial_write("\r\n");
+}
+#else
+#define xhci_log_ep0_trb(tag, phys) ((void)0)
 #endif
 
 /* One-time boot inventory: one line per controller plus one line per
@@ -1521,6 +1545,24 @@ int xhci_service_hotplug(size_t controller, rix_xhci_device_t *device, uint8_t *
     *connected = is_connected;
     if (is_connected) {
         int attach_rc = xhci_device_attach(controller, port, device);
+        if (attach_rc == -3) {
+            /* Duplicate connect event for an already-attached port: the
+             * device was enumerated by an earlier attempt (the attach's own
+             * reset/connect activity re-fires CSC). Not a failure — refill
+             * the device from the existing slot, never park, never log an
+             * "attach failed" line for it. */
+            for (uint16_t slot_id = 1; slot_id <= controllers[controller].max_slots; ++slot_id) {
+                xhci_slot_runtime_t *slot = &runtimes[controller].slots[slot_id];
+                if (slot->allocated && slot->port == port) {
+                    device->slot_id = (uint8_t)slot_id;
+                    device->port = port;
+                    device->speed = slot->speed;
+                    device->state = RIX_XHCI_DEVICE_ADDRESSED;
+                    return 0;
+                }
+            }
+            return 0;
+        }
         if (attach_rc != 0) {
             device->port = port;
             device->state = RIX_XHCI_DEVICE_ERROR;
@@ -1546,7 +1588,11 @@ int xhci_service_hotplug(size_t controller, rix_xhci_device_t *device, uint8_t *
             port_attach_failed[controller][port] = 0;
             port_attach_fail_ns[controller][port] = 0;
         }
-        return attach_rc;
+        /* Success: report an event (rc=1) so the hotplug worker proceeds
+         * to enumeration. The old code returned attach_rc (0) here and the
+         * worker's rc>0 gate never ran xhci_enumerate_and_configure, so a
+         * successfully attached device was never enumerated at all. */
+        return attach_rc == 0 ? 1 : attach_rc;
     }
     for (uint16_t slot_id = 1; slot_id <= controllers[controller].max_slots; ++slot_id) {
         xhci_slot_runtime_t *slot = &runtimes[controller].slots[slot_id];
@@ -1557,7 +1603,8 @@ int xhci_service_hotplug(size_t controller, rix_xhci_device_t *device, uint8_t *
             int detach_rc = xhci_device_detach(controller, (uint8_t)slot_id);
             device->state = detach_rc == 0 ? RIX_XHCI_DEVICE_DETACHED : RIX_XHCI_DEVICE_ERROR;
             if (detach_rc == 0 && port != 0u) { port_attach_failed[controller][port] = 0; port_attach_fail_ns[controller][port] = 0; }
-            return detach_rc;
+            /* Success: report an event so the worker logs the detach. */
+            return detach_rc == 0 ? 1 : detach_rc;
         }
     }
     device->slot_id = 0;
@@ -1571,11 +1618,14 @@ static int wait_command(const rix_xhci_controller_t *c, xhci_runtime_t *rt,
                         uint64_t command_phys, uint8_t *out_slot) {
     size_t controller_index = (size_t)(c - controllers);
     volatile xhci_trb_t *events = (volatile xhci_trb_t *)(uintptr_t)c->event_ring_phys;
+    /* Paced like the reset path (udelay every 256 iterations): the raw
+     * 1M bound alone covers only microseconds; on real silicon a command
+     * completion (SET_ADDRESS on the wire) can need tens of milliseconds. */
     for (uint32_t i = 0; i < XHCI_POLL_LIMIT; ++i) {
         volatile xhci_trb_t *event = &events[rt->event_dequeue];
         uint32_t control = event->control;
         if ((control & XHCI_TRB_CYCLE) != rt->event_cycle) {
-            if ((i & 0xffu) == 0u) xhci_pause_delay(64u);
+            if ((i & 0xffu) == 0u) xhci_udelay(50u);
             continue;
         }
         uint32_t type = (control >> XHCI_TRB_TYPE_SHIFT) & 0x3fu;
@@ -1609,25 +1659,50 @@ static int wait_command(const rix_xhci_controller_t *c, xhci_runtime_t *rt,
         if (type != XHCI_TRB_COMMAND_COMPLETION || parameter != command_phys) continue;
 #if XHCI_ADDR_TRACE
         {
-            serial_write("xHCI: COMMAND COMPLETION ctl=");
+            /* Raw completion event dump: proves exactly what the hardware
+             * wrote for this command (status, control, parameter). */
+            serial_write("=== RAW COMMAND COMPLETION ===\r\nxHCI: ctl=");
             serial_write_dec(controller_index);
-            serial_write(" cmd_trb=");
-            serial_write_hex(command_phys);
-            serial_write(" event_trb=");
+            serial_write(" event_phys=");
             serial_write_hex(event_phys);
+            serial_write(" parameter=");
+            serial_write_hex(parameter);
+            serial_write(" (expect cmd_trb=");
+            serial_write_hex(command_phys);
+            serial_write(")\r\nxHCI: status=");
+            serial_write_hex(event->status);
+            serial_write(" control=");
+            serial_write_hex(control);
+            serial_write(" type=");
+            serial_write_dec(type);
             serial_write(" slot=");
             serial_write_dec(slot);
-            serial_write(" cc=");
+            serial_write(" completion=");
             serial_write_dec(completion);
             serial_write(" (");
             serial_write(xhci_cc_name(completion));
-            serial_write(")\r\n");
+            serial_write(") dequeue=");
+            serial_write_dec(rt->event_dequeue);
+            serial_write(" cycle=");
+            serial_write_dec(rt->event_cycle);
+            serial_write("\r\n");
         }
 #endif
         if (out_slot) *out_slot = slot;
         if (completion == XHCI_COMPLETION_SUCCESS) return 0;
         return completion != 0u ? -(int)completion : -90;
     }
+#if XHCI_ADDR_TRACE
+    serial_write("xHCI: COMMAND TIMEOUT ctl=");
+    serial_write_dec(controller_index);
+    serial_write(" cmd_trb=");
+    serial_write_hex(command_phys);
+    serial_write(" dequeue=");
+    serial_write_dec(rt->event_dequeue);
+    serial_write(" cycle=");
+    serial_write_dec(rt->event_cycle);
+    serial_write("\r\n");
+#endif
     return -100;
 }
 
@@ -1658,6 +1733,34 @@ static int submit_command(size_t controller, uint64_t parameter, uint32_t contro
                            (rt->command_cycle ? XHCI_TRB_CYCLE : 0u);
     rt->command_enqueue = (uint16_t)(index + 1u);
     __asm__ volatile("mfence" ::: "memory");
+#if XHCI_ADDR_TRACE
+    {
+        /* Raw command TRB as the hardware will fetch it. */
+        uint32_t cmd_type = (command_trb->control >> XHCI_TRB_TYPE_SHIFT) & 0x3fu;
+        uint8_t cmd_slot = (uint8_t)(command_trb->control >> XHCI_TRB_SLOT_SHIFT);
+        serial_write("=== COMMAND TRB ===\r\nxHCI: ctl=");
+        serial_write_dec(controller);
+        serial_write(" phys=");
+        serial_write_hex(command_phys);
+        serial_write(" parameter=");
+        serial_write_hex(parameter);
+        serial_write(" status=");
+        serial_write_hex(command_trb->status);
+        serial_write(" control=");
+        serial_write_hex(command_trb->control);
+        serial_write(" type=");
+        serial_write_dec(cmd_type);
+        serial_write(" slot=");
+        serial_write_dec(cmd_slot);
+        serial_write(" cycle=");
+        serial_write_dec((uint64_t)((command_trb->control & XHCI_TRB_CYCLE) != 0u));
+        serial_write(" enqueue=");
+        serial_write_dec(rt->command_enqueue);
+        serial_write(" ring_cycle=");
+        serial_write_dec(rt->command_cycle);
+        serial_write("\r\n");
+    }
+#endif
 
     volatile uint8_t *base = (volatile uint8_t *)(uintptr_t)c->mmio_va;
     uint32_t db_off = *(volatile uint32_t *)(base + XHCI_DBOFF) & ~0x3u;
@@ -1668,7 +1771,12 @@ static int submit_command(size_t controller, uint64_t parameter, uint32_t contro
 static uint16_t initial_ep0_mps(uint8_t speed) {
     if (speed == 3u) return 64u; /* high-speed */
     if (speed >= 4u) return 512u; /* SuperSpeed and later */
-    return 8u; /* full- and low-speed default control endpoint */
+    /* Full speed (1): 64 — the reference implementations (Linux, U-Boot,
+     * barebox xhci_setup_addressable_virt_dev) all program 64 for FS
+     * ("USB core guesses at 64 first"); 8 under-sizes the bus pipe.
+     * Low speed (2): 8, the only legal value. */
+    if (speed == 1u) return 64u;
+    return 8u;
 }
 
 static int allocate_slot_context(const rix_xhci_controller_t *c, xhci_slot_runtime_t *slot) {
@@ -1744,8 +1852,16 @@ static int prepare_address_context(size_t controller, uint8_t slot_id, uint8_t p
     slot_context[1] = (uint32_t)port << 16;
     ep0_context[1] = (XHCI_EP0_CERR << 1) | (XHCI_EP0_TYPE_CONTROL << 3) |
                      ((uint32_t)initial_ep0_mps(speed) << 16);
-    ep0_context[2] = (uint32_t)slot->ep0_ring_phys;
-    ep0_context[3] = (uint32_t)(slot->ep0_ring_phys >> 32) | XHCI_TRB_CYCLE;
+    /* TR Dequeue Pointer: bits 63:4 = pointer, bit 0 = DCS — the DCS lives
+     * in bit 0 of the LOW dword (xHCI 6.2.3; Linux writes deq | cycle_state
+     * into the 64-bit value). The old code OR'd the cycle into the HIGH
+     * dword, so the HC started with ccs=0 against a cycle=1 ring and never
+     * fetched a single EP0 TRB (transfer timeout / enumeration fail). */
+    ep0_context[2] = (uint32_t)slot->ep0_ring_phys | XHCI_TRB_CYCLE;
+    ep0_context[3] = (uint32_t)(slot->ep0_ring_phys >> 32);
+    /* EP Context DWORD 4 (tx_info): Average TRB Length shall be 8 for the
+     * Default Control Endpoint (xHCI 6.2.3; Linux sets EP_AVG_TRB_LENGTH(8)). */
+    ep0_context[4] = 8u;
     slot->ep0_enqueue = 0;
     slot->ep0_cycle = 1;
     slot->port = port;
@@ -1784,9 +1900,12 @@ int xhci_disable_slot(size_t controller, uint8_t slot_id) {
     int rc = submit_command(controller, 0,
                             (XHCI_TRB_DISABLE_SLOT << XHCI_TRB_TYPE_SHIFT) |
                             ((uint32_t)slot_id << XHCI_TRB_SLOT_SHIFT), NULL);
-    if (rc != 0) return rc;
+    /* Release the software context even when the command fails: the
+     * context pages must not stay pinned for a slot software is done
+     * with (release clears DCBAA[slot] first, so the HC cannot DMA to
+     * freed pages). Never let a failed attach leak hardware slots. */
     release_slot_context(&controllers[controller], slot_id);
-    return 0;
+    return rc;
 }
 
 int xhci_address_device(size_t controller, uint8_t slot_id, uint8_t port, uint8_t speed) {
@@ -1802,6 +1921,47 @@ int xhci_address_device(size_t controller, uint8_t slot_id, uint8_t port, uint8_
                             ((uint32_t)slot_id << XHCI_TRB_SLOT_SHIFT), NULL);
 #if XHCI_ADDR_TRACE
     {
+        const rix_xhci_controller_t *c = &controllers[controller];
+        /* Read back what the hardware did: DCBAA entry and the device
+         * context (did the HC install the slot context / device address?). */
+        volatile uint64_t *dcbaa = (volatile uint64_t *)(uintptr_t)c->dcbaa_phys;
+        const volatile uint32_t *devctx =
+            (const volatile uint32_t *)(uintptr_t)slot->device_context_phys;
+        serial_write("=== ADDRESS DEVICE AFTER ===\r\nxHCI: ctl=");
+        serial_write_dec(controller);
+        serial_write(" slot=");
+        serial_write_dec(slot_id);
+        serial_write(" rc=");
+        serial_write_dec((uint64_t)(rc < 0 ? (uint64_t)(-rc) : (uint64_t)rc));
+        serial_write(" AC64=");
+        serial_write_dec((uint64_t)((c->hcc_params1 & XHCI_HCC_AC64) != 0u));
+        serial_write(" dcbaa_phys=");
+        serial_write_hex(c->dcbaa_phys);
+        serial_write(" DCBAA[slot]=");
+        serial_write_hex(dcbaa[slot_id]);
+        serial_write(" devctx_phys=");
+        serial_write_hex(slot->device_context_phys);
+        serial_write(" SCTX.dw0=");
+        serial_write_hex(devctx[0]);
+        serial_write(" dw1=");
+        serial_write_hex(devctx[1]);
+        serial_write(" dw2=");
+        serial_write_hex(devctx[2]);
+        serial_write(" dw3=");
+        serial_write_hex(devctx[3]);
+        {
+            uint32_t context_size = (c->hcc_params1 & XHCI_HCC_CSZ) != 0u ? 64u : 32u;
+            const volatile uint32_t *ep0ctx = devctx + context_size / 4u;
+            serial_write(" E0CTX.dw0=");
+            serial_write_hex(ep0ctx[0]);
+            serial_write(" dw1=");
+            serial_write_hex(ep0ctx[1]);
+            serial_write(" dw2=");
+            serial_write_hex(ep0ctx[2]);
+            serial_write(" dw3=");
+            serial_write_hex(ep0ctx[3]);
+        }
+        serial_write("\r\n");
         serial_write("xHCI: ADDRESS DEVICE COMPLETION ctl=");
         serial_write_dec(controller);
         serial_write(" port=");
@@ -1810,7 +1970,8 @@ int xhci_address_device(size_t controller, uint8_t slot_id, uint8_t port, uint8_
         serial_write_dec(slot_id);
         serial_write(" cc=");
         if (rc == 0) serial_write("1 (Success)");
-        else if (rc == -100 || rc <= -90) serial_write("NO COMPLETION");
+        else if (rc == -100) serial_write("NO COMPLETION (timeout)");
+        else if (rc <= -90) serial_write("NO COMPLETION");
         else {
             serial_write_dec((uint64_t)(-rc));
             serial_write(" (");
@@ -1821,7 +1982,14 @@ int xhci_address_device(size_t controller, uint8_t slot_id, uint8_t port, uint8_
     }
 #endif
     if (rc != 0) {
-        release_slot_context(&controllers[controller], slot_id);
+        /* Do NOT release the software context here: the hardware slot is
+         * still enabled and must be disabled with a Disable Slot command
+         * first. The caller owns that (xhci_device_attach -> 
+         * xhci_disable_slot, which sends the command and then releases).
+         * The old code released here, so the caller's disable_slot bailed
+         * on !allocated and the hardware slot leaked forever — after a
+         * few failed attach attempts Enable Slot climbs to high slot IDs
+         * and eventually runs the controller out of slots. */
         return rc;
     }
     slot->addressed = 1;
@@ -1873,7 +2041,7 @@ static int wait_transfer(const rix_xhci_controller_t *c, xhci_runtime_t *rt,
         volatile xhci_trb_t *event = &events[rt->event_dequeue];
         uint32_t control = event->control;
         if ((control & XHCI_TRB_CYCLE) != rt->event_cycle) {
-            if ((i & 0xffu) == 0u) xhci_pause_delay(64u);
+            if ((i & 0xffu) == 0u) xhci_udelay(50u);
             continue;
         }
         uint64_t parameter = ((uint64_t)event->parameter_hi << 32) | event->parameter_lo;
@@ -1902,7 +2070,57 @@ static int wait_transfer(const rix_xhci_controller_t *c, xhci_runtime_t *rt,
                                   event_slot, endpoint);
         acknowledge_event(c, rt);
         if (type != XHCI_TRB_TRANSFER_EVENT || parameter != last_trb ||
-            event_slot != slot_id || endpoint != expected_endpoint) continue;
+            event_slot != slot_id || endpoint != expected_endpoint) {
+#if XHCI_EP0_TRACE
+            if (type == XHCI_TRB_TRANSFER_EVENT && event_slot == slot_id) {
+                serial_write("xHCI: TRANSFER EVENT (unmatched) ctl=");
+                serial_write_dec(controller_index);
+                serial_write(" parameter=");
+                serial_write_hex(parameter);
+                serial_write(" (expect last_trb=");
+                serial_write_hex(last_trb);
+                serial_write(") endpoint=");
+                serial_write_dec(endpoint);
+                serial_write(" completion=");
+                serial_write_dec(completion);
+                serial_write(" (");
+                serial_write(xhci_cc_name(completion));
+                serial_write(")\r\n");
+            }
+#endif
+            continue;
+        }
+#if XHCI_EP0_TRACE
+        {
+            serial_write("=== TRANSFER EVENT ===\r\nxHCI: ctl=");
+            serial_write_dec(controller_index);
+            serial_write(" event_phys=");
+            serial_write_hex(event_phys);
+            serial_write(" parameter=");
+            serial_write_hex(parameter);
+            serial_write(" (expect last_trb=");
+            serial_write_hex(last_trb);
+            serial_write(")\r\nxHCI: status=");
+            serial_write_hex(event->status);
+            serial_write(" control=");
+            serial_write_hex(control);
+            serial_write(" type=");
+            serial_write_dec(type);
+            serial_write(" slot=");
+            serial_write_dec(event_slot);
+            serial_write(" endpoint=");
+            serial_write_dec(endpoint);
+            serial_write(" completion=");
+            serial_write_dec(completion);
+            serial_write(" (");
+            serial_write(xhci_cc_name(completion));
+            serial_write(") residual=");
+            serial_write_dec(residual);
+            serial_write(" cycle=");
+            serial_write_dec(rt->event_cycle);
+            serial_write("\r\n");
+        }
+#endif
         if (actual) *actual = residual >= requested ? 0u : (uint16_t)(requested - residual);
         return completion == XHCI_COMPLETION_SUCCESS ? 0 :
                (completion != 0u ? -(int)completion : -90);
@@ -1941,6 +2159,13 @@ int xhci_control_transfer(size_t controller, uint8_t slot_id,
         (setup->length != 0u && !data)) return -2;
     if (setup->length != 0u && ((uint64_t)(uintptr_t)data > UINT64_MAX - setup->length)) return -3;
     uint8_t data_in = (setup->request_type & 0x80u) != 0u;
+    /* Resolve the data buffer BEFORE emitting anything: a failed
+     * translate must not leave a dangling Setup TRB on the ring. */
+    uint64_t data_pa = 0;
+    if (setup->length != 0u) {
+        data_pa = xhci_dma_linear_pa(data, setup->length);
+        if (!data_pa) return -4;
+    }
     uint32_t setup_control = (XHCI_TRB_SETUP_STAGE << XHCI_TRB_TYPE_SHIFT) | XHCI_TRB_IDT;
     if (setup->length != 0u) {
         setup_control |= XHCI_TRB_CH | (data_in ? (3u << 16) : (2u << 16));
@@ -1953,20 +2178,52 @@ int xhci_control_transfer(size_t controller, uint8_t slot_id,
                                ((uint64_t)setup->value << 16) |
                                ((uint64_t)setup->index << 32) |
                                ((uint64_t)setup->length << 48);
-    uint32_t setup_status = 0;
+    /* Setup Stage TRB: TRB Transfer Length shall be 8 (xHCI 6.4.1.2,
+     * Table 6-24; Linux queues TRB_LEN(8)). */
+    uint32_t setup_status = 8u;
+#if XHCI_EP0_TRACE
+    {
+        serial_write("=== EP0 TRANSFER BEGIN ===\r\nxHCI: ctl=");
+        serial_write_dec(controller);
+        serial_write(" slot=");
+        serial_write_dec(slot_id);
+        serial_write(" port=");
+        serial_write_dec(slot->port);
+        serial_write(" speed=");
+        serial_write_dec(slot->speed);
+        serial_write(" bmRequestType=");
+        serial_write_hex(setup->request_type);
+        serial_write(" bRequest=");
+        serial_write_hex(setup->request);
+        serial_write(" wValue=");
+        serial_write_hex(setup->value);
+        serial_write(" wIndex=");
+        serial_write_hex(setup->index);
+        serial_write(" wLength=");
+        serial_write_hex(setup->length);
+        serial_write(" ep0_ring_phys=");
+        serial_write_hex(slot->ep0_ring_phys);
+        serial_write(" ep0_enqueue=");
+        serial_write_dec(slot->ep0_enqueue);
+        serial_write(" ep0_cycle=");
+        serial_write_dec(slot->ep0_cycle);
+        serial_write("\r\n");
+    }
+#endif
     size_t needed = setup->length != 0u ? 3u : 2u;
     if ((size_t)slot->ep0_enqueue + needed > XHCI_CMD_RING_TRBS - 1u) ep0_write_link(c, slot);
-    (void)ep0_emit(c, slot, setup_parameter, setup_status, setup_control);
+    uint64_t setup_trb = ep0_emit(c, slot, setup_parameter, setup_status, setup_control);
+    xhci_log_ep0_trb("SETUP TRB", setup_trb);
     if (setup->length != 0u) {
-        uint64_t data_pa = xhci_dma_linear_pa(data, setup->length);
-        if (!data_pa) return -4;
-        (void)ep0_emit(c, slot, data_pa, setup->length,
-                       (XHCI_TRB_DATA_STAGE << XHCI_TRB_TYPE_SHIFT) | XHCI_TRB_CH |
-                       (data_in ? XHCI_TRB_DIR : 0u));
+        uint64_t data_trb = ep0_emit(c, slot, data_pa, setup->length,
+                        (XHCI_TRB_DATA_STAGE << XHCI_TRB_TYPE_SHIFT) | XHCI_TRB_CH |
+                        (data_in ? XHCI_TRB_DIR : 0u));
+        xhci_log_ep0_trb("DATA TRB", data_trb);
     }
     uint64_t status_trb = ep0_emit(c, slot, 0, 0,
         (XHCI_TRB_STATUS_STAGE << XHCI_TRB_TYPE_SHIFT) | XHCI_TRB_IOC |
         ((setup->length == 0u || !data_in) ? XHCI_TRB_DIR : 0u));
+    xhci_log_ep0_trb("STATUS TRB", status_trb);
     __asm__ volatile("mfence" ::: "memory");
     volatile uint8_t *base = (volatile uint8_t *)(uintptr_t)c->mmio_va;
     uint32_t db_off = *(volatile uint32_t *)(base + XHCI_DBOFF) & ~0x3u;
@@ -2127,8 +2384,8 @@ int xhci_configure_endpoint(size_t controller, uint8_t slot_id,
     endpoint[1] = (3u << 1) | (endpoint_type << 3) |
                   ((uint32_t)config->max_burst << 8) |
                   ((uint32_t)config->max_packet_size << 16);
-    endpoint[2] = (uint32_t)ring_phys;
-    endpoint[3] = (uint32_t)(ring_phys >> 32) | XHCI_TRB_CYCLE;
+    endpoint[2] = (uint32_t)ring_phys | XHCI_TRB_CYCLE;
+    endpoint[3] = (uint32_t)(ring_phys >> 32);
     __asm__ volatile("mfence" ::: "memory");
     int rc = submit_command(controller, slot->input_context_phys,
                             (XHCI_TRB_CONFIGURE_ENDPOINT << XHCI_TRB_TYPE_SHIFT) |
