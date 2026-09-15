@@ -26,7 +26,7 @@ descriptive — any drift between them is a bug. `STATFS 145` / `SYSINFO 146` / 
 | 2 | OPENAT | served |
 | 3 | CLOSE | served |
 | 4 | STAT | served |
-| 7 | POLL | reserved (`-ENOSYS`) |
+| 7 | POLL | served (immediate socket readiness; timeout blocking deferred) |
 | 8 | LSEEK | served |
 | 9 | MMAP | reserved (`-ENOSYS`) |
 | 10 | MPROTECT | reserved (`-ENOSYS`) |

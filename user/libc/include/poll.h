@@ -3,10 +3,8 @@
 
 /* I/O readiness compatibility surface.
  *
- * The spelling exists for porting; RIX_SYS_POLL has no kernel handler
- * and poll() always fails closed with ENOSYS. Bounded blocking waits
- * remain nanosleep/waitpid(WNOHANG)-polling at the application layer
- * until a kernel readiness queue lands. */
+ * The kernel implements bounded, immediate readiness checks for socket
+ * descriptors. Timeout blocking remains a later scheduler integration. */
 
 typedef unsigned long nfds_t;
 struct pollfd {

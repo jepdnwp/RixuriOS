@@ -83,6 +83,8 @@ int rix_net_socket_close(rix_net_socket_table_t *table, int descriptor);
 int rix_net_socket_shutdown(rix_net_socket_table_t *table, int descriptor, int how);
 int rix_net_socket_listen(rix_net_socket_table_t *table, int descriptor, int backlog);
 int rix_net_socket_accept(rix_net_socket_table_t *table, int descriptor, rix_net_endpoint_t *peer);
+int rix_net_socket_poll_ready(const rix_net_socket_table_t *table, int descriptor,
+                              short events, short *revents);
 int rix_net_socket_set_option(rix_net_socket_table_t *table, int descriptor, int level, int option, int value);
 int rix_net_socket_get_option(rix_net_socket_table_t *table, int descriptor, int level, int option, int *value);
 int rix_net_socket_bind(rix_net_socket_table_t *table, int descriptor,

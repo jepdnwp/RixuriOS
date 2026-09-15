@@ -155,6 +155,21 @@ int rix_net_socket_accept(rix_net_socket_table_t *table, int descriptor, rix_net
     if (peer) *peer = remote;
     return accepted;
 }
+int rix_net_socket_poll_ready(const rix_net_socket_table_t *table, int descriptor,
+                              short events, short *revents) {
+    const rix_net_socket_t *socket;
+    if (!revents) return -1;
+    *revents = 0;
+    if (descriptor < 0) return 0;
+    if (!valid_descriptor(table, descriptor)) { *revents = 0x20; return 0; }
+    socket = &table->sockets[descriptor];
+    if ((events & 0x01) && (socket->receive.count || (socket->listening && socket->pending_count) ||
+                            (socket->type == RIX_NET_SOCKET_TCP && socket->tcp.state == RIX_TCP_CLOSE_WAIT)))
+        *revents |= 0x01;
+    if ((events & 0x04) && socket->connected && !(socket->shutdown & RIX_NET_SOCKET_SHUT_WR))
+        *revents |= 0x04;
+    return 0;
+}
 int rix_net_socket_set_option(rix_net_socket_table_t *table, int descriptor, int level, int option, int value) {
     if (!valid_descriptor(table, descriptor) || level != 1 || option != RIX_NET_SOCKET_REUSEADDR || (value != 0 && value != 1)) return -1;
     if (value) table->sockets[descriptor].flags |= RIX_NET_SOCKET_REUSEADDR;

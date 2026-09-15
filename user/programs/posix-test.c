@@ -49,7 +49,7 @@ int program_main(int argc,char **argv,char **envp){
     check("mmap-bad",mmap(0,0,PROT_READ,MAP_PRIVATE|MAP_ANONYMOUS,-1,0)==MAP_FAILED&&errno==RIX_EINVAL);
     {char stack_top;check("munmap",munmap(&stack_top,1)!=0&&errno==RIX_ENOSYS);}
     {char stack_top;errno=0;int rc=mprotect(&stack_top,4096,PROT_READ);int ec=errno;out("posix:mprotect-diag rc=");out_num(rc);out(" errno=");out_num(ec);out("\n");check("mprotect",rc!=0&&ec==RIX_ENOSYS);}
-    {struct pollfd pfd={0,POLLIN,0};check("poll",poll(&pfd,1,0)!=0&&errno==RIX_ENOSYS);}
+    {struct pollfd pfd={-1,POLLIN,0};check("poll",poll(&pfd,1,0)==0&&pfd.revents==0);struct pollfd bad={999,POLLIN,0};check("poll-invalid",poll(&bad,1,0)==1&&(bad.revents&POLLNVAL)!=0);}
     check("ioctl",ioctl(1,0)!=0&&errno==RIX_ENOSYS);
     check("signal",signal(SIGTERM,SIG_IGN)==SIG_ERR&&errno==RIX_ENOSYS);
     check("sigaction",sigaction(SIGTERM,0,0)!=0&&errno==RIX_ENOSYS);
