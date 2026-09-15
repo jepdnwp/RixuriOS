@@ -10,13 +10,16 @@ The identifiers below are reserved for the RixuriOS ABI and must be added only t
 
 | Call | ID | Purpose |
 |---|---:|---|
-| `statfs` | 137 | Return filesystem capacity and mount identity for a path. |
-| `sysinfo` | 138 | Return physical-memory/page accounting and uptime snapshot. |
-| `klog_read` | 139 | Read a cursor-based kernel log ring with loss reporting. |
+| `statfs` | 145 | Return filesystem capacity and mount identity for a path. |
+| `sysinfo` | 138 | RESERVED — collides with `LIST_PROCESSES`; do not use. Next free: 146. |
+| `klog_read` | 139 | RESERVED — collides with `GETRANDOM`; do not use. Next free: 147. |
 | `mount` | 165 | Attach a validated block/filesystem source into a namespace. |
 | `umount` | 166 | Detach a mount after reference and busy checks. |
 
-The numbers are provisional until recorded in the stable syscall-number policy. Unknown calls must continue to return `-ENOSYS`.
+IDs 137–139 are taken (`DELEGATECAP`, `LIST_PROCESSES`, `GETRANDOM` — see
+`docs/ABI_REGISTRY.md`); the old 137/138/139 proposal was a collision bug and
+is superseded. `statfs` lands at 145 (v1 additive). Unknown calls must
+continue to return `-ENOSYS`.
 
 ## `statfs`
 

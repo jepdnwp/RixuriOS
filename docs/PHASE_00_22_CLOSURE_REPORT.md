@@ -380,16 +380,16 @@ stated plainly; QEMU PASS is never claimed as physical PASS.
 
 - Implemented: bounded native echo/cat/args/grep/true/false/sleep/ls/mkdir/
   rm/rmdir/touch/stat/ln/head/tail/wc/cut/tr/sort/uniq/env/printf/pwd/which/
-  kill/ps/uname/du/cp/mv/find/xargs/sed/test/tee/basename/dirname/seq/id/
+  kill/ps/uname/du/df/cp/mv/find/xargs/sed/test/tee/basename/dirname/seq/id/
   whoami/date/ping/curl/host/help/hostname + credential/session/auth
   programs, all with fixed exit/errno paths and QEMU suites green (incl.
-  xargs nested fork/exec fix + file-utils + extended).
-- Remaining: `df`/`free`/`dmesg`/`mount`/`umount` (need statfs/sysinfo/klog/
-  mount ABIs; IDs 137–139 collision documented, not silently reused),
-  GPT/partition tools, HW/storage diagnostics, full-disk/read-only/busy-mount
-  matrix.
-- Tests: shell/libc helper coverage green.
-- QEMU: named-scenario suites green.
+  xargs nested fork/exec fix + file-utils + extended). `df` via new
+  `STATFS 145` (old 137 proposal was a live-ID collision, superseded).
+- Remaining: `free`/`dmesg`/`mount`/`umount` (need sysinfo/klog/mount ABIs
+  at 146/147/165/166), GPT/partition tools, HW/storage diagnostics,
+  full-disk/read-only/busy-mount matrix.
+- Tests: shell/libc helper + new `statfs_test` green.
+- QEMU: named-scenario + new `df` suites green.
 - Physical: BLOCKED.
 - Limitations: bounded options; no synthetic values (honest ENOSYS).
 - Security: unprivileged paths return exact errors.

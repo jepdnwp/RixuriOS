@@ -851,3 +851,12 @@ physical HW evidence remain open. Phase 23 stays LOCKED.
 
 QEMU revalidation: cloexec, pipe-stress, crash, fuzz, posix PASS; full matrix
 and HW remain open. Phase 23 stays LOCKED.
+
+## Phase 19 statfs/df checkpoint — 2026-09-15
+
+`RIX_SYS_STATFS 145` (v1 additive; old 137 proposal was a live-ID collision
+and is superseded) serves honest RixFS capacity via bitmap+inode scans.
+`statfs()` libc wrapper pre-stamps version/size; `/bin/df` prints 1K and `-h`
+forms and fails non-zero on missing paths. Host `statfs_test` and
+`qemu_df_test.py` green; `sysinfo`/`free`, `klog`/`dmesg`, `mount`/`umount`
+remain open. Phase 23 stays LOCKED.

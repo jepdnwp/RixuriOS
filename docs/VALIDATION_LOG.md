@@ -1943,3 +1943,38 @@ completions + multi-outstanding CID tracking, RixFS transactions/fsck repair,
 VFS stable vnode/shared-offset descriptions/busy-unmount, GPT/mount APIs,
 xHCI live completion + HW HID, TCP retransmit/reassembly, ASLR/SMEP-SMAP,
 soak + full 37-matrix rerun, HW evidence. Phase 23 stays LOCKED.
+
+## 2026-09-15 — Phase 19 slice: `statfs` + `df` without ID collision (Phase 19)
+
+The old `PHASE19_KERNEL_API.md` proposal (137/138/139) collided with live
+`DELEGATECAP`/`LIST_PROCESSES`/`GETRANDOM` and is superseded. `STATFS` lands
+at 145 (v1 additive, `ABI_REGISTRY.md` updated).
+
+- `kernel/fs/rixfs.c`: `rixfs_statfs()` scans the bitmap (one read per bitmap
+  sector) and the inode table for honest free-block/free-inode counts.
+- `kernel/vfs/vfs.c`: `vfs_statfs()` requires the path to resolve, then fills
+  the versioned 64-byte `rix_statfs_t` (RixFS type, block size, totals, mount
+  1, rw).
+- `kernel/syscall/syscall.c`: `RIX_SYS_STATFS 145` validates the user string
+  (`EFAULT`), validates version+size via fixup copy (`EFAULT`/`EINVAL`),
+  then fills via `vfs_statfs` and copies out.
+- `user/libc`: `sys/statfs.h` + `statfs()` wrapper (pre-stamps version/size).
+- `/bin/df`: default `/`, `-h` human (B/K/M/G), missing path fails non-zero,
+  bad option status 2. Fixed 1K truncation bug in review (bytes/1024, not
+  blocks*(bs/1024)): QEMU now reports `65536 4325 61210 6% /` and
+  `64M 4M 59M 6% /`, consistent with the image allocator hint.
+
+Validation (`CROSS=x86_64-linux-gnu- HOST_CC=gcc`):
+
+```text
+make test RC=0 (-Werror) incl. statfs_test
+  (base totals, create ino-free, truncate+write consumes, negatives)
+make image RC=0
+qemu_df_test: PASS (header, missing-path fail, -h, prompt return)
+qemu_cloexec / pipe_stress / crash / fuzz / posix re-green
+git diff --check clean
+```
+
+Explicitly NOT in this slice: `sysinfo`/`free`, `klog`/`dmesg`,
+`mount`/`umount` + GPT, sysinfo accounting, log ring, namespace work. Phase 23
+stays LOCKED.

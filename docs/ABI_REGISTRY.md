@@ -4,7 +4,8 @@
 **Entry:** `int 0x80`, `rax` = number. Frame registers follow System V
 (`rdi rsi rdx r10 r8 r9`); unknown numbers fail closed with `-ENOSYS`.
 Generated from source 2026-09-15; the header is normative, this file
-descriptive — any drift between them is a bug.
+descriptive — any drift between them is a bug. `STATFS 145` is v1 additive
+(precedents: `YIELD 24`, `LIST_THREADS 144`).
 
 ## Version policy
 
@@ -96,6 +97,7 @@ descriptive — any drift between them is a bug.
 | 142 | SIGPROCMASK | served |
 | 143 | FCNTL | served |
 | 144 | LIST_THREADS | served (v1 additive) |
+| 145 | STATFS | served (v1 additive) |
 | 247 | WAITPID | served (`NOHANG=1`) |
 | 248 | CLOSE_PIPES_EXCEPT | served |
 
