@@ -22,12 +22,22 @@ static uint8_t bcd_to_bin(uint8_t v){return (uint8_t)((v&0x0Fu)+((v>>4)*10u));}
 static uint8_t leap(uint16_t y){return (uint8_t)((y%4u==0u&&y%100u!=0u)||y%400u==0u);}
 static int valid(const rix_rtc_time_t*t){if(!t||t->year<1970||t->month<1||t->month>12||t->day<1||t->day>31||t->hour>23||t->minute>59||t->second>59)return -1;return 0;}
 int rtc_init(void){return 0;}
+/* Bounded UIP wait: a stuck RTC must fail closed (-2) instead of hanging
+ * the boot. 30k port reads is ample for the ~244us update window on real
+ * hardware while still terminating on a wedged device. */
+static int wait_uip_clear(void){
+ for(unsigned i=0;i<30000u;i++){
+  if(!(cmos_read(RTC_STATUS_A)&RTC_UIP))return 0;
+  __asm__ volatile("pause":::"memory");
+ }
+ return -1;
+}
 int rtc_read(rix_rtc_time_t*out){
  if(!out)return -1;
  for(unsigned attempt=0;attempt<8;attempt++){
-  while(cmos_read(RTC_STATUS_A)&RTC_UIP){}
+  if(wait_uip_clear()!=0)return -2;
   uint8_t status=cmos_read(RTC_STATUS_B),sec1=cmos_read(RTC_SECONDS),min1=cmos_read(RTC_MINUTES),hour1=cmos_read(RTC_HOURS),day1=cmos_read(RTC_DAY),mon1=cmos_read(RTC_MONTH),year1=cmos_read(RTC_YEAR);
-  while(cmos_read(RTC_STATUS_A)&RTC_UIP){}
+  if(wait_uip_clear()!=0)return -2;
   uint8_t sec2=cmos_read(RTC_SECONDS),min2=cmos_read(RTC_MINUTES),hour2=cmos_read(RTC_HOURS),day2=cmos_read(RTC_DAY),mon2=cmos_read(RTC_MONTH),year2=cmos_read(RTC_YEAR);
   if(sec1!=sec2||min1!=min2||hour1!=hour2||day1!=day2||mon1!=mon2||year1!=year2)continue;
   uint8_t hour=hour1;

@@ -12,7 +12,22 @@ int elf64_validate(const void *image,size_t image_size,rix_elf64_ehdr_t *out){
     if(out->ehsize!=sizeof(rix_elf64_ehdr_t)||out->phentsize!=sizeof(rix_elf64_phdr_t)||out->phnum==0)return -1;
     uint64_t phbytes=(uint64_t)out->phentsize*(uint64_t)out->phnum;if(out->phnum&&phbytes/out->phnum!=out->phentsize)return -1;
     if(!range_ok(image_size,out->phoff,phbytes))return -1;
-    for(uint16_t i=0;i<out->phnum;i++){rix_elf64_phdr_t p;if(elf64_program_header(image,image_size,i,&p)!=0)return -1;if(p.type==RIX_PT_LOAD){if(p.filesz>p.memsz)return -1;if(!range_ok(image_size,p.offset,p.filesz))return -1;if(p.vaddr+p.memsz<p.vaddr)return -1;if(p.align&&((p.align&(p.align-1))!=0))return -1;if((p.flags&RIX_PF_W)&&(p.flags&RIX_PF_X))return -1;}}
+    /* Collect PT_LOAD ranges first so overlap and entry checks are exact. */
+    uint64_t load_start[64];uint64_t load_end[64];uint32_t load_flags[64];uint16_t nload=0;
+    for(uint16_t i=0;i<out->phnum;i++){rix_elf64_phdr_t p;if(elf64_program_header(image,image_size,i,&p)!=0)return -1;if(p.type==RIX_PT_LOAD){if(p.filesz>p.memsz)return -1;if(!range_ok(image_size,p.offset,p.filesz))return -1;if(p.memsz&&p.vaddr+p.memsz<p.vaddr)return -1;if(p.align&&((p.align&(p.align-1))!=0))return -1;if((p.flags&RIX_PF_W)&&(p.flags&RIX_PF_X))return -1;if(p.memsz==0)continue;if(nload>=64)return -1;load_start[nload]=p.vaddr;load_end[nload]=p.vaddr+p.memsz;load_flags[nload]=p.flags;nload++;}}
+    if(nload==0)return -1;
+    for(uint16_t i=0;i<nload;i++)for(uint16_t j=(uint16_t)(i+1);j<nload;j++){
+        if(load_start[i]<load_end[j]&&load_start[j]<load_end[i])return -1;
+    }
+    /* Entry must lie inside an executable PT_LOAD's mapped range. */
+    {
+        int ok=0;
+        for(uint16_t i=0;i<nload;i++){
+            if(!(load_flags[i]&RIX_PF_X))continue;
+            if(out->entry>=load_start[i]&&out->entry<load_end[i]){ok=1;break;}
+        }
+        if(!ok)return -1;
+    }
     return 0;
 }
 int elf64_program_header(const void *image,size_t image_size,uint16_t index,rix_elf64_phdr_t *out){if(!image||!out||image_size<sizeof(rix_elf64_ehdr_t))return -1;rix_elf64_ehdr_t h;copy_bytes(&h,image,sizeof(h));if(h.phentsize!=sizeof(rix_elf64_phdr_t)||index>=h.phnum)return -1;uint64_t off=h.phoff+(uint64_t)index*h.phentsize;if(off<h.phoff||!range_ok(image_size,off,sizeof(rix_elf64_phdr_t)))return -1;copy_bytes(out,(const uint8_t*)image+off,sizeof(*out));return 0;}
