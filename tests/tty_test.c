@@ -111,6 +111,43 @@ int main(void) {
                 row == 1 && column == 0 && tty_read_output(0, output, sizeof(output), &count) == 0 &&
                 count == 27 && memcmp(output, "RixuriOS recovery console\r\n", 27) == 0,
                 "recovery console reset and banner")) return 1;
+    /* Output-ring wrap gate (prefix-eating/NUL class): the queue is empty
+     * here, so a 9000-byte patterned write must read back as exactly the
+     * ordered last 4096 bytes with no zero slots, then drain exactly. */
+    {
+        static uint8_t big[9000];
+        for (size_t i = 0; i < sizeof(big); i++)
+            big[i] = (uint8_t)(0x21u + (i % 0x5Eu));
+        if (expect(tty_output(0, big, sizeof(big), &written) == 0 &&
+                    written == sizeof(big),
+                    "oversize output accepted")) return 1;
+        static uint8_t tail[8192];
+        if (expect(tty_read_output(0, tail, sizeof(tail), &count) == 0 &&
+                    count == 4096u,
+                    "wrapped read returns ring capacity")) return 1;
+        if (expect(memcmp(tail, big + sizeof(big) - 4096u, 4096u) == 0,
+                    "wrapped bytes are the ordered tail")) return 1;
+        for (size_t i = 0; i < 4096u; i++)
+            if (tail[i] == 0) return expect(0, "no zero slots in wrapped output");
+        if (expect(tty_read_output(0, tail, sizeof(tail), &count) == -3 &&
+                    count == 0,
+                    "ring drains exactly")) return 1;
+    }
+    /* Sequential small writes after a wrap must keep exact order. */
+    {
+        static uint8_t seq[1400];
+        for (size_t i = 0; i < sizeof(seq); i++)
+            seq[i] = (uint8_t)(0x30u + (i % 10u));
+        for (size_t off = 0; off < sizeof(seq); off += 7u) {
+            if (expect(tty_output(0, seq + off, 7u, &written) == 0 &&
+                        written == 7u,
+                        "small write accepted")) return 1;
+        }
+        static uint8_t got[1400];
+        if (expect(tty_read_output(0, got, sizeof(got), &count) == 0 &&
+                    count == sizeof(got) && memcmp(got, seq, sizeof(seq)) == 0,
+                    "small writes keep order")) return 1;
+    }
     puts("tty tests: PASS");
     return 0;
 }

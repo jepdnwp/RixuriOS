@@ -356,7 +356,7 @@ stated plainly; QEMU PASS is never claimed as physical PASS.
   serial + GOP framebuffer console, host `tty_test` green.
 - Remaining: user PTY/ioctl/termios ABI, signal-handler interaction, parser
   fuzzing, PTY/session QEMU matrix, SMP safety, HW USB-console proof.
-- Tests: host canonical/raw/echo/PTY/ANSI green.
+- Tests: host canonical/raw/echo/PTY/ANSI + output-ring wrap/order gate green.
 - QEMU: serial→TTY→shell + signal prompt-recovery green.
 - Physical: BLOCKED (needs HID).
 - Limitations: PTY mostly kernel-internal; `signal()`/`sigaction()` ENOSYS.

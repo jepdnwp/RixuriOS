@@ -2140,9 +2140,26 @@ fix and the test-list corrections, the full fixture group passes cleanly
 with zero garbling, and no recurrence appeared across six subsequent QEMU
 runs. Best explanation on current evidence is fallout of the pre-fix failure
 cascade (failed credential tests perturbing task/credential/FS-journal
-state); no independent mechanism was ever isolated, so the TTY-output-path
-audit stays a watch item rather than a claimed root cause. `mount`/`umount`
-+ GPT, SBOM, retention, hardware evidence remain open. Phase 23 stays LOCKED.
+state); no independent mechanism was ever isolated. `mount`/`umount` + GPT,
+SBOM, retention, hardware evidence remain open. Phase 23 stays LOCKED.
+
+## 2026-09-15 — TTY output-ring audit + wrap gate (Phase 17)
+
+Audit of the suspected output path (`tty_output_nolock` drop-oldest ring,
+`tty_read_output` drain, `pty_queue_put/get`, slave-write bounds,
+`tty_recover` resets, E3 output/input lock discipline): no defect found —
+indices stay modulo-disciplined, counts exact, full-ring drops oldest instead
+of wedging, no zero-slot emission path exists. The single pre-fix serial
+anomaly has no mechanism here and never recurred post-fix; the audit closes
+the watch item with code review + a permanent gate instead of a claimed bug.
+`tty_test` now pins the symptom class on host: a 9000-byte patterned write
+reads back as exactly the ordered last 4096 bytes with no zeroes, drains
+exactly, and 200 sequential 7-byte writes keep exact order.
+
+```text
+make tty-test RC=0 (tty tests: PASS incl. wrap gate)
+git diff --check clean
+```
 
 ## 2026-09-15 — Phase 00 slice: no hosted CI, local provenance + ABI check
 
