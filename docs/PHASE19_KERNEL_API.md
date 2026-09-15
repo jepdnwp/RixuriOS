@@ -12,7 +12,7 @@ The identifiers below are reserved for the RixuriOS ABI and must be added only t
 |---|---:|---|
 | `statfs` | 145 | Served: filesystem capacity and mount identity for a path. |
 | `sysinfo` | 146 | Served: page accounting (total/free/reserved) + uptime. Only honestly accounted fields; no inferred kernel/user/cache split. |
-| `klog_read` | 139 | RESERVED — collides with `GETRANDOM`; do not use. Next free: 147. |
+| `klog_read` | 147 | Served: cursor-based bounded ring read with loss-tolerant resume. |
 | `mount` | 165 | Attach a validated block/filesystem source into a namespace. |
 | `umount` | 166 | Detach a mount after reference and busy checks. |
 

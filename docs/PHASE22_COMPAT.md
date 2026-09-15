@@ -28,6 +28,7 @@ construction: `kernel/` includes only `include/` + its own headers.
 | 4 | STAT | stat | stat (rix_stat_t; no timestamps) | working |
 | 145 | STATFS | statfs | statfs (versioned 64B; RixFS totals) | working (QEMU-proven via df) |
 | 146 | SYSINFO | sysinfo | sysinfo (versioned 64B; total/free/reserved + uptime) | working (QEMU-proven via free) |
+| 147 | KLOG_READ | klog_read | klog_read (cursor + capacity + next; loss-tolerant) | working (QEMU-proven via dmesg) |
 | 7 | POLL | poll | poll | kernel ENOSYS, fails closed |
 | 8 | LSEEK | lseek | lseek | working |
 | 9/10/11 | MMAP/MPROTECT/MUNMAP | mmap/munmap/mprotect | same | kernel ENOSYS; heap path is brk/sbrk |

@@ -869,3 +869,11 @@ monotonic uptime in a versioned 64-byte struct. `sysinfo()` wrapper and
 inferred breakdowns. Extended `pmm_test` and `qemu_free_test.py` green
 (517920/454512 kB, 15650 reserved, consistent). `klog`/`dmesg`,
 `mount`/`umount` remain open. Phase 23 stays LOCKED.
+
+## Phase 19 klog/dmesg checkpoint — 2026-09-15
+
+`RIX_SYS_KLOG_READ 147` (v1 additive) serves the 64 KiB diagnostic ring with
+cursor + capacity + next semantics and loss-tolerant resume. `klog_read()`
+wrapper and `/bin/dmesg` drain until short read. Host `klog_test` and
+`qemu_dmesg_test.py` green (boot marker re-printed from the ring).
+`mount`/`umount` remain open. Phase 23 stays LOCKED.

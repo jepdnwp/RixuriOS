@@ -2007,3 +2007,32 @@ git diff --check clean
 
 Explicitly NOT in this slice: `klog`/`dmesg`, `mount`/`umount` + GPT. Phase 23
 stays LOCKED.
+
+## 2026-09-15 — Phase 19 slice: `klog` + `dmesg` (Phase 19)
+
+- `kernel/log/klog.{h,c}`: 64 KiB byte-stream ring with ever-increasing
+  sequence numbers. Push is irqsave + trylock only (fault/IRQ writers never
+  block; contention drops and counts). `serial_write`/`serial_write_n`
+  (diagnostics) feed the ring; COM1-only user echo paths do not, so user
+  content never enters it.
+- `kernel/syscall/syscall.c`: `RIX_SYS_KLOG_READ 147`
+  (`buf, cap<=64K, cursor, next_out`) validates user ranges (`EFAULT`),
+  rejects future cursors (`EINVAL`), clamps stale cursors to oldest
+  (loss-tolerant resume: caller detects `next-bytes != requested`), copies
+  in 1K chunks via `klog_copy` + fixup `copy_to_user`, and reports `next`.
+- `user/libc`: `sys/klog.h` + `klog_read()` wrapper.
+- `/bin/dmesg`: cursor loop until short read, non-zero on failure or bad
+  option. QEMU proves the ring re-prints the boot marker
+  (`VMM: section perms ...` at both boot line 13 and dmesg line 200).
+
+Validation (`CROSS=x86_64-linux-gnu- HOST_CC=gcc`):
+
+```text
+make test RC=0 (-Werror) incl. klog_test (basic/cursor/wrap/loss)
+make image RC=0
+qemu_dmesg_test: PASS
+qemu_df / free / cloexec re-green
+git diff --check clean
+```
+
+Explicitly NOT in this slice: `mount`/`umount` + GPT. Phase 23 stays LOCKED.

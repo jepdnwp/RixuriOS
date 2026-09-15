@@ -385,9 +385,9 @@ stated plainly; QEMU PASS is never claimed as physical PASS.
   programs, all with fixed exit/errno paths and QEMU suites green (incl.
   xargs nested fork/exec fix + file-utils + extended). `df` via new
   `STATFS 145` (old 137 proposal was a live-ID collision, superseded).
-- Remaining: `dmesg`/`mount`/`umount` (need klog/mount ABIs at 147/165/166),
-  GPT/partition tools, HW/storage diagnostics, full-disk/read-only/busy-mount
-  matrix. `df` + `free` now served (145/146).
+- Remaining: `mount`/`umount` (need mount ABIs at 165/166), GPT/partition
+  tools, HW/storage diagnostics, full-disk/read-only/busy-mount matrix.
+  `df` + `free` + `dmesg` now served (145/146/147).
 - Tests: shell/libc helper + new `statfs_test` green.
 - QEMU: named-scenario + new `df` suites green.
 - Physical: BLOCKED.
