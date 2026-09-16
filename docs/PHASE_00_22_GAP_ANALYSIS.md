@@ -1,18 +1,18 @@
 # RixuriOS Phases 00–22 Gap Analysis
 
-**Author:** Manus AI  
-**Repository:** `https://github.com/jepdnwp/RixuriOS`  
-**Audited revision:** `cf7743218ce1f6442f1952d3721324a5d11c1a0a`  
-**Audit date:** 2026-09-12  
+**Author:** Manus AI
+**Repository:** `https://github.com/jepdnwp/RixuriOS`
+**Audited revision:** `633b8cc`
+**Audit date:** 2026-09-16
 **Scope:** Roadmap Phases 00 through 22, inclusive
 
 ## Executive finding
 
-RixuriOS has a substantial working vertical slice: a UEFI loader, x86_64 kernel, page tables, exceptions, cooperative processes, static ring-3 programs, NVMe-backed RixFS in QEMU, a shell and utility set, a bounded security model, QEMU E1000 networking, and a native static libc surface. That implementation is materially stronger than a prototype consisting only of stubs. It is nevertheless **not a completed Phase 00–22 platform** under the repository's own evidence rules. The authoritative roadmap requires implementation, clean builds, negative tests, QEMU and physical evidence where applicable, regression coverage, security review, recovery behavior, performance evidence, documentation, and archived checkpoints. It explicitly states that `SKIP`, `ENOSYS`, `NOT TESTED`, `DEGRADED`, `BLOCKED`, `FAIL`, and `UNSUPPORTED` do not mean complete.[1] [2]
+RixuriOS has a substantial working vertical slice: a UEFI loader, x86_64 kernel, page tables, exceptions, preemptive scheduler paths, static ring-3 programs, NVMe-backed RixFS in QEMU, a shell and utility set, a bounded security model, QEMU E1000 networking, and a native static libc surface. That implementation is materially stronger than a prototype consisting only of stubs. It is nevertheless **not a completed Phase 00–22 platform** under the repository's own evidence rules. The authoritative roadmap requires implementation, clean builds, negative tests, QEMU and physical evidence where applicable, regression coverage, security review, recovery behavior, performance evidence, documentation, and archived checkpoints. It explicitly states that `SKIP`, `ENOSYS`, `NOT TESTED`, `DEGRADED`, `BLOCKED`, `FAIL`, and `UNSUPPORTED` do not mean complete.[1] [2]
 
-The evidence-based overall status is therefore **PARTIAL / HARDENING REQUIRED, with a current-tree build-integrity blocker**. Phase 06 is **BROKEN against its stated preemptive-scheduler requirement** because the current scheduler is cooperative and the timer-preemption attempt was reverted after allocator corruption. Phase 15 is **BROKEN/BLOCKED** because the Makefile and xHCI implementation reference `kernel/usb/xhci_profile.{c,h}` and `tests/xhci_profile_test.c`, but those files are absent from the audited revision. Phase 16 is consequently **BLOCKED** for end-to-end USB input. Phase 22 is the only phase with a documented **PASS for an explicitly bounded static compatibility scope**; that PASS does not include dynamic linking, full pthreads, signal delivery frames, blocking sockets, or physical qualification.[3] [4] [5]
+The evidence-based overall status is **PARTIAL / HARDENING REQUIRED**, without a current-tree build-integrity blocker. The current host suite and image build pass with `CROSS=x86_64-linux-gnu- HOST_CC=gcc`; QEMU evidence is available for the bounded harnesses recorded in `docs/VALIDATION_LOG.md`. Phase 06 is no longer correctly described as cooperative-only: current code and QEMU evidence include timer preemption, runqueues, affinity, migration, fairness, and scheduler stress, while hardware SMP and long-soak evidence remain open. Phase 15 is no longer blocked by missing xHCI profile files; profile build/tests and xHCI probe/handoff pass, while controller-backed enumeration, transfer, HID, hotplug, and recovery remain unverified. Phase 22 remains bounded and does not imply dynamic linking, full pthreads, signal frames, blocking sockets, or physical qualification.[3] [4] [5]
 
-Current execution evidence is unavailable. `gcc`, `x86_64-linux-gnu-gcc`, `x86_64-elf-gcc`, and `qemu-system-x86_64` are absent from the audit environment. Historical results in `docs/VALIDATION_LOG.md` are retained as evidence of earlier environments, but they are not promoted to current-HEAD PASS. The newest validation entry also leaves the full suite and UP/SMP4 sanity pending after later fixes.[3]
+Current execution evidence is available for the installed environment. `make test CROSS=x86_64-linux-gnu- HOST_CC=gcc` completed with exit code 0, and the current QEMU harnesses recorded in `docs/VALIDATION_LOG.md` completed for their bounded scenarios. The default `make test` invocation still names unavailable `x86_64-elf-gcc`, so validation commands must specify the installed cross-toolchain. No hosted CI claim is made because CI was intentionally excluded by owner decision.[3]
 
 > **Evidence rule used in this report:** source presence proves implementation only. A historical host or QEMU log proves only the named revision, topology, path, and assertion. It does not prove the current checkout, physical hardware, untested error paths, sustained concurrency, durability, or recovery.
 
@@ -44,11 +44,11 @@ The Makefile defines freestanding C17, `-Wall -Wextra -Werror`, explicit linker 
 
 ### Status
 
-**PARTIAL / HARDENING REQUIRED / CURRENT BUILD BLOCKED.**
+**PARTIAL / HARDENING REQUIRED.**
 
 ### Implemented
 
-A canonical build entry point, strict warning policy, generated build directory, image/ISO construction, host tests, QEMU scripts, checkpoint definitions, and historical validation ledger exist. Historical logs record strict builds and image/ISO generation in earlier environments.[3] [4]
+A canonical build entry point, strict warning policy, generated build directory, image/ISO construction, host tests, QEMU scripts, checkpoint definitions, and validation ledger exist. The current host suite, image build, ABI check, and selected QEMU harnesses pass with the installed toolchain.[3] [4]
 
 ### Missing
 
@@ -60,21 +60,21 @@ Build provenance is embedded in `build/build_id.h`, but it includes wall-clock t
 
 ### Bugs / correctness risks
 
-The Makefile links `kernel/usb/xhci_profile.o` and builds `xhci-profile-test`, but the referenced source, header, and test files are absent at audited HEAD. A clean build must therefore fail once a compiler is available. `scripts/run-all-tests.sh` currently uses `set -uo pipefail`, while a historical audit states it was changed to `set -euo pipefail`; this documentation/source drift weakens confidence in the ledger.[3] [4] [9]
+The xHCI profile source, header, and host test are present and build successfully at current HEAD. The remaining xHCI limitation is controller-backed functional evidence, not a missing-source build defect. `scripts/run-all-tests.sh` currently uses `set -uo pipefail`, while a historical audit states it was changed to `set -euo pipefail`; this documentation/source drift weakens confidence in the ledger.[3] [4] [9]
 
 ### Tests
 
 | Class | Evidence | Result |
 |---|---|---|
-| Host | `make test` aggregates parser and subsystem tests. | Historical PASS; **current UNVERIFIED/BLOCKED**. |
+| Host | `make test CROSS=x86_64-linux-gnu- HOST_CC=gcc` aggregates parser and subsystem tests. | **PASS**. |
 | Unit | USB, HID, TTY, shell, pipe, network, libc, ACPI, SMP, GDT, xHCI capability, and RixFS mount tests are wired. | Incomplete graph; absent profile test breaks current source contract. |
 | Integration | `image`, `iso`, `iso-test`, `test-all`. | Historical evidence only. |
-| QEMU | Numerous `scripts/qemu_*_test.py` harnesses. | Historical bounded evidence; QEMU unavailable now. |
+| QEMU | Current bounded utility, process, signal, scheduler, network, SMP and xHCI-probe harnesses. | **Bounded PASS; no physical claim**. |
 | Physical | No reproducible build-to-physical artifact chain was found. | **UNVERIFIED**. |
 
 ### Validation gaps
 
-No fresh clean build, no two-build reproducibility comparison, no SBOM/provenance manifest, no CI artifact archive, no test-skip enforcement, and no current-HEAD QEMU run exist. The toolchain and QEMU are absent from the audit environment.
+Hosted CI, SBOM, artifact retention, physical qualification, and a complete fault/recovery matrix remain open. Current host and bounded QEMU validation exist; the default toolchain alias mismatch is documented and the explicit installed-toolchain command is required.
 
 ### Required work
 
@@ -222,7 +222,7 @@ Forensic reads of a corrupt stack or RIP can generate a nested fault and halt. A
 
 | Class | Evidence | Result |
 |---|---|---|
-| Host | `tests/gdt_test.c`; some SMP descriptor checks. | Historical PASS; current blocked. |
+| Host | `tests/gdt_test.c`; some SMP descriptor checks. | Current PASS with the installed toolchain. |
 | Unit | Pure descriptor construction only. | Partial. |
 | Integration | IDT/IRQ/PIT used in boot. | Historical smoke. |
 | QEMU | Boot and prior fault forensics exist. | No complete vector/malformed-return matrix. |
@@ -274,7 +274,7 @@ Production workers and user tasks remain mostly BSP-bound. The scheduler has per
 
 | Class | Evidence | Result |
 |---|---|---|
-| Host | `acpi_test`, `smp_test`, `gdt_test`. | Historical PASS; current blocked. |
+| Host | `acpi_test`, `smp_test`, `gdt_test`. | Current PASS with the installed toolchain. |
 | Unit | Synthetic ACPI and mocked startup/IPI/shootdown contracts. | Substantial but non-privileged. |
 | Integration | Scheduler AP probe and TLB hook. | Historical WHPX only. |
 | QEMU | UP and WHPX SMP4 historical PASS on an earlier tree. | Current revalidation **PENDING/UNVERIFIED**. |
@@ -356,7 +356,7 @@ The kernel has PID-indexed process objects, fork/exec/exit/wait, independent add
 
 ### Status
 
-**BROKEN against the mandatory preemptive-scheduler gate; otherwise PARTIAL.**
+**PARTIAL / HARDENING REQUIRED.**
 
 ### Implemented
 
@@ -364,11 +364,11 @@ Cooperative task creation/switching, fork context restoration, process activatio
 
 ### Missing
 
-TIDs and user-thread objects, shared-address-space user threads, scheduler-integrated blocked state, timer preemption, per-CPU runqueues, load balancing, priorities, quantum accounting, general affinity, robust task references, and scalable task capacity are missing.
+Shared-address-space user threads, more than the current bounded priority policy, aging, latency histograms, hardware SMP qualification, long-soak evidence, and fully unified task/resource references remain missing or incomplete. PID/TID-facing scheduler objects, timer preemption, per-CPU runqueues, affinity, migration accounting, and bounded task-capacity failure paths are implemented.
 
 ### Partial
 
-The scheduler is explicitly cooperative: `scheduler_tick()` increments a counter and `scheduler_yield()` performs selection. APs run only selected kernel threads. Process exit marks a zombie and closes FDs, while task retirement and process resource ownership are not represented by a unified reference protocol.[23] [24]
+The scheduler now has timer-driven preemption, per-CPU runqueue selection, affinity and migration accounting, priority/accounting paths, and bounded QEMU fairness/migration/stress evidence. Process exit marks a zombie and closes FDs, while hardware SMP qualification, long-soak evidence, shared-address-space user threads, and complete task/resource reference closure remain open.[23] [24]
 
 ### Bugs / correctness risks
 
@@ -386,7 +386,7 @@ The prior timer-preemption attempt was reverted because IRQ-context yielding exp
 
 ### Validation gaps
 
-No never-yielding hog test, IRQ-preempted allocator test, task-table exhaustion/reuse test, migration test, fairness measurement, process-exit versus scheduler race, user-thread test, or UP/SMP long soak exists.
+Long physical SMP soak, complete process-exit versus scheduler race coverage, shared-address-space user-thread coverage, and latency histograms remain open. Current QEMU harnesses cover never-yielding hog behavior, fairness, migration, burst/task capacity, and SMP boot paths.
 
 ### Required work
 
@@ -534,7 +534,7 @@ Large writes can stall pipelines or lose clear semantics. Endpoint leaks suppres
 
 | Class | Evidence | Result |
 |---|---|---|
-| Host | `pipe_test` covers bounded I/O, EOF, closed-reader rejection. | Historical PASS; current blocked. |
+| Host | `pipe_test` covers bounded I/O, EOF, closed-reader rejection. | Current PASS with the installed toolchain. |
 | Unit | No SHM lifetime, event, Unix-socket, FD-passing, or death suite. | **MISSING**. |
 | Integration | Real shell pipelines and fork/wait. | Partial. |
 | QEMU | Eight standalone pipe rounds and signal prompt recovery. | Partial; full writer and cross-test fault remain. |
@@ -716,7 +716,7 @@ Implement vnode/inode/dentry/superblock/file models, mounts/path resolution, fil
 
 ### Current implementation
 
-VFS normalizes paths, checks search/file permissions, exposes open/read/write/seek/readdir/stat and mutations, and manages one root mount plus per-process descriptors. RixFS implements persistent inodes/extents/directories, explicit format, validated mount, links, rename, journal replay, checksums, and read-only fsck. Historical QEMU exercised real file utilities on disposable NVMe/RixFS images.[3] [35] [36]
+VFS normalizes paths, checks search/file permissions, exposes open/read/write/seek/readdir/stat and mutations, and manages one root mount plus per-process descriptors. RixFS implements persistent inodes/extents/directories, explicit format, validated mount, links, rename, journal replay, checksums, and read-only fsck integrity checks. Historical QEMU exercised real file utilities on disposable NVMe/RixFS images.[3] [35] [36]
 
 ### Status
 
@@ -846,7 +846,7 @@ A clean compile cannot resolve the profile source/types/functions. A full 16-ent
 
 | Class | Evidence | Result |
 |---|---|---|
-| Host | USB descriptors and xHCI capabilities. | Historical PASS; profile target broken. |
+| Host | USB descriptors and xHCI capabilities. | Current host PASS; controller-backed execution remains open. |
 | Unit | No TRB/ring/completion/timeout/reset/hotplug/DMA suite. | **MISSING**. |
 | Integration | Initialization path exists. | Generic QEMU had controllers=0. |
 | QEMU | `qemu_xhci_probe_test.py` requests NEC xHCI + keyboard. | No retained current PASS; **UNVERIFIED**. |
@@ -898,7 +898,7 @@ Composite devices can bind the wrong endpoint. Polling can continue against a de
 
 | Class | Evidence | Result |
 |---|---|---|
-| Host | `hid_report_test` positive/negative parser cases. | Historical PASS; current blocked. |
+| Host | `hid_report_test` positive/negative parser cases. | Current PASS with the installed toolchain. |
 | Unit | Report IDs, truncation, rollover, signed mouse fields. | Useful but incomplete. |
 | Integration | Keyboard poll adapter and PS/2 worker. | xHCI data path **UNVERIFIED**. |
 | QEMU | Default topology has no xHCI; controller harness lacks retained PASS. | **BLOCKED/UNVERIFIED**. |
@@ -1210,7 +1210,7 @@ The PASS is a declared static-scope closure, not a general POSIX/Linux claim. `p
 
 | Class | Evidence | Result |
 |---|---|---|
-| Host | `libc_test`. | Historical PASS; current toolchain blocked. |
+| Host | `libc_test`. | Current host PASS with the explicit installed toolchain. |
 | Unit | Strings, allocator basics, stdio, locale, inet, mutex/once and intentional ENOSYS. | Bounded static scope. |
 | Integration | Native programs and shell use libc/syscalls. | Historical bounded PASS. |
 | QEMU | `qemu_posix_test.py` checks 27 groups and fault markers. | Historical bounded PASS only. |
@@ -1295,28 +1295,28 @@ The dependency order is not interchangeable. Preemption depends on memory owners
 
 | Phase | Status | Implementation evidence | Host/unit | Integration | QEMU | Physical | Negative/fault | Recovery | Current-head result |
 |---:|---|---|---|---|---|---|---|---|---|
-| 00 | Partial/Broken | Makefile, linker, checkpoints | Broad historical | Image/ISO historical | Multiple historical harnesses | None | Skip/build drift gaps | Artifact recovery absent | **BLOCKED**: compilers/QEMU absent; missing xHCI files |
+| 00 | Partial | Makefile, linker, checkpoints, local provenance/ABI checks | Current host suite | Image build current | Bounded harnesses current | None | CI/SBOM/retention gaps | Artifact retention absent | **UNVERIFIED**: no hosted CI or physical chain |
 | 01 | Partial | EFI loader/handoff | Missing loader unit tests | Loader→kernel | Historical UEFI boot | None | Missing malformed/EBS matrix | One EBS retry only | **UNVERIFIED** |
-| 02 | Hardening | PMM/VMM/heap | Missing | Indirect | Ring-3 smoke only | None | Missing allocator/permission faults | Reclaim absent | **UNVERIFIED** |
+| 02 | Hardening required | PMM/VMM/heap ownership and W^X hardening | PMM/heap host tests | Ring-3 and image current | Bounded permission/smoke evidence | None | Pressure/soak and fault matrix incomplete | Full ownership/reclaim recovery open | **UNVERIFIED** |
 | 03 | Partial | GDT/TSS/IDT/ISR | GDT pure tests | Boot IRQs | Historical smoke/fault logs | None | Missing vector/iret/nesting matrix | Fail-stop only | **UNVERIFIED** |
 | 04 | Partial | ACPI/APIC/IOAPIC/SMP | ACPI/SMP/GDT historical | AP probe/shootdown | Historical WHPX SMP4 | None | Partial parser/protocol negatives | AP cleanup absent | **Pending rerun** |
-| 05 | Partial | locks/waiter metadata/workers | No dedicated target | Selected workers | Historical AP worker | None | Missing lock/lost-wakeup | Cancellation absent | **UNVERIFIED** |
-| 06 | Broken | process/scheduler/context | No scheduler target | Fork/exec/AP probe | Cooperative historical | None | Preemption attempt failed | No task-lifecycle recovery | **Requirement not met** |
-| 07 | Partial | syscall/uaccess | Missing | Broad callers | Selected ABI negatives | None | Fuzz/fault gaps | No uaccess fixup | **UNVERIFIED** |
+| 05 | Partial | locks, waitqueues, workers | `sync_test`, pipe tests | Current blocked-reader/wakeup paths | Scheduler/QEMU stress bounded | None | Timeout/cancellation/IRQ misuse gaps | Worker drain/cancel partial | **UNVERIFIED** |
+| 06 | Partial | process/scheduler/context, runqueues, affinity | thread/runqueue host tests | Current fork/exec/process paths | Preemption/fairness/migration/SMP bounded PASS | None | Long soak and physical SMP gaps | Lifecycle recovery bounded, not exhaustive | **UNVERIFIED** |
+| 07 | Partial | syscall/uaccess and ABI registry | ABI/host checks | Current negative and ring-3 paths | ABI-negative/fuzz/crash bounded PASS | None | Concurrent-unmap and full fault corpus gaps | Fixup scope remains limited | **UNVERIFIED** |
 | 08 | Partial | address-space/ELF/process | Missing | Static executables | Historical ring-3 | None | ELF/VM matrix missing | Exec rollback incomplete | **UNVERIFIED** |
-| 09 | Partial | pipe/SHM/groups | Pipe historical | Shell IPC | Bounded pipe/signal | None | Full-writer/death gaps | Cleanup incomplete | **UNVERIFIED** |
+| 09 | Partial | pipe/SHM/process groups/signals | `pipe_test`, sync tests | Shell IPC current | Pipe/signal/session bounded PASS | None | Full-writer, events, Unix sockets, signal frames | SHM/death cleanup partial | **UNVERIFIED** |
 | 10 | Partial | PCI/DMA/MSI-X/IOMMU stub | Driver models only | Virtual devices | NVMe/E1000 paths | Inventory only | DMA misuse missing | Reset cleanup missing | **UNVERIFIED** |
-| 11 | Partial | block/cache | Missing | RixFS stack | Disposable media | None | Fault backend missing | Cache/reset gaps | **UNVERIFIED** |
-| 12 | Partial | NVMe | Missing | RixFS/NVMe | Historical read/write | None | Queue/PRP faults missing | Runtime reset missing | **UNVERIFIED** |
-| 13 | Partial | VFS/RixFS/fsck | Mount test | Real utilities | Historical bounded | None | Corruption matrix partial | Replay only; repair absent | **UNVERIFIED** |
-| 14 | Partial | RTC/time/power | ACPI/libc partial | Time calls | Generic use | None | Stuck-UIP/power missing | Reset fallback unproved | **UNVERIFIED** |
-| 15 | Broken/Blocked | xHCI source; missing profile files | Parser/caps historical | No live default controller | Zero-controller generic run | Failing/inventory only | Ring/timeout gaps | Endpoint reset absent | **BROKEN/BLOCKED** |
-| 16 | Partial/Blocked | HID parsers/adapters | HID historical | Keyboard adapter | No live xHCI HID | USB keyboard not working | Parser partial | Detach cleanup absent | **BLOCKED** |
+| 11 | Partial | block/cache and flush semantics | `block_cache_test` fault cases | Current RixFS/NVMe path | Disposable QEMU storage paths | None | Queue/order/FUA matrix gaps | Reset/power-loss recovery open | **UNVERIFIED** |
+| 12 | Partial | NVMe queues, PRP, polling I/O | `nvme_prp_test` | Current QEMU mount/read/write | NVMe QEMU bounded PASS | None | SGL/CID/interrupt/fault gaps | Reset/reidentify/recovery open | **UNVERIFIED** |
+| 13 | Partial | VFS/RixFS/fsck hardening | mount/statfs/symlink tests | Current utilities and RixFS image | QEMU utility PASS | None | Corruption/repair matrix incomplete | Cross-link/orphan/reachability rejection present; repair absent | **UNVERIFIED** |
+| 14 | Partial | RTC/time/power | RTC/ACPI/host coverage | Current time calls | QEMU generic use | None | Stuck-UIP, reset/S5, physical gaps | Invalid-date rejection added; fallback unproved | **UNVERIFIED** |
+| 15 | Partial/Blocked | xHCI profile, controller probe and queue paths | xHCI profile/caps/PORTSC host tests | QEMU xHCI probe/handoff current | Probe PASS; no controller-backed transfers | None | Event/timeout/hotplug gaps | Overflow rescan added; reset absent | **UNVERIFIED/BLOCKED** |
+| 16 | Partial/Blocked | HID parsers/adapters | HID report host tests | Adapter code present | No live HID completion | None | Report/device matrix gaps | Detach cleanup absent | **BLOCKED** |
 | 17 | Partial | TTY/PTY | TTY historical | Serial shell | Signal/session bounded | None | Fuzz missing | Queue/session recovery partial | **UNVERIFIED** |
 | 18 | Partial | shell | Frontend historical | Real commands/pipes | Multiple bounded suites | None | Malformed/stress gaps | Job recovery incomplete | **UNVERIFIED** |
 | 19 | Partial | utility subset | Shell/libc partial | Utility suites | Historical bounded | None | API/error gaps | Mount/media recovery absent | **UNVERIFIED** |
 | 20 | Partial | credentials/ACL/caps/accounts | Historical partial | Login/session/account | Mixed; rerun pending | None | Matrix incomplete | Account crash only | **UNVERIFIED** |
-| 21 | Partial | network/E1000/RTL | Historical models | QEMU user-net | Bounded IPv4 PASS | RTL8125 none | Loss/reorder missing | NIC/TCP recovery missing | **UNVERIFIED** |
+| 21 | Partial | network/E1000/RTL/TCP | network host tests | Current QEMU user-net | IPv4/UDP/TCP bounded PASS | RTL8125 physical none | Loss/reorder/reassembly gaps | NIC/TCP recovery missing | **UNVERIFIED** |
 | 22 | Bounded PASS | libc/compat report | Historical libc PASS | Native programs | Historical 27 groups | None | Intentional ENOSYS tested | Allocator recovery weak | **Current rerun BLOCKED** |
 
 ## Hardware Validation Matrix
@@ -1446,59 +1446,59 @@ Phases 00–22 are done only when all of the following are true:
 
 ## References
 
-[1]: `docs/ROADMAP.md` — Phases 00–22 requirements and definition of complete, especially lines 35–49, 60–290, and 818–847.  
-[2]: `docs/CHECKPOINTS.md` — CP0–CP8 evidence classes, failure rules, and phase checkpoints.  
-[3]: `docs/VALIDATION_LOG.md` — historical boot, QEMU, SMP, storage, process, networking, suite failures/fixes, and pending revalidation.  
-[4]: `Makefile` — strict flags, source lists, tests, image/ISO targets, build ID, xHCI profile references, and conditional skip.  
-[5]: `docs/PHASE22_COMPAT.md` — bounded static compatibility scope, guest/host evidence, and explicit deferred APIs.  
-[6]: `docs/ARCHITECTURE.md` — intended layering, ABI boundaries, and subsystem dependencies.  
-[7]: `linker/kernel.ld` and `docs/IMPLEMENTATION_STATUS.md` — ELF PHDR/GNU_STACK evidence and status boundary.  
-[8]: `.gitignore` — generated build artifacts are ignored.  
-[9]: `scripts/run-all-tests.sh` — current aggregate-runner shell options and result handling.  
-[10]: `boot/efi_main.c` — UEFI loader, ELF validation, GOP/RSDP, map capture and EBS retry.  
-[11]: `kernel/boot.S`, `include/kernel.h`, `kernel/main.c` — handoff copy and validation sequence.  
-[12]: `kernel/mm/pmm.c`, `kernel/mm/heap.c` — frame ownership and non-reclaiming heap.  
-[13]: `kernel/mm/vmm.c`, `kernel/mm/vmm.h` — mappings, early identity map, MMIO and page-table validation.  
-[14]: `kernel/arch/x86_64/idt.c` — page-fault diagnostics and fail-stop exception policy.  
-[15]: `kernel/mm/uaccess.c` — validate-then-dereference user-copy implementation.  
-[16]: `kernel/arch/x86_64/gdt.c`, `idt.c`, `interrupts.S`, `irq.c` — privileged entry machinery.  
-[17]: `kernel/arch/x86_64/pit.c` — PIT tick and scheduler accounting hook.  
-[18]: `tests/gdt_test.c` and validation history — bounded descriptor evidence.  
-[19]: `kernel/arch/x86_64/acpi.c`, `apic.c`, `ioapic.c` — firmware topology and interrupt controllers.  
-[20]: `kernel/arch/x86_64/smp.c`, `smp.h` — AP startup, IPI, TLB shootdown and topology limits.  
-[21]: `docs/SMP_DESIGN.md` — E-series SMP scope, exclusions and preemption constraints.  
-[22]: `kernel/sync/lock.c`, `kernel/sync/waitqueue.c` — synchronization primitives and wait-state model.  
-[23]: `kernel/sched/scheduler.c`, `kernel/sched/switch.S` — cooperative scheduler, task slots and context switch.  
-[24]: `kernel/process/process.c`, `kernel/ipc/pipe.c`, `kernel/ipc/channel.c`, `kernel/ipc/shared_memory.c` — lifecycle and IPC.  
-[25]: `kernel/syscall/syscall.h`, `kernel/syscall/syscall.c` — active syscall table and dispatch.  
-[26]: `docs/PHASE19_KERNEL_API.md` — design-only diagnostic/mount API and provisional IDs.  
-[27]: `kernel/process/address_space.c` — independent user page-table ownership.  
-[28]: `kernel/elf/elf.c` — static ELF validation/loading boundary.  
-[29]: `tests/pipe_test.c`, `user/programs/pipe-stress.c`, `scripts/qemu_pipe_stress_test.py` — bounded pipe evidence.  
-[30]: `kernel/pci/pci.c`, `dma.c`, `iommu.c`, `msix.c` — PCI/DMA implementation and no-IOMMU boundary.  
-[31]: `kernel/arch/x86_64/acpi.c` — MCFG parsing.  
-[32]: `kernel/storage/block.c` — block registry and BIO validation.  
-[33]: `kernel/storage/block_cache.c` — cache implementation and dirty-eviction risk.  
-[34]: `kernel/storage/nvme.c` — queues, Identify, two-page PRP boundary, polling and timeout behavior.  
-[35]: `kernel/vfs/vfs.c`, `kernel/vfs/vfs_file.c` — active and legacy VFS implementations, descriptors and path lifetime.  
-[36]: `kernel/fs/rixfs.c`, `rixfs_ops.c`, `rixfs_dir.c`, `rixfs_fsck.c` — filesystem, journal and fsck.  
-[37]: `kernel/time/rtc.c`, `kernel/time/time.c` — RTC and clock sources.  
-[38]: `kernel/power/power.c`, `kernel/arch/x86_64/acpi.c` — reset/power source and ACPI S5 data.  
-[39]: `kernel/usb/xhci.c`, `xhci.h`, `usb.c`, `hid.c`, `kernel/main.c` — USB/HID implementation and integration.  
-[40]: `tests/usb_descriptor_test.c`, `tests/xhci_caps_test.c` — bounded USB/xHCI host coverage.  
-[41]: `tests/hid_report_test.c`, `kernel/arch/x86_64/ps2_keyboard.c` — HID parser and fallback input evidence.  
-[42]: `kernel/tty/tty.c`, `tests/tty_test.c` — TTY/PTY implementation and host tests.  
-[43]: `user/shell/shell.c`, `tests/shell_test.c` — shell frontend and tests.  
-[44]: `user/programs/`, `scripts/qemu_phase19_extended_test.py`, `qemu_phase19_utils_test.py`, `qemu_file_utils_test.py`, `qemu_stat_test.py` — bounded userland evidence.  
-[45]: `docs/IMPLEMENTATION_STATUS.md` — explicit validation boundary, Phase 20 in-progress status, physical exclusions.  
-[46]: `docs/PHASE20_SECURITY_DESIGN.md` and credential/account source/tests — security design boundary.  
-[47]: `docs/PHASE21_EXIT_REPORT.md` — bounded software/QEMU closure and untested physical gates.  
-[48]: `kernel/net/stack.c`, `socket.c`, `tcp.c`, `e1000.c`, `rtl8125.c` — networking implementation and TCP/NIC limitations.  
-[49]: `user/libc/src/libc.c`, `user/libc/src/unistd.c`, `user/libc/include/`, `tests/libc_test.c`, `scripts/qemu_posix_test.py` — static libc implementation, stubs and tests.  
-[50]: `docs/HARDWARE_TARGET.md`, `docs/HW_ASUS_PRIME_B650M_R.md` — target inventory and explicit detection-versus-support boundary.  
+[1]: `docs/ROADMAP.md` — Phases 00–22 requirements and definition of complete, especially lines 35–49, 60–290, and 818–847.
+[2]: `docs/CHECKPOINTS.md` — CP0–CP8 evidence classes, failure rules, and phase checkpoints.
+[3]: `docs/VALIDATION_LOG.md` — historical boot, QEMU, SMP, storage, process, networking, suite failures/fixes, and pending revalidation.
+[4]: `Makefile` — strict flags, source lists, tests, image/ISO targets, build ID, xHCI profile references, and conditional skip.
+[5]: `docs/PHASE22_COMPAT.md` — bounded static compatibility scope, guest/host evidence, and explicit deferred APIs.
+[6]: `docs/ARCHITECTURE.md` — intended layering, ABI boundaries, and subsystem dependencies.
+[7]: `linker/kernel.ld` and `docs/IMPLEMENTATION_STATUS.md` — ELF PHDR/GNU_STACK evidence and status boundary.
+[8]: `.gitignore` — generated build artifacts are ignored.
+[9]: `scripts/run-all-tests.sh` — current aggregate-runner shell options and result handling.
+[10]: `boot/efi_main.c` — UEFI loader, ELF validation, GOP/RSDP, map capture and EBS retry.
+[11]: `kernel/boot.S`, `include/kernel.h`, `kernel/main.c` — handoff copy and validation sequence.
+[12]: `kernel/mm/pmm.c`, `kernel/mm/heap.c` — frame ownership and non-reclaiming heap.
+[13]: `kernel/mm/vmm.c`, `kernel/mm/vmm.h` — mappings, early identity map, MMIO and page-table validation.
+[14]: `kernel/arch/x86_64/idt.c` — page-fault diagnostics and fail-stop exception policy.
+[15]: `kernel/mm/uaccess.c` — validate-then-dereference user-copy implementation.
+[16]: `kernel/arch/x86_64/gdt.c`, `idt.c`, `interrupts.S`, `irq.c` — privileged entry machinery.
+[17]: `kernel/arch/x86_64/pit.c` — PIT tick and scheduler accounting hook.
+[18]: `tests/gdt_test.c` and validation history — bounded descriptor evidence.
+[19]: `kernel/arch/x86_64/acpi.c`, `apic.c`, `ioapic.c` — firmware topology and interrupt controllers.
+[20]: `kernel/arch/x86_64/smp.c`, `smp.h` — AP startup, IPI, TLB shootdown and topology limits.
+[21]: `docs/SMP_DESIGN.md` — E-series SMP scope, exclusions and preemption constraints.
+[22]: `kernel/sync/lock.c`, `kernel/sync/waitqueue.c` — synchronization primitives and wait-state model.
+[23]: `kernel/sched/scheduler.c`, `kernel/sched/switch.S` — preemptive scheduler, runqueues, task slots and context switch.
+[24]: `kernel/process/process.c`, `kernel/ipc/pipe.c`, `kernel/ipc/channel.c`, `kernel/ipc/shared_memory.c` — lifecycle and IPC.
+[25]: `kernel/syscall/syscall.h`, `kernel/syscall/syscall.c` — active syscall table and dispatch.
+[26]: `docs/PHASE19_KERNEL_API.md` — design-only diagnostic/mount API and provisional IDs.
+[27]: `kernel/process/address_space.c` — independent user page-table ownership.
+[28]: `kernel/elf/elf.c` — static ELF validation/loading boundary.
+[29]: `tests/pipe_test.c`, `user/programs/pipe-stress.c`, `scripts/qemu_pipe_stress_test.py` — bounded pipe evidence.
+[30]: `kernel/pci/pci.c`, `dma.c`, `iommu.c`, `msix.c` — PCI/DMA implementation and no-IOMMU boundary.
+[31]: `kernel/arch/x86_64/acpi.c` — MCFG parsing.
+[32]: `kernel/storage/block.c` — block registry and BIO validation.
+[33]: `kernel/storage/block_cache.c` — cache implementation and dirty-eviction risk.
+[34]: `kernel/storage/nvme.c` — queues, Identify, two-page PRP boundary, polling and timeout behavior.
+[35]: `kernel/vfs/vfs.c`, `kernel/vfs/vfs_file.c` — active and legacy VFS implementations, descriptors and path lifetime.
+[36]: `kernel/fs/rixfs.c`, `rixfs_ops.c`, `rixfs_dir.c`, `rixfs_fsck.c` — filesystem, journal and fsck.
+[37]: `kernel/time/rtc.c`, `kernel/time/time.c` — RTC and clock sources.
+[38]: `kernel/power/power.c`, `kernel/arch/x86_64/acpi.c` — reset/power source and ACPI S5 data.
+[39]: `kernel/usb/xhci.c`, `xhci.h`, `usb.c`, `hid.c`, `kernel/main.c` — USB/HID implementation and integration.
+[40]: `tests/usb_descriptor_test.c`, `tests/xhci_caps_test.c` — bounded USB/xHCI host coverage.
+[41]: `tests/hid_report_test.c`, `kernel/arch/x86_64/ps2_keyboard.c` — HID parser and fallback input evidence.
+[42]: `kernel/tty/tty.c`, `tests/tty_test.c` — TTY/PTY implementation and host tests.
+[43]: `user/shell/shell.c`, `tests/shell_test.c` — shell frontend and tests.
+[44]: `user/programs/`, `scripts/qemu_phase19_extended_test.py`, `qemu_phase19_utils_test.py`, `qemu_file_utils_test.py`, `qemu_stat_test.py` — bounded userland evidence.
+[45]: `docs/IMPLEMENTATION_STATUS.md` — explicit validation boundary, Phase 20 in-progress status, physical exclusions.
+[46]: `docs/PHASE20_SECURITY_DESIGN.md` and credential/account source/tests — security design boundary.
+[47]: `docs/PHASE21_EXIT_REPORT.md` — bounded software/QEMU closure and untested physical gates.
+[48]: `kernel/net/stack.c`, `socket.c`, `tcp.c`, `e1000.c`, `rtl8125.c` — networking implementation and TCP/NIC limitations.
+[49]: `user/libc/src/libc.c`, `user/libc/src/unistd.c`, `user/libc/include/`, `tests/libc_test.c`, `scripts/qemu_posix_test.py` — static libc implementation, stubs and tests.
+[50]: `docs/HARDWARE_TARGET.md`, `docs/HW_ASUS_PRIME_B650M_R.md` — target inventory and explicit detection-versus-support boundary.
 [51]: `docs/HARDWARE_FAILURE_AUDIT_2026-09-10.md` — physical risks and prescribed marker/forensics tests.
 
-## Addendum 2026-09-13 (HEAD `2960c35`; audit base `cf77432` unchanged above)
+## Historical addendum 2026-09-13 (superseded by the 2026-09-16 current-head correction)
 
 The audit record above is preserved as written. The following deltas
 landed after the audited revision and change five of its findings.
@@ -1544,3 +1544,24 @@ Nothing below promotes untested scopes to PASS.
    `R` / `RW`, no `RWE`; runtime flags verified); HW and pressure
    runs remain open. The `1d1a204` revert stays in history as the
    honest record of the misdiagnosis.
+
+
+## Current-head correction — 2026-09-16 (`633b8cc`)
+
+The original audit metadata and several matrix cells described an older tree and an unavailable audit environment. This section is authoritative for the current checkout and supersedes conflicting historical wording above.
+
+### Current evidence
+
+`make test CROSS=x86_64-linux-gnu- HOST_CC=gcc` completes with exit code 0. The current suite includes the xHCI profile test, RixFS mount/statfs/symlink paths, NVMe PRP, block cache, ELF, PMM/heap, synchronization, scheduler, DMA, networking, USB/HID, credentials, ACPI, SMP, libc, shell, and ABI checks. The current image build also completes with the installed cross-toolchain. The QEMU harnesses have current bounded PASS evidence for ring-3 boot, shell/process/utility paths, signal/session paths, pipe and scheduler stress, networking, SMP discovery, and xHCI probe/handoff.
+
+These results are **current-tree bounded evidence**, not closure of the physical or recovery requirements. The default Makefile compiler name `x86_64-elf-gcc` is not installed in this environment; validation uses the explicit `x86_64-linux-gnu-` prefix. Hosted CI is intentionally out of scope. The xHCI result is probe/handoff only. The power-loss matrix was intentionally stopped and is not a current PASS.
+
+### Implemented since the previous audit revision
+
+The current tree includes EFI ELF segment hardening, PMM byte/range overflow rejection, VMM range and MMIO rollback hardening, zero-length uaccess no-op handling, 64-bit waitqueue generations, scheduler waiter-binding rejection, block-cache writeback pinning, BIO completion-state validation, VFS pipe/unmount/FD clone rollback fixes, RTC calendar validation, xHCI pending-queue overflow rescan signaling, RixFS cross-linked extent rejection, orphan and root-reachability checks, directory-entry type/link validation, journal and mount metadata bounds validation, and process-group signal wakeups.
+
+### Correct current gaps
+
+Phase 00 remains partial because hosted CI, SBOM, artifact retention, signing, and physical build-to-device evidence are absent. Phase 06 is partial rather than broken: preemption, runqueues, affinity, migration, fairness, and bounded QEMU stress are present, while physical SMP, long-soak, and full lifecycle evidence remain open. Phase 15 is no longer a missing-profile build blocker; it remains blocked for controller-backed xHCI transfers, enumeration, HID, hotplug, and recovery. Phase 13 has read-only RixFS integrity rejection checks, but no fsck repair implementation or power-loss durability proof. Phase 12 still lacks runtime NVMe reset/reidentify/recovery and broader command tracking. Phase 21 still lacks TCP reassembly/retransmission/window/readiness/server semantics and physical RTL8125 evidence.
+
+No phase is promoted to unconditional `PASS`. The appropriate current overall status is **PARTIAL / HARDENING REQUIRED**, with physical qualification and several P1/P2 recovery features still open.

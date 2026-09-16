@@ -2120,7 +2120,7 @@ harness (smoke by default; auto-included in the matrix glob).
 Validation (`CROSS=x86_64-linux-gnu- HOST_CC=gcc`):
 
 ```text
-make test RC=0 (-Werror) incl. ABI 81 syscalls
+make test RC=0 (-Werror) incl. ABI 89 syscalls
 make image RC=0
 qemu posix/pipetest/credtest sequence: PASS incl. audit=PASS + setid=PASS
   (same sequence failed at the audit child before the fix)
@@ -2181,7 +2181,7 @@ removed). Verification stays local and explicit instead:
 Validation:
 
 ```text
-make test RC=0 (-Werror) incl. ABI registry consistent: 81 syscalls
+make test RC=0 (-Werror) incl. ABI registry consistent: 89 syscalls
 python3 scripts/generate-provenance.py → build/provenance.json (dirty=True
   on a working tree, artifact hashes match the repro builds)
 git diff --check clean
@@ -2189,3 +2189,24 @@ git diff --check clean
 
 Explicitly NOT in this slice: SBOM, artifact retention, test-skip
 enforcement automation, release-blocker policy. Phase 23 stays LOCKED.
+
+
+## 2026-09-16 — current-head validation correction
+
+This entry supersedes stale environment statements in earlier sections. The audited repository revision is `633b8cc` (`fix: wake blocked tasks on group signals`), with the source tree clean before these documentation edits. The hosted CI workflow was intentionally removed at the owner’s request; no CI PASS is claimed.
+
+The current host toolchain is `gcc` with `x86_64-linux-gnu-`. The following command completed with exit code 0:
+
+```text
+make test CROSS=x86_64-linux-gnu- HOST_CC=gcc
+```
+
+The suite included the GDT, PMM, heap, xHCI capability/profile/PORTSC, RixFS mount, NVMe PRP, scheduler and synchronization, VFS/pipe, ELF, uaccess, block-cache, USB/HID, networking, shell, libc, credential, ACPI, SMP, DMA, statfs, and kernel-log targets. `git diff --check` and `python3 scripts/check-abi.py` also passed; the ABI registry reported 89 syscalls.
+
+The image build completed with the installed cross-toolchain. The QEMU validation runs completed with exit code 0 for ring-3 boot, shell/process/utility scenarios, signal/session paths, pipe and scheduler stress paths, network paths, SMP discovery, and xHCI probe. The latest utility/device batch produced `PASS` for `df`, `dmesg`, `free`, `head/tail`, `ln`, `stat`, text utilities, `touch`, SMP discovery boot, and xHCI probe. The `burst` and `cp/mv edge` scripts returned zero but do not emit a PASS marker, so they are recorded as exit-code-verified rather than marker-verified.
+
+The xHCI result is limited to PCI probe, BIOS handoff, controller discovery, and port-status observation. It is not evidence of USB enumeration, endpoint completion, HID reports, detach/reattach, or recovery. QEMU NVMe-backed boot and RixFS utility paths are current integration evidence, not physical-device qualification.
+
+The current HEAD also contains validated hardening for PMM/VMM/EFI arithmetic, RTC calendar validation, xHCI pending-queue overflow rescan signaling, block BIO completion state, VFS descriptor lifecycle, RixFS extent ownership, orphan and root reachability checks, directory-entry type/link consistency, journal bounds, mount metadata ranges, and process-group signal wakeups. The RixFS fsck checks are read-only integrity rejection checks; fsck repair and power-loss durability remain unimplemented or unverified. The power-loss test was stopped and is intentionally excluded from this validation record.
+
+The remaining closure blockers are physical hardware evidence, NVMe reset/recovery, full xHCI/HID/hotplug behavior, RixFS transaction repair and durability, TCP reassembly/retransmission/window/readiness/server semantics, complete PTY/job-control and signal-frame semantics, and sustained fault/recovery/soak matrices. No Phase 00–22 phase is promoted to unconditional `PASS` by this entry.
