@@ -12,6 +12,7 @@
 #define RIX_NET_SOCKET_SHUT_RD 0x1u
 #define RIX_NET_SOCKET_SHUT_WR 0x2u
 #define RIX_NET_SOCKET_REUSEADDR 0x2u
+#define RIX_NET_TCP_REASSEMBLY_SLOTS 4u
 
 typedef enum {
     RIX_NET_SOCKET_UDP = 1,
@@ -33,6 +34,13 @@ typedef struct {
 
 typedef struct {
     uint8_t used;
+    uint8_t fin;
+    uint32_t sequence;
+    rix_net_packet_t packet;
+} rix_net_tcp_reassembly_slot_t;
+
+typedef struct {
+    uint8_t used;
     uint8_t connected;
     uint8_t flags;
     uint8_t shutdown;
@@ -46,6 +54,7 @@ typedef struct {
     rix_net_endpoint_t peer;
     rix_tcp_control_t tcp;
     rix_net_socket_queue_t receive;
+    rix_net_tcp_reassembly_slot_t reassembly[RIX_NET_TCP_REASSEMBLY_SLOTS];
 } rix_net_socket_t;
 
 typedef struct {

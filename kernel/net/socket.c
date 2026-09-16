@@ -113,6 +113,8 @@ int rix_net_socket_open(rix_net_socket_table_t *table, rix_net_socket_type_t typ
             rix_tcp_init(&socket->tcp);
             socket->receive.head = 0;
             socket->receive.count = 0;
+            for (size_t j = 0; j < RIX_NET_TCP_REASSEMBLY_SLOTS; ++j)
+                socket->reassembly[j].used = 0;
             return (int)i;
         }
     }
@@ -472,9 +474,48 @@ static int tcp_send_ack(rix_net_stack_t *stack, rix_net_socket_t *socket,
         return -1;
     return rix_net_stack_send_ipv4(stack, &ack, peer_ip) < 0 ? -1 : 0;
 }
+static int tcp_queue_payload(rix_net_socket_t *socket, uint32_t sequence,
+                             rix_net_packet_t *packet, uint8_t fin) {
+    size_t payload;
+    if (!socket || !packet || sequence != socket->tcp.acknowledgment) return -1;
+    payload = rix_net_packet_length(packet);
+    if (payload && queue_packet(socket, rix_net_packet_data(packet), payload,
+                                socket->peer) != 0) return -1;
+    socket->tcp.acknowledgment = sequence + (uint32_t)payload + (fin ? 1u : 0u);
+    if (fin && rix_tcp_transition(&socket->tcp, RIX_TCP_EVENT_FIN) != 0) return -1;
+    return 0;
+}
+static int tcp_hold_segment(rix_net_socket_t *socket, uint32_t sequence,
+                            rix_net_packet_t *packet, uint8_t fin) {
+    size_t payload = rix_net_packet_length(packet);
+    for (size_t i = 0; i < RIX_NET_TCP_REASSEMBLY_SLOTS; ++i)
+        if (socket->reassembly[i].used && socket->reassembly[i].sequence == sequence) return 0;
+    for (size_t i = 0; i < RIX_NET_TCP_REASSEMBLY_SLOTS; ++i) {
+        rix_net_tcp_reassembly_slot_t *slot = &socket->reassembly[i];
+        if (!slot->used) {
+            if (packet_copy(&slot->packet, rix_net_packet_data(packet), payload) != 0) return -1;
+            slot->used = 1; slot->fin = fin; slot->sequence = sequence;
+            return 0;
+        }
+    }
+    return -1;
+}
+static int tcp_drain_reassembly(rix_net_socket_t *socket) {
+    int progressed;
+    do {
+        progressed = 0;
+        for (size_t i = 0; i < RIX_NET_TCP_REASSEMBLY_SLOTS; ++i) {
+            rix_net_tcp_reassembly_slot_t *slot = &socket->reassembly[i];
+            if (!slot->used || slot->sequence != socket->tcp.acknowledgment) continue;
+            if (tcp_queue_payload(socket, slot->sequence, &slot->packet, slot->fin) != 0) return -1;
+            slot->used = 0; progressed = 1;
+        }
+    } while (progressed);
+    return 0;
+}
 
 /* Wire TCP input. Matches by local port + peer; out-of-order segments are
-   dropped (no reordering support); RST aborts; FIN moves to CLOSE_WAIT so a
+   retained in a bounded reassembly window; RST aborts; FIN moves to CLOSE_WAIT so a
    drained socket reads EOF. Returns 11 on match+progress, 12 on no match,
    13 on wrong-state ignore, 14 on sequence ignore, 0 on pure-ACK ignore,
    -1 on invalid frame. (Distinct from UDP's 1.) */
@@ -523,25 +564,24 @@ static int dispatch_external_tcp(rix_net_socket_table_t *table, rix_net_stack_t 
         if (socket->tcp.state != RIX_TCP_ESTABLISHED &&
             socket->tcp.state != RIX_TCP_CLOSE_WAIT)
             return 13;
-        if (header.sequence != socket->tcp.acknowledgment) {
-            /* Keep the receive point stable and request retransmission of
-             * the missing prefix instead of silently waiting for a timeout. */
+        size_t payload = rix_net_packet_length(packet);
+        uint8_t fin = (header.flags & RIX_NET_TCP_FLAG_FIN) != 0u;
+        if (header.sequence < socket->tcp.acknowledgment) {
             (void)tcp_send_ack(stack, socket, source_ip);
             return 14;
         }
-        size_t payload = rix_net_packet_length(packet);
-        uint8_t fin = (header.flags & RIX_NET_TCP_FLAG_FIN) != 0u;
-        if (payload &&
-            queue_packet(socket, rix_net_packet_data(packet), payload,
-                         (rix_net_endpoint_t){source_ip, header.source_port}) != 0)
-            return -1;
+        if (header.sequence > socket->tcp.acknowledgment) {
+            if (tcp_hold_segment(socket, header.sequence, packet, fin) != 0) return -1;
+            (void)tcp_send_ack(stack, socket, source_ip);
+            return 14;
+        }
+        if (tcp_queue_payload(socket, header.sequence, packet, fin) != 0 ||
+            tcp_drain_reassembly(socket) != 0) return -1;
 #ifndef RIX_HOST_TEST
         kernel_log("DEBUG: TCPD queued="); kernel_log_dec(payload);
-        kernel_log(" ack="); kernel_log_hex(header.sequence + (uint32_t)payload + (fin ? 1u : 0u));
+        kernel_log(" ack="); kernel_log_hex(socket->tcp.acknowledgment);
         kernel_log("\r\n");
 #endif
-        socket->tcp.acknowledgment = header.sequence + (uint32_t)payload + (fin ? 1u : 0u);
-        if (fin && rix_tcp_transition(&socket->tcp, RIX_TCP_EVENT_FIN) != 0) return -1;
         if (payload || fin) {
             (void)tcp_send_ack(stack, socket, source_ip);
             return 11;
