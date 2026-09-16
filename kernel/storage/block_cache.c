@@ -36,13 +36,21 @@ static int evict_one(cache_entry_t **out_slot){
     if(!old_d||old_sz==0||old_sz>CACHE_SECTOR_BYTES){rix_spin_unlock_irqrestore(&cache_lock,f);return -1;}
     uint8_t old_data[CACHE_SECTOR_BYTES];
     for(uint32_t i=0;i<old_sz;i++)old_data[i]=e->data[i];
+    e->writeback=1;
     rix_spin_unlock_irqrestore(&cache_lock,f);
-    if(io(old_d,RIX_BIO_WRITE,old_s,old_data)!=0)return -1;
+    if(io(old_d,RIX_BIO_WRITE,old_s,old_data)!=0){
+        rix_spin_lock_irqsave(&cache_lock,&f);
+        cache_entry_t*failed=find(old_d,old_s);
+        if(failed&&failed->age==old_age)failed->writeback=0;
+        rix_spin_unlock_irqrestore(&cache_lock,f);
+        return -1;
+    }
     rix_spin_lock_irqsave(&cache_lock,&f);
     /* Only reclaim when nobody touched the entry while we wrote. A
      * concurrent update bumps age, so the new dirty data must survive. */
     cache_entry_t*cur=find(old_d,old_s);
     if(cur&&cur->age==old_age)invalidate(cur);
+    else if(cur)cur->writeback=0;
     /* The invalidated slot (or another free one) is now available. */
     e=victim();
     if(!e||e->valid){
