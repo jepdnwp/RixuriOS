@@ -2319,3 +2319,9 @@ This fixes the identified timing race in software, but post-fix physical enumera
 The follow-up physical trace still reached `USB Transaction Error` and exhausted all three EP0 retries. The trace showed that retry recovery issued `RESET ENDPOINT` while the implementation assumed the failed transfer-ring dequeue state would be preserved, but the command did not set the xHCI Transfer State Preserve (TSP) bit. EP0 retry recovery now sets TSP=1, matching the transaction-error soft-reset path: the endpoint is reset while its transfer-ring/dequeue state is retained, then the failed control TD is re-emitted at the same ring position.
 
 This directly fixes the mismatch between the recovery comment and the command TRB. Host compilation and tests must pass before physical requalification; the supplied photograph remains evidence of the pre-fix failure path, not post-fix success.
+
+## 2026-09-16 — xHCI Full-Speed EP0 bootstrap MPS
+
+The next physical trace identified the remaining protocol mismatch: the port and slot context reported USB Full-Speed (`speed=1`), while the first EP0 context was configured with `mps=64`. The bootstrap control endpoint now starts Full-Speed devices at MPS 8, which is the value available before `bMaxPacketSize0` is read. The existing first-8-byte device-descriptor request then extracts `bMaxPacketSize0` and applies the real value through Evaluate Context before the full descriptor/configuration requests.
+
+High-Speed remains at MPS 64, SuperSpeed at 512, and Low-Speed at 8. This corrects the physical log's `speed=1`/`mps=64` mismatch and targets the preceding transaction error at its protocol boundary.

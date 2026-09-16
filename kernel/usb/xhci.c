@@ -1213,9 +1213,9 @@ static void xhci_log_ep0_context_and_ring(const rix_xhci_controller_t *c,
         serial_write("\r\n");
     }
     /* EP0 DW1 (CERR/Type/MPS) at doorbell time: the first transfer of a
-     * Full-Speed device must read cerr=3 type=4 maxburst=0 mps=64 (the
-     * initial guess, refined after the first 8 bytes via Evaluate
-     * Context). */
+     * Full-Speed device must use the USB default-control bootstrap MPS of 8;
+     * bMaxPacketSize0 is learned from the first 8 descriptor bytes and then
+     * applied with Evaluate Context. */
     {
         uint32_t e1 = ep0ctx[1];
         serial_write("xHCI: EP0 CFG cerr=");
@@ -2055,11 +2055,9 @@ static int submit_command(size_t controller, uint64_t parameter, uint32_t contro
 static uint16_t initial_ep0_mps(uint8_t speed) {
     if (speed == 3u) return 64u; /* high-speed */
     if (speed >= 4u) return 512u; /* SuperSpeed and later */
-    /* Full speed (1): 64 — the reference implementations (Linux, U-Boot,
-     * barebox xhci_setup_addressable_virt_dev) all program 64 for FS
-     * ("USB core guesses at 64 first"); 8 under-sizes the bus pipe.
-     * Low speed (2): 8, the only legal value. */
-    if (speed == 1u) return 64u;
+    /* Full speed (1) starts at 8 until bMaxPacketSize0 is read. */
+    if (speed == 1u) return 8u;
+    /* Low speed (2): 8, the only legal value. */
     return 8u;
 }
 

@@ -832,15 +832,15 @@ Substantial source and historical parser/build evidence exist. A controller-requ
 
 ### Missing
 
-`kernel/usb/xhci_profile.c`, `kernel/usb/xhci_profile.h`, and `tests/xhci_profile_test.c` are referenced but absent at audited HEAD. Ring/command/transfer/reset models, live controller-backed completion, DMA stress, MSI-X integration, endpoint recovery, and physical qualification are also missing.
+Ring/command/transfer/reset models, live controller-backed completion, DMA stress, MSI-X integration, endpoint recovery under fault injection, and physical qualification are still missing or unverified. The xHCI profile source, header, and host test are present and buildable.
 
 ### Partial
 
-The pending-port queue is bounded. DMA requires physical contiguity for the supported transfer span. Timeout returns an error without Stop/Reset Endpoint, ring rebuild, restart, or quarantine. The generic historical QEMU topology reported zero controllers.[3] [39]
+The pending-port queue is bounded. DMA requires physical contiguity for the supported transfer span. EP0 transaction-error retry now uses Reset Endpoint with TSP state preservation, and USB2 reset now includes a device settle window; generic transfer timeout still returns an error without full controller quarantine/restart. The generic historical QEMU topology reported zero controllers.[3] [39]
 
 ### Bugs / correctness risks
 
-A clean compile cannot resolve the profile source/types/functions. A full 16-entry port queue silently drops transitions. Event-ring serialization is unproved. Timeout can leave poisoned device/ring state. DMA/IOMMU/cache assumptions remain unqualified.[4] [39]
+Event-ring serialization is unproved. Timeout can leave poisoned device/ring state. DMA/IOMMU/cache assumptions remain unqualified. Physical evidence has exposed protocol/timing faults, but post-fix enumeration is not yet independently captured.[4] [39]
 
 ### Tests
 
