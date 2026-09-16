@@ -2227,3 +2227,17 @@ git diff --check
 ```
 
 This closes only the bounded software reassembly slice. Timer-backed retransmission, congestion control, dynamic windows, blocking readiness, overlap trimming, NIC recovery, and physical network qualification remain open or UNVERIFIED.
+
+## 2026-09-16 — bounded NVMe reset/recovery path
+
+NVMe I/O and flush paths now perform a bounded recovery sequence after repeated timeout or stuck-completion results: controller reset, queue cleanup, admin queue setup, controller identify, I/O queue setup, and one final operation retry. Recovery state and attempt count are recorded on the controller, persistent failures mark `io_failed`, and the path cannot retry indefinitely. The change is exposed through `nvme_recover()` and is included in commits after the TCP/allocator hardening.
+
+Validation completed with exit code 0 for the host PRP test and full host suite:
+
+```text
+make nvme-prp-test HOST_CC=gcc
+make test CROSS=x86_64-linux-gnu- HOST_CC=gcc
+git diff --check
+```
+
+The freestanding image build completed and QEMU reached `RIXURI:KERNEL_READY`, the ring-3 shell, and SMP smoke markers. QEMU ended with `qemu_rc=124` because the bounded command terminated the still-running kernel; this is not a failure marker. No injected NVMe timeout/reset occurred in this run, so controller recovery remains **UNVERIFIED on physical hardware and under fault injection**.

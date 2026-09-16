@@ -29,6 +29,8 @@ typedef struct {
     uint8_t io_ready;
     uint8_t identify_valid;
     uint8_t io_failed;
+    uint8_t recovery_state;
+    uint8_t recovery_attempts;
     uint16_t admin_sq_tail;
     uint16_t admin_cq_head;
     uint8_t admin_cq_phase;
@@ -63,3 +65,5 @@ int nvme_identify_namespace(size_t index, uint32_t nsid);
 int nvme_read(size_t controller, uint32_t nsid, uint64_t lba, uint32_t count, void *buffer, size_t buffer_size);
 int nvme_write(size_t controller, uint32_t nsid, uint64_t lba, uint32_t count, const void *buffer, size_t buffer_size);
 int nvme_flush(size_t controller, uint32_t nsid);
+/* Performs one bounded controller reset and queue reinitialization. */
+int nvme_recover(size_t controller);
