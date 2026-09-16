@@ -137,6 +137,17 @@ static void waitqueue_checks(void) {
     for (unsigned i = 0; i < RIX_WQ_MAX_WAITERS; ++i)
         assert(rix_waitqueue_prepare(&q, 100u + i, &tmp) == 0);
     assert(rix_waitqueue_prepare(&q, 999u, &tmp) == -1);
+    /* Generation is 64-bit and must recover to a non-zero value on wrap. */
+    rix_waitqueue_t wrap_q;
+    rix_wait_handle_t wrap_a, wrap_b;
+    rix_waitqueue_init(&wrap_q);
+    wrap_q.generation = UINT64_MAX;
+    assert(rix_waitqueue_prepare(&wrap_q, 1u, &wrap_a) == 0);
+    assert(wrap_a.generation == UINT64_MAX);
+    assert(rix_waitqueue_remove(&wrap_q, wrap_a) == 0);
+    assert(rix_waitqueue_prepare(&wrap_q, 2u, &wrap_b) == 0);
+    assert(wrap_b.generation == 1u);
+    assert(wrap_b.generation != wrap_a.generation);
     assert(rix_waitqueue_prepare(NULL, 1u, &tmp) == -1);
     assert(rix_waitqueue_block(NULL, tmp) == -1);
     assert(rix_waitqueue_wake_one(NULL) == -1);

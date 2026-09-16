@@ -22,12 +22,12 @@ typedef enum { RIX_WAIT_UNUSED = 0, RIX_WAIT_READY = 1, RIX_WAIT_BLOCKED = 2, RI
 
 typedef struct {
     uint32_t index;
-    uint32_t generation;
+    uint64_t generation;
 } rix_wait_handle_t;
 
 typedef struct {
     uint64_t id;
-    uint32_t generation;
+    uint64_t generation;
     volatile rix_wait_state_t state;
 } rix_waiter_t;
 
@@ -35,7 +35,7 @@ typedef struct {
     rix_spinlock_t lock;
     rix_waiter_t waiters[RIX_WQ_MAX_WAITERS];
     uint32_t count;
-    uint32_t generation;
+    uint64_t generation;
 } rix_waitqueue_t;
 
 void rix_waitqueue_init(rix_waitqueue_t *queue);
