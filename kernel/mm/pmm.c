@@ -135,6 +135,10 @@ uint64_t pmm_alloc_pages(size_t count){
 }
 void pmm_free_page_range(uint64_t physical_address,size_t count){
     if(!count||(physical_address&(RIXURI_PAGE_SIZE-1ULL))!=0)return;
+    /* Do not let the final page address wrap and turn a malformed range
+     * into frees of unrelated low physical pages. */
+    if((uint64_t)(count-1u) >
+       (UINT64_MAX-physical_address)/RIXURI_PAGE_SIZE)return;
     for(size_t i=0;i<count;i++)pmm_free_page(physical_address+(uint64_t)i*RIXURI_PAGE_SIZE);
 }
 void pmm_reserve_page(uint64_t physical_address){

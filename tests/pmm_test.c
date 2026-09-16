@@ -56,6 +56,14 @@ int main(void) {
     assert(pmm_free_pages() == free_before - 4u);
     pmm_free_page_range(base, 4u);
     assert(pmm_free_pages() == free_before);
+    uint64_t guarded = pmm_alloc_page();
+    assert(guarded != 0u);
+    uint64_t guarded_free = pmm_free_pages();
+    pmm_free_page_range(UINT64_MAX - 0x0FFFu, 2u);
+    assert(pmm_is_in_use(guarded));
+    assert(pmm_free_pages() == guarded_free);
+    pmm_free_page(guarded);
+    assert(pmm_free_pages() == free_before);
     assert(pmm_alloc_pages(0u) == 0u);
     assert(pmm_alloc_pages(1u << 30) == 0u);
     assert(pmm_alloc_page_below(0x1000u) == 0u);
