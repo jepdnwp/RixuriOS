@@ -46,6 +46,10 @@ int main(void) {
     /* Bad alignment fails. */
     assert(nvme_prp_build(pages[0]+1, 0, 512, pages, 5, list, 512, 0x200000u, &prp1, &prp2)!=0);
     assert(nvme_prp_build(pages[0], 4096, 512, pages, 5, list, 512, 0x200000u, &prp1, &prp2)!=0);
+    /* Huge page_count must be rejected before multiplication or page-table
+     * traversal can wrap. */
+    assert(nvme_prp_build(pages[0], 0, 512, pages, SIZE_MAX,
+                          list, 512, 0x200000u, &prp1, &prp2)!=0);
     printf("negative PASS\n");
 
     printf("nvme prp tests: PASS\n");
