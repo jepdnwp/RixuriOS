@@ -354,22 +354,41 @@ int main(void) {
     assert(memcmp(wireout, "hi", 2) == 0);
     assert(peer_endpoint.address == 0xc0a80101u && peer_endpoint.port == 80);
     assert(wsock->tcp.acknowledgment == 103);
-    /* Out-of-order data is dropped, not queued. */
+    /* Out-of-order data is retained until the missing prefix arrives. */
     rix_net_packet_init(&packet);
+    static const uint8_t later[] = {'l', 'o'};
     assert(rix_net_tcp_push(&packet, 0xc0a80101u, 0xc0a80102u, 80, 40000,
-                            999, 8,
+                            105, 8,
                             RIX_NET_TCP_FLAG_ACK | RIX_NET_TCP_FLAG_PSH,
-                            4096, hello, sizeof(hello)) == 0);
+                            4096, later, sizeof(later)) == 0);
     assert(rix_net_ipv4_push(&packet, 0xc0a80101u, 0xc0a80102u,
                              RIX_NET_IP_PROTO_TCP, 64, 0, RIX_NET_IP_FLAG_DF) == 0);
     stub_frame = packet;
     stub_frame_valid = 1;
     assert(rix_net_socket_receive(&sockets, wire, wireout, sizeof(wireout), 0) == -3);
     assert(wsock->tcp.acknowledgment == 103);
+    /* A duplicate out-of-order segment does not consume another slot. */
+    stub_frame = packet;
+    stub_frame_valid = 1;
+    assert(rix_net_socket_receive(&sockets, wire, wireout, sizeof(wireout), 0) == -3);
+    rix_net_packet_init(&packet);
+    static const uint8_t prefix[] = {'o', 'k'};
+    assert(rix_net_tcp_push(&packet, 0xc0a80101u, 0xc0a80102u, 80, 40000,
+                            103, 8,
+                            RIX_NET_TCP_FLAG_ACK | RIX_NET_TCP_FLAG_PSH,
+                            4096, prefix, sizeof(prefix)) == 0);
+    assert(rix_net_ipv4_push(&packet, 0xc0a80101u, 0xc0a80102u,
+                             RIX_NET_IP_PROTO_TCP, 64, 0, RIX_NET_IP_FLAG_DF) == 0);
+    stub_frame = packet;
+    stub_frame_valid = 1;
+    assert(rix_net_socket_receive(&sockets, wire, wireout, sizeof(wireout), 0) == 2);
+    assert(memcmp(wireout, "ok", 2) == 0 && wsock->tcp.acknowledgment == 107);
+    assert(rix_net_socket_receive(&sockets, wire, wireout, sizeof(wireout), 0) == 2);
+    assert(memcmp(wireout, "lo", 2) == 0);
     /* FIN moves to CLOSE_WAIT and a drained socket reads EOF. */
     rix_net_packet_init(&packet);
     assert(rix_net_tcp_push(&packet, 0xc0a80101u, 0xc0a80102u, 80, 40000,
-                            103, 8, RIX_NET_TCP_FLAG_FIN,
+                            107, 8, RIX_NET_TCP_FLAG_FIN,
                             4096, 0, 0) == 0);
     assert(rix_net_ipv4_push(&packet, 0xc0a80101u, 0xc0a80102u,
                              RIX_NET_IP_PROTO_TCP, 64, 0, RIX_NET_IP_FLAG_DF) == 0);

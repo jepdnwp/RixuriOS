@@ -1407,7 +1407,7 @@ Use a dedicated disposable disk and the documented Ryzen 7 7700 / ASUS PRIME B65
 | 14 | P1 | Implement NVMe PRP/SGL and reset/recovery. | DMA + block ordering | Injected timeout/reset then resumed I/O. |
 | 15 | P1 | Complete RixFS transactions, orphan detection, fsck repair and power-loss matrix. | Block/NVMe reliability | Deterministic replay/repair across injections. |
 | 16 | P1 | Finish xHCI/HID controller, endpoint, hotplug and recovery paths. | Build + DMA | Controller-backed QEMU and physical input. |
-| 17 | P1 | Complete TCP and socket blocking/readiness/server semantics. | Timers/wait queues | Drop/reorder/window/server QEMU matrix. |
+| 17 | P1 | Complete TCP and socket blocking/readiness/server semantics. | Timers/wait queues | Bounded host coverage now verifies out-of-order retention, duplicate suppression, gap-close ordered delivery, and cumulative ACK advance; TCP overlap trimming, wrap-safe sequence windows, retransmission timers, receive-window enforcement, blocking readiness, and server/listen semantics remain open. |
 | 18 | P2 | Implement stable VFS objects/open descriptions/CLOEXEC/symlinks/mount lifecycle. | Lifecycle and locking | POSIX fd/path/concurrency tests. |
 | 19 | P2 | Resolve Phase 19 syscall collisions; add diagnostics, mount APIs and GPT. | ABI + storage | User tools and corrupt-media tests. |
 | 20 | P2 | Execute complete physical qualification. | All relevant P0/P1 fixes | Archived serial, pcap, hashes, device status and recovery. |

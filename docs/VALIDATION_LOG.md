@@ -2281,3 +2281,14 @@ Validation completed successfully:
 make test CROSS=x86_64-linux-gnu- HOST_CC=gcc
 git diff --check
 ```
+
+## 2026-09-16 — TCP bounded reassembly coverage
+
+The host networking test now exercises the bounded TCP out-of-order path instead of treating every out-of-order segment as a drop. It verifies that a later segment is retained, a duplicate does not consume another reassembly slot, the missing prefix releases data in sequence order, and the cumulative acknowledgement advances across the joined payload. FIN processing is then checked at the resulting sequence number.
+
+```text
+make net-test HOST_CC=gcc
+git diff --check
+```
+
+The test passed. This is host-only evidence for the bounded reassembly implementation; overlap trimming, sequence-number wraparound, retransmission timers, receive windows, blocking readiness, and physical network qualification remain UNVERIFIED.
