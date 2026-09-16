@@ -94,5 +94,11 @@ int main(void) {
     assert(pmm_region_info(0x100000u, &region_base, &region_end,
                            &region_type, &region_usable) == 1);
 
+    /* A later malformed init clears the previous map rather than leaving a
+     * stale diagnostic source reachable. */
+    pmm_init(NULL, 0u, 0u, 0u, 0u, 0u, 0u);
+    assert(pmm_region_info(0x100000u, &region_base, &region_end,
+                           &region_type, &region_usable) == -1);
+
     return 0;
 }

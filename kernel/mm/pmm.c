@@ -64,6 +64,10 @@ void pmm_init(const void*memory_map,uint64_t memory_map_size,uint64_t descriptor
     for(size_t i=0;i<RIXURI_BITMAP_WORDS;i++){page_bitmap[i]=UINT64_MAX;managed_bitmap[i]=0;reserved_bitmap[i]=0;}
     total_pages_count=free_pages_count=reserved_pages_count=0;rix_spin_init(&pmm_lock);
     rix_lockdep_register("pmm", 30u, &pmm_lockdep_class);
+    /* A failed reinitialization must not leave diagnostics reading the
+     * previous firmware map.  The caller may reuse the PMM object after a
+     * malformed handoff, so clear the saved-map contract first. */
+    saved_map=NULL;saved_map_size=0;saved_desc_size=0;
     if(!memory_map||descriptor_size<EFI_DESCRIPTOR_MIN_SIZE||descriptor_size>4096||memory_map_size<descriptor_size)return;
     saved_map=(const unsigned char*)memory_map;saved_map_size=memory_map_size;saved_desc_size=descriptor_size;
     uint64_t offset=0;
