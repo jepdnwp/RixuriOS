@@ -13,7 +13,7 @@ OBJ := kernel/boot.o kernel/main.o kernel/serial.o kernel/user_init_blob.o \
  kernel/mm/pmm.o kernel/mm/vmm.o kernel/mm/ptmap.o kernel/mm/uaccess.o kernel/mm/heap.o kernel/sync/lock.o kernel/sync/waitqueue.o kernel/sync/mutex.o kernel/sync/rwlock.o kernel/sync/sem.o kernel/sync/lockdep.o kernel/ipc/channel.o kernel/ipc/pipe.o kernel/ipc/shared_memory.o kernel/tty/tty.o \
          kernel/storage/block.o kernel/storage/block_cache.o kernel/storage/nvme.o kernel/storage/nvme_prp.o kernel/log/klog.o kernel/net/net.o kernel/net/ethernet.o kernel/net/arp.o kernel/net/ipv4.o kernel/net/ipv6.o kernel/net/udp.o kernel/net/tcp.o kernel/net/loopback.o kernel/net/socket.o kernel/net/device.o kernel/net/stack.o kernel/net/dhcp.o kernel/net/rtl8125.o kernel/net/e1000.o kernel/usb/usb.o kernel/usb/hid.o kernel/usb/hub.o kernel/usb/storage.o kernel/usb/xhci/core.o kernel/usb/xhci/ring.o kernel/usb/xhci/slot.o kernel/usb/xhci/xfer.o kernel/usb/xhci/ep.o kernel/usb/xhci/hub.o kernel/usb/xhci/debug.o kernel/usb/xhci/caps.o kernel/usb/xhci/profile.o kernel/time/rtc.o kernel/time/time.o kernel/power/power.o kernel/tty/font_psf.o
 
-PROGRAM_NAMES := echo cat args grep true false sleep ls mkdir rm rmdir touch stat ln head tail wc cut tr sort uniq env printf pwd which kill ps uname du df free dmesg cp mv find xargs sed test tee basename dirname seq id whoami date ping curl host help hostname credtest auditcheck capdelegatecheck capdelegatetest accountctl sessiontest sessionlisttest killtest metatest renametest authcheck abi-negative proc-test pipe-stress rixtest posix-test schedtest pipetest threads crashtest fuzztest cloexec-test
+PROGRAM_NAMES := echo cat args grep true false sleep ls mkdir rm rmdir touch stat ln head tail wc cut tr sort uniq env printf pwd which kill ps uname du df free dmesg cp mv find xargs sed test tee basename dirname seq id whoami date ping curl host help hostname credtest auditcheck capdelegatecheck capdelegatetest accountctl sessiontest sessionlisttest killtest metatest renametest authcheck abi-negative proc-test pipe-stress rixtest posix-test schedtest pipetest threads crashtest fuzztest cloexec-test epipe-test readlink chmod chown reboot poweroff
 PROGRAM_ELFS := $(addprefix build/programs/,$(addsuffix .elf,$(PROGRAM_NAMES)))
 PROGRAM_START_OBJ := build/programs/start.o
 
@@ -174,6 +174,12 @@ build/rixfs.img: programs scripts/build-rixfs-image.py etc/hosts etc/hostname et
 		--file /usr/bin/crashtest=build/programs/crashtest.elf \
 		--file /usr/bin/fuzztest=build/programs/fuzztest.elf \
 		--file /usr/bin/cloexec-test=build/programs/cloexec-test.elf \
+		--file /usr/bin/epipe-test=build/programs/epipe-test.elf \
+		--file /bin/readlink=build/programs/readlink.elf \
+		--file /bin/chmod=build/programs/chmod.elf \
+		--file /bin/chown=build/programs/chown.elf \
+		--file /sbin/reboot=build/programs/reboot.elf \
+		--file /sbin/poweroff=build/programs/poweroff.elf \
 		--file /usr/bin/rixtest=build/programs/rixtest.elf \
 		--file /sbin/false=build/programs/false.elf \
 		--file /usr/sbin/true=build/programs/true.elf

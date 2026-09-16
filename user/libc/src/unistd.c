@@ -137,6 +137,8 @@ ssize_t recvfrom(int fd,void *buffer,size_t length,int flags,struct sockaddr *so
 ssize_t send(int fd,const void *buffer,size_t length,int flags){return sendto(fd,buffer,length,flags,0,0);}
 ssize_t recv(int fd,void *buffer,size_t length,int flags){return recvfrom(fd,buffer,length,flags,0,0);}
 int shutdown(int fd,int how){if(how<SHUT_RD||how>SHUT_RDWR){errno=RIX_EINVAL;return -1;}return(int)rix_int_result(rix_sys(151,fd,how,0));}
+int reboot(void){return(int)rix_int_result(rix_sys(156,0,0,0));}
+int poweroff(void){return(int)rix_int_result(rix_sys(157,0,0,0));}
 int setsockopt(int fd,int level,int option,const void *value,socklen_t length){if(!value||length<sizeof(int)){errno=RIX_EINVAL;return -1;}return(int)rix_int_result(rix_sys4(152,fd,level,option,(long)value));}
 int getsockopt(int fd,int level,int option,void *value,socklen_t *length){if(!value||!length||*length<sizeof(int)){errno=RIX_EINVAL;return -1;}return(int)rix_int_result(rix_sys4(153,fd,level,option,(long)value));}
 int socket_open(int type){return(int)rix_int_result(rix_sys(41,type,0,0));}

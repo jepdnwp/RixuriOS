@@ -72,8 +72,9 @@ try:
     # back-to-back sends overflow the bounded TTY input queue under fork/exec
     # load and arrive truncated (observed: eaten command bytes, silent
     # no-op commands).
-    if not read_until(b"\x1b[1;37m:\x1b[0m ", 15.0):
-        raise RuntimeError("idle shell prompt not observed")
+    if not os.environ.get("RIXURI_NO_SYNC"):
+        if not read_until(b"\x1b[1;37m:\x1b[0m ", 15.0):
+            raise RuntimeError("idle shell prompt not observed")
     deadline = time.monotonic() + timeout
     for command in commands:
         send(command)

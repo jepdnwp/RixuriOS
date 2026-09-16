@@ -108,6 +108,8 @@ descriptive — any drift between them is a bug. `STATFS 145` / `SYSINFO 146` / 
 | 153 | GETSOCKOPT | served (v1 additive) |
 | 154 | LISTEN | served (v1 additive) |
 | 155 | ACCEPT | served (v1 additive; empty queue returns EAGAIN) |
+| 156 | REBOOT | served (v1 additive; UID 0 only; never returns on success) |
+| 157 | POWEROFF | served (v1 additive; UID 0 only; never returns on success) |
 | 247 | WAITPID | served (`NOHANG=1`) |
 | 248 | CLOSE_PIPES_EXCEPT | served |
 

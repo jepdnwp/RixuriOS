@@ -18,6 +18,8 @@ int program_main(int argc, char **argv, char **envp) {
     out("inode "); number(st.inode);
     out("\ntype "); number(st.type);
     out("\nmode "); number(st.mode);
+    out("\nuid "); number(st.uid);
+    out("\ngid "); number(st.gid);
     out("\nsize "); number(st.size);
     out("\n");
     return 0;

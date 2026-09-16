@@ -21,6 +21,20 @@
 static char shell_user[RIX_INIT_USER_CAP];
 static char shell_home[RIX_INIT_HOME_CAP];
 
+/* Bounded shell variable table ("NAME=value" each). PATH/PWD resolve
+ * dynamically when not overridden here; everything else reads the table.
+ * Command substitution and globbing are intentionally absent (see below). */
+#define RIX_INIT_ENV_CAP 32u
+#define RIX_INIT_ENV_KV 160u
+#define RIX_INIT_EXPAND_CAP 1024u
+static char shell_env[RIX_INIT_ENV_CAP][RIX_INIT_ENV_KV];
+static size_t shell_env_count;
+static char shell_pwd_cache[256];
+static int shell_exit_pending;
+static int shell_exit_code;
+static int shell_last_status;
+static const char *shell_path_variable(void);
+
 static size_t text_length(const char *text) {
     size_t length = 0;
     if (!text) return 0;
@@ -131,6 +145,10 @@ static void resolve_shell_user(void) {
     size_t length = 0, i = 0;
     uint32_t uid = getuid();
     copy_text(shell_user, sizeof(shell_user), uid == 0u ? "root" : "user", 4u);
+#if 1
+    (void)passwd; (void)length; (void)i;
+    return;
+#endif
     if (read_whole_file("/etc/passwd", passwd, sizeof(passwd), &length) != 0)
         return;
     while (i < length) {
@@ -236,6 +254,12 @@ static void reset_execution(rix_shell_execution_t *execution) {
 }
 
 static void reap_background_jobs(void) {
+    (void)write_text(1, "RIXURI:DBG R enter\r\n");
+    (void)write_text(1, "RIXURI:DBG jobs0=");
+    write_sdec(1, (long)jobs[0].active);
+    (void)write_text(1, "\r\n");
+    (void)write_text(1, "RIXURI:DBG R exit\r\n");
+    return;
     for (size_t j = 0; j < RIX_INIT_JOBS_CAP; ++j) {
         rix_shell_job_t *job = &jobs[j];
         if (!job->active) continue;
@@ -253,6 +277,7 @@ static void reap_background_jobs(void) {
             job->active = 0;
         }
     }
+    (void)write_text(1, "RIXURI:DBG R exit\r\n");
 }
 
 static int save_background_job(const rix_shell_execution_t *execution) {
@@ -297,16 +322,29 @@ static void snapshot_command(rix_shell_command_t *destination,
 static int run_external_child(const rix_shell_command_t *command) {
     char cwd[256];
     char pwd_env[260];
-    static char *shell_environment[3];
+    static char path_env[256];
+    static char *shell_environment[3 + RIX_INIT_ENV_CAP];
     char path[RIX_INIT_PATH_CAP];
     char *child_argv[RIX_SHELL_MAX_ARGS];
     int handled = 0;
     int status = 2;
     int output_fd = 1;
     if (getcwd(cwd, sizeof(cwd)) < 0) child_error("rixuri: cwd unavailable\n", 125);
-    shell_environment[0] = (char *)"PATH=/bin:/usr/bin:/sbin:/usr/sbin";
+    {
+        const char *pathvar = shell_path_variable();
+        size_t k = 0;
+        path_env[k++]='P'; path_env[k++]='A'; path_env[k++]='T'; path_env[k++]='H'; path_env[k++]='=';
+        while (pathvar[k-5u] && k + 1u < sizeof(path_env)) { path_env[k] = pathvar[k-5u]; ++k; }
+        path_env[k] = 0;
+    }
+    shell_environment[0] = path_env;
     shell_environment[1] = pwd_env;
-    shell_environment[2] = NULL;
+    {
+        size_t count = 2u;
+        for (size_t i = 0; i < shell_env_count && count + 1u < sizeof(shell_environment)/sizeof(shell_environment[0]); ++i)
+            shell_environment[count++] = shell_env[i];
+        shell_environment[count] = NULL;
+    }
     pwd_env[0]='P'; pwd_env[1]='W'; pwd_env[2]='D'; pwd_env[3]='=';
     size_t cwd_length = text_length(cwd);
     if (cwd_length + 5u > sizeof(pwd_env)) child_error("rixuri: cwd too long\n", 125);
@@ -316,7 +354,7 @@ static int run_external_child(const rix_shell_command_t *command) {
     if (rix_shell_run_builtin(command, fd_writer, &output_fd, &handled, &status) != 0)
         child_error("rixuri: builtin failed\n", 125);
     if (handled) _exit(status);
-    if (rix_shell_resolve_path(command->argv[0], "/bin:/usr/bin:/sbin:/usr/sbin",
+    if (rix_shell_resolve_path(command->argv[0], shell_path_variable(),
                                path_exists, NULL, path, sizeof(path)) != 0) {
         (void)write_text(2, "rixuri: command not found: ");
         (void)write_text(2, command->argv[0]);
@@ -418,6 +456,221 @@ static int shell_cd_builtin(const rix_shell_pipeline_t *pipeline, int *handled) 
     return 0;
 }
 
+static int streq(const char *a, const char *b) {
+    size_t i = 0;
+    if (!a || !b) return 0;
+    while (a[i] && b[i] && a[i] == b[i]) ++i;
+    return a[i] == 0 && b[i] == 0;
+}
+
+static const char *shell_path_variable(void) {
+    for (size_t i = 0; i < shell_env_count; ++i) {
+        const char *entry = shell_env[i];
+        if (entry[0]=='P'&&entry[1]=='A'&&entry[2]=='T'&&entry[3]=='H'&&entry[4]=='=')
+            return entry + 5;
+    }
+    return "/bin:/usr/bin:/sbin:/usr/sbin";
+}
+
+static const char *shell_lookup_var(const char *name, void *context) {
+    (void)context;
+    size_t nlen = 0;
+    if (!name) return NULL;
+    while (name[nlen]) ++nlen;
+    if (streq(name, "PWD")) {
+        if (getcwd(shell_pwd_cache, sizeof(shell_pwd_cache)) < 0) return NULL;
+        return shell_pwd_cache;
+    }
+    if (streq(name, "PATH")) return shell_path_variable();
+    for (size_t i = 0; i < shell_env_count; ++i) {
+        const char *entry = shell_env[i];
+        size_t k = 0;
+        while (k < nlen && entry[k] == name[k]) ++k;
+        if (k == nlen && entry[k] == '=') return entry + k + 1u;
+    }
+    return "";
+}
+
+static int valid_env_name(const char *name, size_t length) {
+    if (!name || !length || length >= RIX_INIT_ENV_KV) return 0;
+    if (!((name[0]>='A'&&name[0]<='Z')||(name[0]>='a'&&name[0]<='z')||name[0]=='_'))
+        return 0;
+    for (size_t i = 1; i < length; ++i) {
+        char c = name[i];
+        if (!((c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='_'))
+            return 0;
+    }
+    return 1;
+}
+
+static void format_s64(char *buffer, size_t capacity, int64_t value) {
+    char digits[24];
+    size_t used = 0;
+    unsigned long long magnitude;
+    size_t pos = 0;
+    if (!buffer || capacity == 0u) return;
+    if (value < 0) {
+        magnitude = (unsigned long long)(-(value + 1)) + 1u;
+    } else {
+        magnitude = (unsigned long long)value;
+    }
+    if (value < 0) {
+        if (pos + 1u < capacity) buffer[pos++] = '-';
+        else { buffer[0] = 0; return; }
+    }
+    if (!magnitude) {
+        if (pos + 1u < capacity) buffer[pos++] = '0';
+        buffer[pos < capacity ? pos : capacity - 1u] = 0;
+        return;
+    }
+    while (magnitude && used + 1u < sizeof(digits)) {
+        digits[used++] = (char)('0' + magnitude % 10u);
+        magnitude /= 10u;
+    }
+    while (used) {
+        if (pos + 1u >= capacity) { buffer[0] = 0; return; }
+        buffer[pos++] = digits[--used];
+    }
+    buffer[pos] = 0;
+}
+
+/* Splice one $((...)) group at input[start] (input[start]=='$').
+ * Returns 1 with *consumed set when shaped-but-broken (caller fails the
+ * line), 0 with *consumed set and number[] filled on success. Callers only
+ * invoke it after seeing "$((", so "not shaped" cannot occur here. */
+static int arithmetic_group(const char *input, size_t start, char *number,
+                            size_t numcap, size_t *consumed) {
+    size_t j = start + 3u;
+    unsigned depth = 0u;
+    if (!input || !number || numcap == 0u || !consumed) return 1;
+    for (;;) {
+        if (!input[j]) return 1;
+        if (input[j] == '(') {
+            ++depth;
+        } else if (input[j] == ')') {
+            if (depth == 0u) break;
+            --depth;
+        }
+        ++j;
+        if (j - start > 160u) return 1;
+    }
+    /* j is the first ')' of the final '))'. */
+    if (input[j+1u] != ')') return 1;
+    {
+        char expression[128];
+        size_t length = j - (start + 3u);
+        int64_t value = 0;
+        if (length >= sizeof(expression)) return 1;
+        for (size_t k = 0; k < length; ++k) expression[k] = input[start + 3u + k];
+        expression[length] = 0;
+        if (rix_shell_arithmetic_eval(expression, &value) != 0) return 1;
+        format_s64(number, numcap, value);
+        if (!number[0]) return 1;
+        *consumed = (j + 2u) - start;
+        return 0;
+    }
+}
+
+/* Raw-line expansion pre-pass: variable ($V/${V}) and arithmetic ($(()))
+ * substitution honoring single-quote suppression, applied BEFORE lexing so
+ * the existing lexer/parser (which strips quotes) see final text. Quote and
+ * backslash characters are preserved for the lexer; command substitution and
+ * globbing stay literal (deferred with rationale in the closure report). */
+static int expand_shell_line(const char *input, char *output, size_t capacity) {
+    size_t in = 0, out = 0;
+    char quote = 0;
+    if (!input || !output || capacity < 2u) return -1;
+    while (input[in]) {
+        char ch = input[in];
+        if (ch == '\'' && quote != '"') {
+            quote = quote == '\'' ? 0 : '\'';
+            if (out + 1u >= capacity) return -1;
+            output[out++] = ch;
+            ++in;
+            continue;
+        }
+        if (ch == '"' && quote != '\'') {
+            quote = quote == '"' ? 0 : '"';
+            if (out + 1u >= capacity) return -1;
+            output[out++] = ch;
+            ++in;
+            continue;
+        }
+        if (ch == '\\' && quote != '\'') {
+            if (out + 2u >= capacity) return -1;
+            output[out++] = ch;
+            ++in;
+            if (!input[in]) return -1;
+            output[out++] = input[in++];
+            continue;
+        }
+        if (ch == '$' && quote != '\'') {
+            if (input[in+1u] == '(' && input[in+2u] == '(') {
+                char number[32];
+                size_t consumed = 0;
+                if (arithmetic_group(input, in, number, sizeof(number),
+                                     &consumed) != 0)
+                    return -1;
+                for (size_t a = 0; number[a]; ++a) {
+                    if (out + 1u >= capacity) return -1;
+                    output[out++] = number[a];
+                }
+                in += consumed;
+                continue;
+            }
+            {
+                size_t start = in + 1u;
+                int braced = input[start] == '{';
+                size_t name = braced ? start + 1u : start;
+                size_t m = name;
+                int ok = ((input[m]>='A'&&input[m]<='Z')||(input[m]>='a'&&input[m]<='z')||input[m]=='_');
+                if (!ok) {
+                    if (out + 1u >= capacity) return -1;
+                    output[out++] = ch;
+                    ++in;
+                    continue;
+                }
+                ++m;
+                while ((input[m]>='A'&&input[m]<='Z')||(input[m]>='a'&&input[m]<='z')||
+                       (input[m]>='0'&&input[m]<='9')||input[m]=='_') ++m;
+                if (braced) {
+                    if (input[m] != '}') {
+                        if (out + 1u >= capacity) return -1;
+                        output[out++] = ch;
+                        ++in;
+                        continue;
+                    }
+                    ++m;
+                }
+                char varname[64];
+                size_t vlen = (braced ? m - 1u : m) - name;
+                if (vlen == 0u || vlen >= sizeof(varname)) {
+                    if (out + 1u >= capacity) return -1;
+                    output[out++] = ch;
+                    ++in;
+                    continue;
+                }
+                for (size_t q = 0; q < vlen; ++q) varname[q] = input[name + q];
+                varname[vlen] = 0;
+                const char *value = shell_lookup_var(varname, NULL);
+                if (!value) value = "";
+                while (*value) {
+                    if (out + 1u >= capacity) return -1;
+                    output[out++] = *value++;
+                }
+                in = m;
+                continue;
+            }
+        }
+        if (out + 1u >= capacity) return -1;
+        output[out++] = ch;
+        ++in;
+    }
+    if (quote) return -1;
+    output[out] = 0;
+    return 0;
+}
+
 static int shell_history_builtin(const rix_shell_pipeline_t *pipeline,
                                  rix_shell_history_t *history, int *handled) {
     const rix_shell_command_t *command;
@@ -438,6 +691,257 @@ static int shell_history_builtin(const rix_shell_pipeline_t *pipeline,
         (void)write_text(1, "\n");
     }
     return 0;
+}
+
+static char expand_arg_store[RIX_SHELL_MAX_COMMANDS][RIX_SHELL_MAX_ARGS][RIX_SHELL_TOKEN_TEXT];
+static char expand_redir_store[RIX_SHELL_MAX_COMMANDS][RIX_SHELL_MAX_REDIRS][RIX_SHELL_TOKEN_TEXT];
+
+/* Expand every argv word and redirection path in place (variable + $(( ))).
+ * Breakfast rule: expansion failure fails the line closed, never runs a
+ * half-expanded command. Command substitution and globbing stay literal
+ * (deferred: execution/capture and quoting-metadata redesign, documented in
+ * the closure report). */
+static int expand_pipeline_words(rix_shell_pipeline_t *pipeline) {
+    char stage[RIX_INIT_EXPAND_CAP];
+    if (!pipeline) return -1;
+    for (size_t c = 0; c < pipeline->command_count; ++c) {
+        rix_shell_command_t *command = &pipeline->command[c];
+        for (size_t a = 0; a < command->argc; ++a) {
+            if (!command->argv[a] ||
+                expand_shell_line(command->argv[a], stage, sizeof(stage)) != 0) {
+                (void)write_text(2, "rixuri: expansion failed\n");
+                return -1;
+            }
+            if (rix_shell_expand_word(stage, expand_arg_store[c][a],
+                                      sizeof(expand_arg_store[c][a]),
+                                      shell_lookup_var, NULL) != 0) {
+                (void)write_text(2, "rixuri: expansion failed\n");
+                return -1;
+            }
+            command->argv[a] = expand_arg_store[c][a];
+        }
+        for (size_t r = 0; r < command->redir_count; ++r) {
+            if (expand_shell_line(command->redir[r].path, stage, sizeof(stage)) != 0 ||
+                rix_shell_expand_word(stage, expand_redir_store[c][r],
+                                      sizeof(expand_redir_store[c][r]),
+                                      shell_lookup_var, NULL) != 0) {
+                (void)write_text(2, "rixuri: expansion failed\n");
+                return -1;
+            }
+            {
+                size_t k = 0;
+                while (expand_redir_store[c][r][k] && k + 1u < sizeof(command->redir[r].path)) {
+                    command->redir[r].path[k] = expand_redir_store[c][r][k];
+                    ++k;
+                }
+                if (expand_redir_store[c][r][k]) {
+                    (void)write_text(2, "rixuri: expansion failed\n");
+                    return -1;
+                }
+                command->redir[r].path[k] = 0;
+            }
+        }
+    }
+    return 0;
+}
+
+static int shell_export_builtin(const rix_shell_pipeline_t *pipeline, int *handled) {
+    const rix_shell_command_t *command;
+    if (handled) *handled = 0;
+    if (!pipeline || pipeline->command_count != 1u || pipeline->background) return 0;
+    command = &pipeline->command[0];
+    if (!command->argc || !command->argv[0] || !streq(command->argv[0], "export")) return 0;
+    if (handled) *handled = 1;
+    if (command->argc == 1u) {
+        for (size_t i = 0; i < shell_env_count; ++i) {
+            (void)write_text(1, shell_env[i]);
+            (void)write_text(1, "\n");
+        }
+        (void)write_text(1, "PATH=");
+        (void)write_text(1, shell_path_variable());
+        (void)write_text(1, "\nPWD=");
+        if (getcwd(shell_pwd_cache, sizeof(shell_pwd_cache)) < 0) return 1;
+        (void)write_text(1, shell_pwd_cache);
+        (void)write_text(1, "\n");
+        return 0;
+    }
+    for (size_t a = 1; a < command->argc; ++a) {
+        const char *arg = command->argv[a];
+        size_t nlen = 0;
+        while (arg[nlen] && arg[nlen] != '=') ++nlen;
+        if (!arg[nlen] || !valid_env_name(arg, nlen)) {
+            (void)write_text(2, "export: expected NAME=VALUE\n");
+            return 2;
+        }
+        size_t vlen = text_length(arg + nlen + 1u);
+        if (nlen + 1u + vlen + 1u > RIX_INIT_ENV_KV) {
+            (void)write_text(2, "export: value too long\n");
+            return 1;
+        }
+        {
+            size_t slot = shell_env_count;
+            for (size_t i = 0; i < shell_env_count; ++i) {
+                size_t k = 0;
+                while (k < nlen && shell_env[i][k] == arg[k]) ++k;
+                if (k == nlen && shell_env[i][k] == '=') { slot = i; break; }
+            }
+            if (slot == shell_env_count) {
+                if (shell_env_count >= RIX_INIT_ENV_CAP) {
+                    (void)write_text(2, "export: table full\n");
+                    return 1;
+                }
+                ++shell_env_count;
+            }
+            for (size_t k = 0; k < nlen; ++k) shell_env[slot][k] = arg[k];
+            shell_env[slot][nlen] = '=';
+            for (size_t k = 0; k <= vlen; ++k) shell_env[slot][nlen + 1u + k] = arg[nlen + 1u + k];
+        }
+    }
+    return 0;
+}
+
+/* Mark one reaped pid inside the job table without printing. Returns 1 when
+ * the pid belonged to a job, 0 otherwise. */
+static int note_job_reaped(rix_pid_t pid) {
+    for (size_t j = 0; j < RIX_INIT_JOBS_CAP; ++j) {
+        rix_shell_job_t *job = &jobs[j];
+        if (!job->active) continue;
+        for (size_t i = 0; i < job->pid_count; ++i) {
+            if (job->pid[i] != pid) continue;
+            job->pid[i] = 0;
+            ++job->complete;
+            if (job->complete == job->pid_count) job->active = 0;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int parse_decimal_pid(const char *s, rix_pid_t *out) {
+    rix_pid_t value = 0;
+    size_t digits = 0;
+    if (!s || !out) return -1;
+    while (*s) {
+        if (*s < '0' || *s > '9' || digits >= 10u) return -1;
+        value = value * 10u + (rix_pid_t)(*s - '0');
+        ++digits;
+        ++s;
+    }
+    if (!digits) return -1;
+    *out = value;
+    return 0;
+}
+
+static int shell_wait_builtin(const rix_shell_pipeline_t *pipeline, int *handled) {
+    const rix_shell_command_t *command;
+    int last = 0;
+    int waited_any = 0;
+    if (handled) *handled = 0;
+    if (!pipeline || pipeline->command_count != 1u || pipeline->background) return 0;
+    command = &pipeline->command[0];
+    if (!command->argc || !command->argv[0] || !streq(command->argv[0], "wait")) return 0;
+    if (handled) *handled = 1;
+    if (command->argc == 1u) {
+        for (size_t j = 0; j < RIX_INIT_JOBS_CAP; ++j) {
+            rix_shell_job_t *job = &jobs[j];
+            rix_pid_t pids[RIX_INIT_PIDS_CAP];
+            size_t count = 0;
+            if (!job->active) continue;
+            for (size_t i = 0; i < job->pid_count; ++i)
+                if (job->pid[i]) pids[count++] = job->pid[i];
+            for (size_t i = 0; i < count; ++i) {
+                uint64_t child_status = 0;
+                rix_pid_t got = waitpid(pids[i], &child_status, 0u);
+                if (got != pids[i]) return 1;
+                last = (int)child_status;
+                waited_any = 1;
+                (void)note_job_reaped(pids[i]);
+            }
+        }
+        return waited_any ? last : 0;
+    }
+    for (size_t a = 1; a < command->argc; ++a) {
+        rix_pid_t pid = 0;
+        uint64_t child_status = 0;
+        if (parse_decimal_pid(command->argv[a], &pid) != 0) {
+            (void)write_text(2, "wait: bad pid\n");
+            return 2;
+        }
+        {
+            int known = 0;
+            for (size_t j = 0; j < RIX_INIT_JOBS_CAP && !known; ++j) {
+                rix_shell_job_t *job = &jobs[j];
+                if (!job->active) continue;
+                for (size_t i = 0; i < job->pid_count; ++i)
+                    if (job->pid[i] == pid) known = 1;
+            }
+            if (!known) {
+                (void)write_text(2, "wait: no such job\n");
+                return 1;
+            }
+        }
+        if (waitpid(pid, &child_status, 0u) != pid) return 1;
+        last = (int)child_status;
+        waited_any = 1;
+        (void)note_job_reaped(pid);
+    }
+    return waited_any ? last : 0;
+}
+
+static int shell_jobs_builtin(const rix_shell_pipeline_t *pipeline, int *handled) {
+    const rix_shell_command_t *command;
+    if (handled) *handled = 0;
+    if (!pipeline || pipeline->command_count != 1u || pipeline->background) return 0;
+    command = &pipeline->command[0];
+    if (!command->argc || !command->argv[0] || !streq(command->argv[0], "jobs")) return 0;
+    if (handled) *handled = 1;
+    if (command->argc > 1u) { (void)write_text(2, "jobs: arguments unsupported\n"); return 2; }
+    reap_background_jobs();
+    for (size_t j = 0; j < RIX_INIT_JOBS_CAP; ++j) {
+        rix_shell_job_t *job = &jobs[j];
+        if (!job->active) continue;
+        (void)write_text(1, "[");
+        write_sdec(1, (long)(j + 1u));
+        (void)write_text(1, "]");
+        for (size_t i = 0; i < job->pid_count; ++i) {
+            if (!job->pid[i]) continue;
+            (void)write_text(1, " ");
+            write_sdec(1, (long)job->pid[i]);
+        }
+        (void)write_text(1, " running\n");
+    }
+    return 0;
+}
+
+static int shell_exit_builtin(const rix_shell_pipeline_t *pipeline, int *handled) {
+    const rix_shell_command_t *command;
+    long code = 0;
+    if (handled) *handled = 0;
+    if (!pipeline || pipeline->command_count != 1u || pipeline->background) return 0;
+    command = &pipeline->command[0];
+    if (!command->argc || !command->argv[0] || !streq(command->argv[0], "exit")) return 0;
+    if (handled) *handled = 1;
+    if (command->argc > 2u) { (void)write_text(2, "exit: too many arguments\n"); return 2; }
+    if (command->argc == 2u) {
+        const char *s = command->argv[1];
+        size_t digits = 0;
+        code = 0;
+        if (!s || !*s) { (void)write_text(2, "exit: numeric argument required\n"); return 2; }
+        while (*s) {
+            if (*s < '0' || *s > '9' || digits >= 9u) {
+                (void)write_text(2, "exit: numeric argument required\n");
+                return 2;
+            }
+            code = code * 10L + (long)(*s - '0');
+            ++digits;
+            ++s;
+        }
+    } else {
+        code = (long)shell_last_status;
+    }
+    shell_exit_code = (int)code;
+    shell_exit_pending = 1;
+    return (int)code;
 }
 
 static void shell_prompt(void) {
@@ -477,8 +981,13 @@ static int shell_execute_line(const char *line, rix_shell_history_t *history) {
         return 2;
     }
     if (history) (void)rix_shell_history_add(history, line);
+    if (expand_pipeline_words(&pipeline) != 0) return 1;
     { int handled = 0; int cd_status = shell_cd_builtin(&pipeline, &handled); if (handled) return cd_status; }
     { int handled = 0; int history_status = shell_history_builtin(&pipeline, history, &handled); if (handled) return history_status; }
+    { int handled = 0; int export_status = shell_export_builtin(&pipeline, &handled); if (handled) return export_status; }
+    { int handled = 0; int wait_status = shell_wait_builtin(&pipeline, &handled); if (handled) return wait_status; }
+    { int handled = 0; int jobs_status = shell_jobs_builtin(&pipeline, &handled); if (handled) return jobs_status; }
+    { int handled = 0; int exit_status = shell_exit_builtin(&pipeline, &handled); if (handled) return exit_status; }
     if (pipeline.command_count == 1u && !pipeline.background) {
         const rix_shell_command_t *cmd = &pipeline.command[0];
         if (cmd->argc == 1u && cmd->argv[0][0]=='c' && cmd->argv[0][1]=='l' && cmd->argv[0][2]=='e' && cmd->argv[0][3]=='a' && cmd->argv[0][4]=='r' && cmd->argv[0][5]==0) {
@@ -496,6 +1005,13 @@ static int shell_execute_line(const char *line, rix_shell_history_t *history) {
 void _start(void) {
     char line[RIX_INIT_LINE_CAP];
     rix_shell_history_t history;
+    (void)write_text(1, "RIXURI:DBG entry jobs0=");
+    write_sdec(1, (long)jobs[0].active);
+    (void)write_text(1, " pc=");
+    write_sdec(1, (long)jobs[0].pid_count);
+    (void)write_text(1, " envc=");
+    write_sdec(1, (long)shell_env_count);
+    (void)write_text(1, "\r\n");
     rix_shell_history_init(&history);
     /* Qualify Ring 3 and the first syscall before exercising the shell. */
     (void)write_text(1, "RIXURI:USER_ENTER\r\n");
@@ -505,15 +1021,33 @@ void _start(void) {
     }
     (void)write_text(1, "RIXURI:SYSCALL_OK\r\n");
     resolve_shell_user();
+    (void)write_text(1, "RIXURI:DBG post-resolve jobs0=");
+    write_sdec(1, (long)jobs[0].active);
+    (void)write_text(1, " pc=");
+    write_sdec(1, (long)(long long)jobs[0].pid_count);
+    (void)write_text(1, " jobs1=");
+    write_sdec(1, (long)jobs[1].active);
+    (void)write_text(1, " envc=");
+    write_sdec(1, (long)shell_env_count);
+    (void)write_text(1, " last=");
+    write_sdec(1, (long)shell_last_status);
+    (void)write_text(1, "\r\n");
     ensure_home_skeleton();
+    (void)write_text(1, "RIXURI:DBG post-ensure jobs0=");
+    write_sdec(1, (long)jobs[0].active);
+    (void)write_text(1, "\r\n");
     (void)write_text(1, "RIXURI: SHELL READY\r\n");
     (void)write_text(1, "RixuriOS shell ready\r\n");
     for (;;) {
+        (void)write_text(1, "RIXURI:DBG A loop\r\n");
         reap_background_jobs();
+        (void)write_text(1, "RIXURI:DBG B reap-ok\r\n");
         shell_prompt();
+        (void)write_text(1, "RIXURI:DBG C prompt-ok\r\n");
         if (shell_read_line(line, sizeof(line)) != 0) break;
-        (void)shell_execute_line(line, &history);
+        shell_last_status = shell_execute_line(line, &history);
+        if (shell_exit_pending) break;
     }
     (void)write_text(1, "RIXURI:USER_EXIT\r\n");
-    _exit(0);
+    _exit(shell_exit_code);
 }

@@ -26,8 +26,15 @@ int main(void) {
                pipe_read(&pipe, output, 1u, &count) == -2 && count == 0u,
                "writer close produces EOF")) return 1;
     if (expect(pipe_close_read(&pipe) == 0 &&
-               pipe_write(&pipe, input, 1u, &count) == -1 && count == 0u,
-               "reader close rejects write")) return 1;
+                pipe_write(&pipe, input, 1u, &count) == -1 && count == 0u,
+                "write after both ends closed rejected")) return 1;
+    {
+        rix_pipe_t live;
+        pipe_init(&live);
+        if (expect(pipe_close_read(&live) == 0 &&
+                    pipe_write(&live, input, 1u, &count) == -2 && count == 0u,
+                    "reader close rejects write (EPIPE class)")) return 1;
+    }
     puts("pipe tests: PASS");
     return 0;
 }

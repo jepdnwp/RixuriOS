@@ -16,7 +16,8 @@ static int emit(const char *text) {
 static const char help_text[] =
     "RixuriOS shell help\n"
     "usage: <command> [args]  (try 'help <command>' for one-liners)\n"
-    "shell builtins: cd clear : true false echo\n"
+    "shell builtins: cd clear export wait jobs exit : true false echo\n"
+    "expansion: $VAR ${VAR} $((expr)); single quotes suppress\n"
     "files: cat ls cp mv rm mkdir rmdir touch stat ln find du tee\n"
     "text: grep head tail wc cut tr sort uniq sed test seq\n"
     "       args printf basename dirname xargs env pwd which\n"
@@ -55,6 +56,18 @@ static const char *topics[][2] = {
     {"pwd", "pwd: print the working directory\n"},
     {"cd", "cd [path]: change directory (default /)\n"},
     {"history", "history: list this session's command history\n"},
+    {"export", "export NAME=VALUE: set shell variable ($V, ${V}, $((expr)))\n"},
+    {"wait", "wait [pid...]: wait for background jobs\n"},
+    {"jobs", "jobs: list background jobs\n"},
+    {"exit", "exit [code]: leave the shell\n"},
+    {"readlink", "readlink <path>: print symlink target\n"},
+    {"chmod", "chmod <octal> <path>: change mode\n"},
+    {"chown", "chown <uid>[:<gid>] <path>: change ownership\n"},
+    {"df", "df [-h] [path]: show filesystem space\n"},
+    {"free", "free: show memory and uptime\n"},
+    {"dmesg", "dmesg: print the kernel log\n"},
+    {"reboot", "reboot: reset the machine (root only)\n"},
+    {"poweroff", "poweroff: ACPI S5 power off (root only)\n"},
     {"head", "head [-n N] [file...]: print first N lines\n"},
     {"tail", "tail [-n N] [file...]: print last N lines\n"},
     {"wc", "wc [-lwc] [file...]: count lines words bytes\n"},

@@ -29,7 +29,11 @@ int pipe_read(rix_pipe_t *pipe, void *buffer, size_t capacity, size_t *readn) {
 
 int pipe_write(rix_pipe_t *pipe, const void *buffer, size_t length, size_t *written) {
     if (written) *written = 0;
-    if (!pipe || !pipe->write_open || !pipe->read_open) return -1;
+    if (!pipe || !pipe->write_open) return -1;
+    /* No readers: EPIPE class (-2). Callers map this to RIX_EPIPE; there is
+     * no SIGPIPE delivery (no signal frames until Phase 26), so the writer
+     * observes the error return instead of a signal. */
+    if (!pipe->read_open) return -2;
     return ipc_write(&pipe->channel, buffer, length, written);
 }
 

@@ -84,6 +84,10 @@
 #define RIX_SYS_GETSOCKOPT 153
 #define RIX_SYS_LISTEN 154
 #define RIX_SYS_ACCEPT 155
+/* Power management: reboot/poweroff the machine. v1 additive. Only UID 0
+ * may invoke; on success neither returns. */
+#define RIX_SYS_REBOOT 156
+#define RIX_SYS_POWEROFF 157
 #define RIX_CLOCK_REALTIME 0u
 #define RIX_CLOCK_MONOTONIC 1u
 #define RIX_SYSINFO_VERSION 1u

@@ -132,6 +132,8 @@ rix_pid_t getpid(void);
 rix_pid_t getppid(void);
 int isatty(int fd);
 int kill(rix_pid_t pid, uint32_t signal);
+int reboot(void);
+int poweroff(void);
 int socket_open(int type);
 int socket_bind(int fd, rix_net_endpoint_t endpoint);
 int socket_connect(int fd, rix_net_endpoint_t endpoint);
