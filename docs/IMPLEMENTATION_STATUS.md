@@ -1044,3 +1044,13 @@ path as boot. QEMU proof: register → sendkey byte through the hub →
 device_del shows "hub child gone" → device_add re-registers cleanly
 (the first re-attach raced the virtual plug and TRB-failed, then the
 park expired and the retry succeeded — the park working as designed).
+
+Rescan used an open-coded detach that bypassed the sweep: removing a
+hub left its record behind, and a later poll re-registered a ghost hub
+from the stale entry (observed in QEMU). Rescan now sweeps the subtree
+first, and both rescan and poll skip records whose slot is not live.
+Keyboard bindings are freed when their slot dies ("keyboard forgotten"),
+closing a 4-plug-cycle registry leak. Nested hubs verified end to end:
+hub-behind-hub keyboard registers, a key byte crosses both tiers,
+deleting the middle hub takes the whole subtree down silently, and
+re-adding rebuilds it with no ghost in between.

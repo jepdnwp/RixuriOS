@@ -313,27 +313,49 @@ const usb_hub_record_t *usb_hub_find(size_t controller, uint8_t hub_slot) {
     return 0;
 }
 
-void usb_hub_detach_sweep(size_t controller, uint8_t hub_slot) {
-    if (hub_slot == 0u) return;
-    for (unsigned i = 0; i < USB_HUB_MAX_CHILDREN; ++i) {
-        if (hub_children[i].used &&
-            hub_children[i].controller == controller &&
-            hub_children[i].hub_slot == hub_slot) {
-            (void)xhci_device_detach(controller,
-                                     hub_children[i].child_slot);
-            hub_children[i].used = 0;
+static void usb_hub_detach_sweep_depth(size_t controller, uint8_t hub_slot,
+                                         unsigned depth) {
+    unsigned i;
+    unsigned p;
+    if (hub_slot == 0u || depth > USB_HUB_MAX_DEPTH) return;
+    for (i = 0; i < USB_HUB_MAX_CHILDREN; ++i) {
+        unsigned k;
+        int is_hub = 0;
+        if (!hub_children[i].used ||
+            hub_children[i].controller != controller ||
+            hub_children[i].hub_slot != hub_slot)
+            continue;
+        for (k = 0; k < USB_HUB_MAX_HUBS; ++k) {
+            if (hubs[k].used && hubs[k].controller == controller &&
+                hubs[k].hub_slot == hub_children[i].child_slot) {
+                is_hub = 1;
+                break;
+            }
         }
+        if (is_hub) {
+            /* A child that is itself a hub takes its own subtree down
+             * first, so no stale grandchild keeps polling a dead slot. */
+            usb_hub_detach_sweep_depth(controller,
+                                       hub_children[i].child_slot,
+                                       depth + 1u);
+        }
+        (void)xhci_device_detach(controller, hub_children[i].child_slot);
+        hub_children[i].used = 0;
     }
-    for (unsigned i = 0; i < USB_HUB_MAX_HUBS; ++i) {
+    for (i = 0; i < USB_HUB_MAX_HUBS; ++i) {
         if (hubs[i].used && hubs[i].controller == controller &&
             hubs[i].hub_slot == hub_slot) {
             hubs[i].used = 0;
-            for (unsigned p = 0; p <= USB_HUB_MAX_PORTS; ++p) {
+            for (p = 0; p <= USB_HUB_MAX_PORTS; ++p) {
                 hub_attach_failed[i][p] = 0;
                 hub_attach_fail_ns[i][p] = 0;
             }
         }
     }
+}
+
+void usb_hub_detach_sweep(size_t controller, uint8_t hub_slot) {
+    usb_hub_detach_sweep_depth(controller, hub_slot, 0u);
 }
 
 int usb_hub_rescan_ports(size_t controller) {
@@ -343,6 +365,10 @@ int usb_hub_rescan_ports(size_t controller) {
         uint8_t hub_slot;
         if (!hubs[h].used || hubs[h].controller != controller) continue;
         hub_slot = hubs[h].hub_slot;
+        /* A detached hub is always unregistered with its sweep, but never
+         * trust a record over live slot state: detaching or polling a
+         * dead slot re-registers ghost devices behind stale entries. */
+        if (!xhci_slot_active(controller, hub_slot)) continue;
         ports = hubs[h].port_count;
         if (ports > USB_HUB_MAX_PORTS) ports = USB_HUB_MAX_PORTS;
         for (uint8_t p = 1; p <= ports; ++p) {
@@ -364,6 +390,13 @@ int usb_hub_rescan_ports(size_t controller) {
                     serial_write(" port=");
                     serial_write_dec(p);
                     serial_write("\r\n");
+                    /* Subtree first (a removed hub takes its own
+                     * children down), then the child slot itself.
+                     * Open-coding only the detach here used to leak
+                     * the hub record, and a later poll re-registered
+                     * a ghost hub behind the stale entry. */
+                    usb_hub_detach_sweep_depth(
+                        controller, hub_children[i].child_slot, 0u);
                     (void)xhci_device_detach(
                         controller, hub_children[i].child_slot);
                     hub_children[i].used = 0;
@@ -396,6 +429,10 @@ int usb_hub_poll_new_child(size_t controller, rix_xhci_device_t *out) {
         usb_hub_parent_t parent;
         if (!hubs[h].used || hubs[h].controller != controller) continue;
         hub_slot = hubs[h].hub_slot;
+        /* A detached hub is always unregistered with its sweep, but never
+         * trust a record over live slot state: detaching or polling a
+         * dead slot re-registers ghost devices behind stale entries. */
+        if (!xhci_slot_active(controller, hub_slot)) continue;
         ports = hubs[h].port_count;
         if (ports > USB_HUB_MAX_PORTS) ports = USB_HUB_MAX_PORTS;
         parent.parent_slot = hub_slot;

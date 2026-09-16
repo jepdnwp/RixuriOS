@@ -261,6 +261,12 @@ static void keyboard_poll_worker(void *arg){
    for(size_t k=0;k<RIX_MAX_KEYBOARDS;k++){
     static uint64_t xhci_recover_ns[RIX_MAX_KEYBOARDS];
     if(!known_keyboards[k].used)continue;
+    /* Drop bindings to dead slots (unplug sweep or failed attach):
+     * otherwise four plug cycles exhaust the registry forever. */
+    if(!xhci_slot_active(known_keyboards[k].controller,known_keyboards[k].slot)){
+     serial_write("xHCI: keyboard forgotten slot=");serial_write_dec(known_keyboards[k].slot);serial_write("\r\n");
+     known_keyboards[k].used=0;continue;
+    }
     uint16_t actual=0;
     int rc=hid_xhci_keyboard_poll_protocol(known_keyboards[k].controller,
      known_keyboards[k].slot,known_keyboards[k].endpoint,

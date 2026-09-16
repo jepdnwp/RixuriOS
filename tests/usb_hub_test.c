@@ -21,6 +21,7 @@ int xhci_address_device(size_t c, uint8_t s, uint8_t p, uint8_t v,
     (void)c; (void)s; (void)p; (void)v; (void)t; return -1;
 }
 int xhci_device_detach(size_t c, uint8_t s) { (void)c; (void)s; return -1; }
+int xhci_slot_active(size_t c, uint8_t s) { (void)c; (void)s; return 0; }
 void xhci_usb_state_transition(size_t c, uint8_t s, uint8_t n, const char *r) {
     (void)c; (void)s; (void)n; (void)r;
 }

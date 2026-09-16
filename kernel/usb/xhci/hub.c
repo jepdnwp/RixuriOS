@@ -285,6 +285,13 @@ int xhci_device_detach(size_t controller, uint8_t slot_id) {
     return xhci_disable_slot(controller, slot_id);
 }
 
+int xhci_slot_active(size_t controller, uint8_t slot_id) {
+    if (controller >= xhc_count || slot_id == 0u ||
+        slot_id > xhc_controllers[controller].max_slots)
+        return 0;
+    return xhc_runtimes[controller].slots[slot_id].allocated ? 1 : 0;
+}
+
 void xhci_park_port(size_t controller, uint8_t port) {
     if (controller >= xhc_count || port == 0u ||
         port > xhc_controllers[controller].max_ports)
