@@ -2270,3 +2270,14 @@ git diff --check
 ```
 
 This closes a terminal line-discipline/job-control slice only. Userspace handler installation, register-frame construction, signal-mask restoration, `sigreturn`, stopped/continued wait statuses, and physical PTY qualification remain open.
+
+## 2026-09-16 — WAITPID option validation
+
+The `WAITPID` syscall now rejects option bits outside the explicitly supported `RIX_WAITPID_NOHANG` bit with `EINVAL` instead of silently ignoring unknown options. The existing bounded child-PID filter and no-hang behavior are unchanged; stopped/continued wait statuses and signal-encoded termination statuses remain unsupported.
+
+Validation completed successfully:
+
+```text
+make test CROSS=x86_64-linux-gnu- HOST_CC=gcc
+git diff --check
+```

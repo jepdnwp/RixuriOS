@@ -132,7 +132,9 @@ void syscall_dispatch(rix_syscall_frame_t*frame){
   result=(int64_t)child;break;
  }
   case RIX_SYS_WAITPID:{
-   pid_t wanted=(pid_t)frame->rdi;uint64_t status=0;pid_t child=0;int rc=process_wait_blocking(self,wanted,&status,&child);
+   pid_t wanted=(pid_t)frame->rdi;uint32_t options=(uint32_t)frame->rdx;uint64_t status=0;pid_t child=0;int rc;
+   if(options&~RIX_WAITPID_NOHANG){result=-RIX_EINVAL;break;}
+   rc=process_wait_blocking(self,wanted,&status,&child);
    if(rc==1){if((uint32_t)frame->rdx&RIX_WAITPID_NOHANG){result=0;break;}for(;;){if(syscall_interrupted(self)){scheduler_wait_abort();result=-RIX_EINTR;break;}scheduler_yield();(void)scheduler_wait_take();rc=process_wait_blocking(self,wanted,&status,&child);if(rc!=1)break;}if(result==-(int64_t)RIX_EINTR)break;}
   if(rc==2||rc<0){result=-RIX_EINVAL;break;}
   if(copy_to_user(frame->rsi,&status,sizeof(status))!=0){result=-RIX_EFAULT;break;}
