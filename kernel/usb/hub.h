@@ -85,3 +85,9 @@ void usb_hub_detach_sweep(size_t controller, uint8_t hub_slot);
 /* Poll all registered hubs' ports; detach children whose port went
  * dark. Returns detached count. Called every 16th hotplug round. */
 int usb_hub_rescan_ports(size_t controller);
+/* Attach one newly-connected hub child, if any (Linux hub event path,
+ * polling form). Returns 1 with *out filled (slot addressed — the caller
+ * must enumerate it and register it via usb_hub_register_child, or
+ * detach the slot on failure), 0 when no new child is present.
+ * Attach failures park the hub port ~10s like root ports. */
+int usb_hub_poll_new_child(size_t controller, rix_xhci_device_t *out);

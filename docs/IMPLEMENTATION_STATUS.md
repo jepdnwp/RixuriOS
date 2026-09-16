@@ -1033,3 +1033,14 @@ Hub-child parity with root attach: Address Device failures on hub ports
 now get the same single re-address round as root ports (drop slot, reset
 hub port, re-enable, retry once on Transaction Error) instead of failing
 immediately — flaky hub links get the same chance as flaky root links.
+
+Hub hotplug-attach at runtime: newly-connected hub ports were only
+enumerated at boot, so a keyboard plugged into a hub after boot was never
+picked up (rescan detached but never attached). The 16th-round worker
+block now also polls each registered hub for new children
+(usb_hub_poll_new_child, bounded to 4 per round, attach failures parked
+~10s like root ports) and enumerates/registers them through the same
+path as boot. QEMU proof: register → sendkey byte through the hub →
+device_del shows "hub child gone" → device_add re-registers cleanly
+(the first re-attach raced the virtual plug and TRB-failed, then the
+park expired and the retry succeeded — the park working as designed).

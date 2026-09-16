@@ -12,6 +12,7 @@
 #include "usb_ch9.h"
 #include "xhci/trb.h"
 #include "../serial.h"
+#include "../time/time.h"
 
 static usb_hub_record_t hubs[USB_HUB_MAX_HUBS];
 static struct {
@@ -21,6 +22,11 @@ static struct {
     uint8_t hub_port;
     uint8_t child_slot;
 } hub_children[USB_HUB_MAX_CHILDREN];
+/* Attach-failure park per hub-table slot and port (mirrors the 10s root
+ * park): a broken hub port must not wedge the rescan on every round. */
+#define USB_HUB_RETRY_NS 10000000000ULL
+static uint8_t hub_attach_failed[USB_HUB_MAX_HUBS][USB_HUB_MAX_PORTS + 1u];
+static uint64_t hub_attach_fail_ns[USB_HUB_MAX_HUBS][USB_HUB_MAX_PORTS + 1u];
 
 /* Pre-PIT pacing shared with the xHCI driver idiom: ~64 pauses ~= 1us.
  * RixuriOS has no driver sleep service yet; bounded busy pacing it is. */
@@ -320,8 +326,13 @@ void usb_hub_detach_sweep(size_t controller, uint8_t hub_slot) {
     }
     for (unsigned i = 0; i < USB_HUB_MAX_HUBS; ++i) {
         if (hubs[i].used && hubs[i].controller == controller &&
-            hubs[i].hub_slot == hub_slot)
+            hubs[i].hub_slot == hub_slot) {
             hubs[i].used = 0;
+            for (unsigned p = 0; p <= USB_HUB_MAX_PORTS; ++p) {
+                hub_attach_failed[i][p] = 0;
+                hub_attach_fail_ns[i][p] = 0;
+            }
+        }
     }
 }
 
@@ -359,7 +370,69 @@ int usb_hub_rescan_ports(size_t controller) {
                     detached++;
                 }
             }
+            /* A dark port re-arms its attach park, so a reinsertion
+             * retries immediately instead of waiting out an old timer. */
+            hub_attach_failed[h][p] = 0;
+            hub_attach_fail_ns[h][p] = 0;
         }
     }
     return detached;
+}
+
+int usb_hub_poll_new_child(size_t controller, rix_xhci_device_t *out) {
+    uint64_t now;
+    if (!out) return -1;
+    out->slot_id = 0;
+    out->port = 0;
+    out->speed = 0;
+    out->state = XHCI_DEVICE_DETACHED;
+    out->parent_hub_slot = 0;
+    out->route = 0;
+    out->level = 0;
+    now = time_monotonic_ns();
+    for (unsigned h = 0; h < USB_HUB_MAX_HUBS; ++h) {
+        uint8_t ports;
+        uint8_t hub_slot;
+        usb_hub_parent_t parent;
+        if (!hubs[h].used || hubs[h].controller != controller) continue;
+        hub_slot = hubs[h].hub_slot;
+        ports = hubs[h].port_count;
+        if (ports > USB_HUB_MAX_PORTS) ports = USB_HUB_MAX_PORTS;
+        parent.parent_slot = hub_slot;
+        parent.parent_route = hubs[h].route;
+        parent.parent_level = hubs[h].level;
+        parent.think_code = hubs[h].think_code;
+        for (uint8_t p = 1; p <= ports; ++p) {
+            uint16_t status = 0;
+            uint16_t change = 0;
+            unsigned k;
+            rix_xhci_device_t child;
+            int arc;
+            if (hub_attach_failed[h][p] &&
+                now - hub_attach_fail_ns[h][p] < USB_HUB_RETRY_NS)
+                continue;
+            hub_attach_failed[h][p] = 0;
+            if (usb_hub_port_status(controller, hub_slot, p, &status,
+                                    &change) != 0)
+                continue;
+            if (!(status & USB_PORT_STAT_CONNECTION)) continue;
+            for (k = 0; k < USB_HUB_MAX_CHILDREN; ++k) {
+                if (hub_children[k].used &&
+                    hub_children[k].controller == controller &&
+                    hub_children[k].hub_slot == hub_slot &&
+                    hub_children[k].hub_port == p)
+                    break;
+            }
+            if (k < USB_HUB_MAX_CHILDREN) continue;
+            arc = usb_hub_attach_child(controller, &parent, p, &child);
+            if (arc != 0) {
+                hub_attach_failed[h][p] = 1;
+                hub_attach_fail_ns[h][p] = now;
+                continue;
+            }
+            *out = child;
+            return 1;
+        }
+    }
+    return 0;
 }

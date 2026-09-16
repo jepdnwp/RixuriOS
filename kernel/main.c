@@ -283,11 +283,21 @@ static void keyboard_poll_worker(void *arg){
     }
    }
    /* Hub port rescan every 16th round: hub children have no root-port
-    * events, so a dark hub port is the only disconnect signal. Bounded
+    * events, so a dark hub port is the only disconnect signal, and a
+    * newly-connected hub port is the only re-attach signal. Bounded
     * by the registries; control transfers only. */
    {static unsigned hub_div=0;
     if(++hub_div>=16u){hub_div=0;
-     for(size_t c2=0;c2<xhci_controller_count();c2++)(void)usb_hub_rescan_ports(c2);}}
+     for(size_t c2=0;c2<xhci_controller_count();c2++){
+      (void)usb_hub_rescan_ports(c2);
+      for(unsigned n=0;n<4u;n++){
+       rix_xhci_device_t nd;int prc=usb_hub_poll_new_child(c2,&nd);
+       if(prc<=0)break;
+       if(xhci_enumerate_and_configure(c2,&nd)!=0){
+        (void)xhci_device_detach(c2,nd.slot_id);continue;
+       }
+       usb_hub_register_child(c2,nd.parent_hub_slot,nd.port,nd.slot_id);
+      }}}}
    scheduler_yield();
   }
 }
