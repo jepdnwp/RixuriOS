@@ -1090,3 +1090,13 @@ live). Two real bugs fell out: the submit path rejected NULL-buffer
 flushes, which fails every journal commit (file creation impossible —
 NVMe accepts them, so USB root is what caught it), and the host test
 only flushed with a buffer, so a NULL-flush case pins it now.
+
+Root-disk unplug/replug cycle (QEMU): with the shell running from the
+USB root, deleting the stick survives with no panic or fault (I/O
+fails closed), and re-adding it on another port re-attaches,
+re-probes and re-registers the same usb0 binding within seconds; a
+file written before the unplug reads back byte-identical after.
+Detour learned: device_del also drops the drive backend, so the
+re-add needs a second pre-created backend, and serial-test timing must
+bracket device_add (the guest re-attaches in seconds, faster than
+monitor round-trips).
