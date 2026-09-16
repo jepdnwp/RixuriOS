@@ -1028,3 +1028,8 @@ later polls resume waiting on it and key delivery is unaffected (sendkey
 byte 05 still captured); control/bulk keep the full bound. The keyboard
 recovery reset is throttled with its log line (at most one reset per 2s
 per keyboard) instead of resetting on every failing poll.
+
+Hub-child parity with root attach: Address Device failures on hub ports
+now get the same single re-address round as root ports (drop slot, reset
+hub port, re-enable, retry once on Transaction Error) instead of failing
+immediately — flaky hub links get the same chance as flaky root links.

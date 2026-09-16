@@ -10,6 +10,7 @@
 
 #include "hub.h"
 #include "usb_ch9.h"
+#include "xhci/trb.h"
 #include "../serial.h"
 
 static usb_hub_record_t hubs[USB_HUB_MAX_HUBS];
@@ -218,7 +219,25 @@ int usb_hub_attach_child(size_t controller, const usb_hub_parent_t *parent,
     tt.think_code = parent->think_code;
     /* Route/TT info always travels: the route string is required for every
      * hub child (slot_ctx resolves TT fields itself from the speeds). */
-    if (xhci_address_device(controller, slot_id, hub_port, speed, &tt) != 0) {
+    int addr_rc = xhci_address_device(controller, slot_id, hub_port, speed,
+                                      &tt);
+    if (addr_rc == -(int)XHCI_COMP_USB_TRANSACTION_ERROR) {
+        /* One re-address round, mirroring root attach: drop the slot,
+         * reset the hub port again, re-enable and retry once. */
+        (void)xhci_disable_slot(controller, slot_id);
+        if (usb_hub_port_reset(controller, parent->parent_slot, hub_port) != 0)
+            return -3;
+        if (usb_hub_port_status(controller, parent->parent_slot, hub_port,
+                                &status, &change) != 0)
+            return -5;
+        if (!(status & USB_PORT_STAT_CONNECTION)) return -2;
+        if (xhci_enable_slot(controller, &slot_id) != 0) return -6;
+        xhci_usb_state_transition(controller, slot_id, XHCI_USB_DEFAULT,
+                                  "hub-enable-slot-retry");
+        addr_rc = xhci_address_device(controller, slot_id, hub_port, speed,
+                                      &tt);
+    }
+    if (addr_rc != 0) {
         (void)xhci_disable_slot(controller, slot_id);
         return -7;
     }
