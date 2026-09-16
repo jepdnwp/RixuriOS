@@ -25,6 +25,7 @@
 #include "usb/xhci.h"
 #include "usb/hid.h"
 #include "usb/hub.h"
+#include "usb/storage.h"
 #include "tty/tty.h"
 #include "time/rtc.h"
 #include "time/time.h"
@@ -141,6 +142,36 @@ static int xhci_enumerate_and_configure(size_t controller, const rix_xhci_device
    serial_write(" keyboard=");serial_write_dec(report_info.has_keyboard);
    serial_write(" mouse=");serial_write_dec(report_info.has_mouse);
    serial_write(" report-id=");serial_write_dec(report_info.report_id);serial_write("\r\n");
+  }
+  /* USB Mass Storage (BOT, read-only probe): find the first SCSI/BOT
+   * interface, map its bulk endpoints from its own endpoint range, and
+   * run INQUIRY + READ CAPACITY + LBA0 read. No writes: this runs on
+   * unknown sticks. */
+  for(size_t si=0,ep_base=0;si<interface_count;si++){
+   const rix_usb_interface_info_t *siface=&xhci_interfaces[si];
+   uint8_t bulk_in=0,bulk_out=0;
+   size_t ep_end=ep_base+siface->endpoint_count;
+   if(siface->class_code!=USB_MASS_CLASS||siface->subclass!=USB_MASS_SUBCLASS_SCSI||
+      siface->protocol!=USB_MASS_PROTO_BOT) { ep_base=ep_end; continue; }
+   if(ep_end>endpoint_count)ep_end=endpoint_count;
+   for(size_t e=ep_base;e<ep_end;e++){
+    uint8_t t=xhci_endpoints[e].attributes&RIX_USB_EP_TRANSFER_MASK;
+    if(t!=RIX_USB_EP_BULK)continue;
+    if(xhci_endpoints[e].address&0x80u){if(!bulk_in)bulk_in=xhci_endpoints[e].address;}
+    else{if(!bulk_out)bulk_out=xhci_endpoints[e].address;}
+   }
+   ep_base=ep_end;
+   if(!bulk_in||!bulk_out){serial_write("xHCI: storage missing bulk EP\r\n");break;}
+   serial_write("xHCI: storage bulk in=");serial_write_hex(bulk_in);
+   serial_write(" out=");serial_write_hex(bulk_out);serial_write("\r\n");
+   {
+    usb_storage_dev_t *sdev=0;
+    rc=usb_storage_probe(controller,device->slot_id,siface->number,bulk_in,bulk_out,&sdev);
+    if(rc!=0){
+     serial_write("xHCI: storage probe failed=");serial_write_dec((uint64_t)(rc<0?-rc:rc));serial_write("\r\n");
+    }
+   }
+   break;
   }
   /* USB hub class: bring up the first hub interface inline (external
    * tiers at device level <= 2; deeper hubs are logged and skipped).

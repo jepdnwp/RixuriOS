@@ -1054,3 +1054,17 @@ closing a 4-plug-cycle registry leak. Nested hubs verified end to end:
 hub-behind-hub keyboard registers, a key byte crosses both tiers,
 deleting the middle hub takes the whole subtree down silently, and
 re-adding rebuilds it with no ghost in between.
+
+USB Mass Storage (BOT + SCSI, read path): kernel/usb/storage.{c,h} run
+CBW → data → CSW with exact-length CSW, tag/signature validation, and
+Linux-shaped reset recovery (class BOT reset + Clear Feature on both
+bulk endpoints + host reset, one retry). Probe is strictly read-only
+(INQUIRY, READ CAPACITY, LBA0 read) — it runs on unknown sticks, so it
+never writes. First QEMU run stalled every CBW; the device trace showed
+"Bad signature 55534243": the CBW header had been written big-endian
+while BOT headers are little-endian on the wire (only CDB/data are BE).
+Fixed with put/get_le32, and the host test now asserts raw wire bytes
+instead of round-tripping the same helper. QEMU proof: INQUIRY reports
+"QEMU HARDDISK", capacity 16384×512, LBA0 carries the planted
+"RIXUSBST" magic. Bulk-OUT 512B payloads and block-layer integration
+remain open (usb_storage_write exists for explicit future use).
