@@ -11,7 +11,7 @@ OBJ := kernel/boot.o kernel/main.o kernel/serial.o kernel/user_init_blob.o \
  kernel/arch/x86_64/cpu.o kernel/arch/x86_64/gdt.o kernel/arch/x86_64/idt.o kernel/arch/x86_64/interrupts.o kernel/arch/x86_64/irq.o kernel/arch/x86_64/apic.o kernel/arch/x86_64/acpi.o kernel/arch/x86_64/smp.o kernel/arch/x86_64/smp_trampoline.o kernel/arch/x86_64/uaccess.o kernel/arch/x86_64/ioapic.o kernel/arch/x86_64/pic.o kernel/arch/x86_64/pit.o kernel/arch/x86_64/ps2_keyboard.o kernel/arch/x86_64/user_entry.o kernel/arch/x86_64/cr3.o \
  kernel/pci/pci.o kernel/pci/dma.o kernel/pci/iommu.o kernel/pci/msix.o kernel/sched/scheduler.o kernel/sched/thread.o kernel/sched/runqueue.o kernel/sched/switch.o kernel/process/process.o kernel/process/signal.o kernel/process/address_space.o kernel/syscall/syscall.o kernel/vfs/vfs.o kernel/fs/rixfs.o kernel/fs/rixfs_ops.o kernel/fs/rixfs_dir.o kernel/fs/rixfs_fsck.o kernel/elf/elf.o kernel/elf/loader.o \
  kernel/mm/pmm.o kernel/mm/vmm.o kernel/mm/ptmap.o kernel/mm/uaccess.o kernel/mm/heap.o kernel/sync/lock.o kernel/sync/waitqueue.o kernel/sync/mutex.o kernel/sync/rwlock.o kernel/sync/sem.o kernel/sync/lockdep.o kernel/ipc/channel.o kernel/ipc/pipe.o kernel/ipc/shared_memory.o kernel/tty/tty.o \
-         kernel/storage/block.o kernel/storage/block_cache.o kernel/storage/nvme.o kernel/storage/nvme_prp.o kernel/log/klog.o kernel/net/net.o kernel/net/ethernet.o kernel/net/arp.o kernel/net/ipv4.o kernel/net/ipv6.o kernel/net/udp.o kernel/net/tcp.o kernel/net/loopback.o kernel/net/socket.o kernel/net/device.o kernel/net/stack.o kernel/net/dhcp.o kernel/net/rtl8125.o kernel/net/e1000.o kernel/usb/xhci.o kernel/usb/usb.o kernel/usb/hid.o kernel/usb/xhci_caps.o kernel/usb/xhci_profile.o kernel/time/rtc.o kernel/time/time.o kernel/power/power.o kernel/tty/font_psf.o
+         kernel/storage/block.o kernel/storage/block_cache.o kernel/storage/nvme.o kernel/storage/nvme_prp.o kernel/log/klog.o kernel/net/net.o kernel/net/ethernet.o kernel/net/arp.o kernel/net/ipv4.o kernel/net/ipv6.o kernel/net/udp.o kernel/net/tcp.o kernel/net/loopback.o kernel/net/socket.o kernel/net/device.o kernel/net/stack.o kernel/net/dhcp.o kernel/net/rtl8125.o kernel/net/e1000.o kernel/usb/usb.o kernel/usb/hid.o kernel/usb/xhci/core.o kernel/usb/xhci/ring.o kernel/usb/xhci/slot.o kernel/usb/xhci/xfer.o kernel/usb/xhci/ep.o kernel/usb/xhci/hub.o kernel/usb/xhci/debug.o kernel/usb/xhci/caps.o kernel/usb/xhci/profile.o kernel/time/rtc.o kernel/time/time.o kernel/power/power.o kernel/tty/font_psf.o
 
 PROGRAM_NAMES := echo cat args grep true false sleep ls mkdir rm rmdir touch stat ln head tail wc cut tr sort uniq env printf pwd which kill ps uname du df free dmesg cp mv find xargs sed test tee basename dirname seq id whoami date ping curl host help hostname credtest auditcheck capdelegatecheck capdelegatetest accountctl sessiontest sessionlisttest killtest metatest renametest authcheck abi-negative proc-test pipe-stress rixtest posix-test schedtest pipetest threads crashtest fuzztest cloexec-test
 PROGRAM_ELFS := $(addprefix build/programs/,$(addsuffix .elf,$(PROGRAM_NAMES)))
@@ -273,16 +273,20 @@ heap-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -DRIX_HOST_TEST -I. tests/heap_test.c kernel/mm/heap.c kernel/mm/pmm.c kernel/sync/lock.c kernel/sync/lockdep.c -o build/heap_test
 		build/heap_test
 xhci-caps-test: | build
-	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/xhci_caps_test.c kernel/usb/xhci_caps.c -o build/xhci_caps_test
+	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/xhci_caps_test.c kernel/usb/xhci/caps.c -o build/xhci_caps_test
 		build/xhci_caps_test
 
 xhci-profile-test: | build
-	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/xhci_profile_test.c kernel/usb/xhci_profile.c -o build/xhci_profile_test
+	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/xhci_profile_test.c kernel/usb/xhci/profile.c -o build/xhci_profile_test
 	build/xhci_profile_test
 
 xhci-portsc-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/xhci_portsc_test.c -o build/xhci_portsc_test
 	build/xhci_portsc_test
+
+xhci-linux-derived-test: | build
+	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/xhci_linux_derived_test.c -o build/xhci_linux_derived_test
+	build/xhci_linux_derived_test
 
 rixfs-mount-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -I. tests/rixfs_mount_test.c kernel/fs/rixfs.c -o build/rixfs_mount_test
@@ -337,7 +341,7 @@ klog-test: | build
 	$(HOST_CC) -std=c17 -Wall -Wextra -Werror -DRIX_HOST_TEST -I. tests/klog_test.c kernel/log/klog.c kernel/sync/lock.c -o build/klog_test
 		build/klog_test
 
-test: check usb-test hid-test tty-test shell-test pipe-test net-test libc-test hosts-test rtl-test e1000-test acpi-test smp-test gdt-test pmm-test heap-test xhci-caps-test xhci-profile-test xhci-portsc-test rixfs-mount-test symlink-test sync-test thread-test runqueue-test block-cache-test elf-test dma-test nvme-prp-test statfs-test klog-test abi-check
+test: check usb-test hid-test tty-test shell-test pipe-test net-test libc-test hosts-test rtl-test e1000-test acpi-test smp-test gdt-test pmm-test heap-test xhci-caps-test xhci-profile-test xhci-portsc-test xhci-linux-derived-test rixfs-mount-test symlink-test sync-test thread-test runqueue-test block-cache-test elf-test dma-test nvme-prp-test statfs-test klog-test abi-check
 	@echo 'Static kernel build checks completed.'
 
 abi-check:
@@ -350,4 +354,4 @@ sysroot:
 	bash ./scripts/musl-sysroot.sh
 
 clean:
-	rm -rf build kernel/*.o kernel/mm/*.o kernel/arch/x86_64/*.o kernel/pci/*.o kernel/sched/*.o kernel/process/*.o kernel/syscall/*.o kernel/vfs/*.o kernel/fs/*.o kernel/elf/*.o kernel/sync/*.o kernel/storage/*.o kernel/log/*.o kernel/usb/*.o kernel/ipc/*.o kernel/tty/*.o kernel/time/*.o kernel/power/*.o
+	rm -rf build kernel/*.o kernel/mm/*.o kernel/arch/x86_64/*.o kernel/pci/*.o kernel/sched/*.o kernel/process/*.o kernel/syscall/*.o kernel/vfs/*.o kernel/fs/*.o kernel/elf/*.o kernel/sync/*.o kernel/storage/*.o kernel/log/*.o kernel/usb/*.o kernel/usb/xhci/*.o kernel/ipc/*.o kernel/tty/*.o kernel/time/*.o kernel/power/*.o

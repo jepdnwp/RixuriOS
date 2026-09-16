@@ -1,4 +1,4 @@
-#include "xhci_caps.h"
+#include "caps.h"
 
 int xhci_spc_decode_entry(const uint8_t entry[XHCI_SPC_ENTRY_SIZE],
                           xhci_proto_range_t *out) {

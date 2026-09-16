@@ -1,4 +1,4 @@
-#include "../kernel/usb/xhci_caps.h"
+#include "../kernel/usb/xhci/caps.h"
 #include <assert.h>
 #include <stddef.h>
 #include <stdint.h>

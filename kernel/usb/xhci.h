@@ -2,8 +2,8 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "usb.h"
-#include "xhci_caps.h"
-#include "xhci_profile.h"
+#include "xhci/caps.h"
+#include "xhci/profile.h"
 
 typedef struct {
     uint8_t bus, device, function;
@@ -26,7 +26,7 @@ typedef struct {
     uint32_t quirks;
 } rix_xhci_controller_t;
 /* Quirk flags and the per-ID evidence that sets them live in
- * xhci_profile.h (XHCI_PROFILE_QUIRK_*): behavioral quirks are added only
+ * xhci/profile.h (XHCI_PROFILE_QUIRK_*): behavioral quirks are added only
  * with per-ID evidence, never preemptively. XHCI_QUIRK_NONE is the neutral
  * value for a controller with no known part. */
 #define XHCI_QUIRK_NONE XHCI_PROFILE_QUIRK_NONE
@@ -47,9 +47,9 @@ typedef struct {
     uint16_t esit_payload;
 } rix_xhci_endpoint_config_t;
 
-#define RIX_XHCI_DEVICE_DETACHED 0u
-#define RIX_XHCI_DEVICE_ADDRESSED 2u
-#define RIX_XHCI_DEVICE_ERROR 0xffu
+#define XHCI_DEVICE_DETACHED 0u
+#define XHCI_DEVICE_ADDRESSED 2u
+#define XHCI_DEVICE_ERROR 0xffu
 
 int xhci_init(void);
 size_t xhci_controller_count(void);
@@ -69,12 +69,21 @@ int xhci_disable_slot(size_t controller, uint8_t slot);
 int xhci_address_device(size_t controller, uint8_t slot, uint8_t port, uint8_t speed);
 int xhci_device_attach(size_t controller, uint8_t port, rix_xhci_device_t *out);
 int xhci_device_detach(size_t controller, uint8_t slot);
+void xhci_park_port(size_t controller, uint8_t port);
+void xhci_usb_state_transition(size_t controller, uint8_t slot, uint8_t new_state,
+                               const char *reason);
+#define XHCI_USB_DETACHED 0u
+#define XHCI_USB_DEFAULT 1u
+#define XHCI_USB_ADDRESSED 2u
+#define XHCI_USB_CONFIGURED 3u
 int xhci_control_transfer(size_t controller, uint8_t slot,
                           const rix_usb_setup_packet_t *setup,
                           void *data, uint16_t *actual_length);
 int xhci_get_descriptor(size_t controller, uint8_t slot, uint8_t descriptor_type,
                         uint8_t descriptor_index, uint16_t language_id,
                         void *buffer, uint16_t length, uint16_t *actual_length);
+int xhci_set_configuration(size_t controller, uint8_t slot,
+                           uint8_t configuration_value);
 int xhci_get_hid_report_descriptor(size_t controller, uint8_t slot,
                                    uint8_t interface_number, void *buffer,
                                    uint16_t length, uint16_t *actual_length);

@@ -1,4 +1,4 @@
-#include "../kernel/usb/xhci_portsc.h"
+#include "../kernel/usb/xhci/portsc.h"
 #include <assert.h>
 #include <stdint.h>
 

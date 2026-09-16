@@ -1,4 +1,4 @@
-#include "../kernel/usb/xhci_profile.h"
+#include "../kernel/usb/xhci/profile.h"
 #include <assert.h>
 
 static void test_lookup_and_data(void) {

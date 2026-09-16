@@ -37,6 +37,9 @@
 #define XHCI_PORT_PLC (1u << 22)  /* RW1C */
 #define XHCI_PORT_CEC (1u << 23)  /* RW1C */
 #define XHCI_PORT_CAS (1u << 24)  /* R: cold attach status */
+#define XHCI_PORT_WCE (1u << 25)  /* RWS: wake on connect enable */
+#define XHCI_PORT_WDE (1u << 26)  /* RWS: wake on disconnect enable */
+#define XHCI_PORT_WOE (1u << 27)  /* RWS: wake on over-current enable */
 #define XHCI_PORT_DR  (1u << 30)  /* R: device removable */
 #define XHCI_PORT_WPR (1u << 31)  /* RW1S: write 1 starts warm reset */
 /* All port-change W1C bits cleared by writing 1. */

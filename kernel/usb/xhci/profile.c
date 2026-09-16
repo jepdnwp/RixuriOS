@@ -1,4 +1,4 @@
-#include "xhci_profile.h"
+#include "profile.h"
 
 #define AMD_VENDOR_ID 0x1022u
 
