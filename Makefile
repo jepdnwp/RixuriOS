@@ -57,7 +57,7 @@ build/user_init.elf: build/user_init.o build/user_shell.o build/user_unistd.o bu
 kernel/user_init_blob.o: build/user_init.elf | build
 	$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
 	$(OBJCOPY) --add-section .note.GNU-stack=/dev/null --set-section-flags .note.GNU-stack=readonly,contents $@
-kernel/tty/font_psf.o: assets/fonts/terminus-12x24.psf
+kernel/tty/font_psf.o: assets/fonts/ter-powerline-v16n.psf
 	$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
 	$(OBJCOPY) --rename-section .data=.rodata,alloc,load,readonly,data,contents $@
 user-init: build/user_init.elf

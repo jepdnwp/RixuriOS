@@ -7,8 +7,8 @@
 #endif
 
 #ifdef RIX_HOST_TEST
-const unsigned char _binary_assets_fonts_terminus_12x24_psf_start[] = {0};
-const unsigned char _binary_assets_fonts_terminus_12x24_psf_end[] = {0};
+const unsigned char _binary_assets_fonts_ter_powerline_v16n_psf_start[] = {0};
+const unsigned char _binary_assets_fonts_ter_powerline_v16n_psf_end[] = {0};
 #endif
 
 static rix_tty_t ttys[RIX_TTY_COUNT];
@@ -79,15 +79,15 @@ static void framebuffer_glyph(uint16_t column,uint16_t row,uint8_t ch,uint32_t f
 }
 
 static void psf_init(void) {
-    psf=(const rix_psf2_header_t *)_binary_assets_fonts_terminus_12x24_psf_start;
-    psf_glyphs=_binary_assets_fonts_terminus_12x24_psf_start+psf->header_size;
+    psf=(const rix_psf2_header_t *)_binary_assets_fonts_ter_powerline_v16n_psf_start;
+    psf_glyphs=_binary_assets_fonts_ter_powerline_v16n_psf_start+psf->header_size;
     for (unsigned i=0;i<128u;i++) psf_ascii[i]=0;
     if (psf->magic!=RIX_PSF2_MAGIC||psf->header_size<sizeof(*psf)||
        !psf->glyph_count||!psf->bytes_per_glyph||!psf->width||!psf->height) return;
     for (unsigned i=0;i<128u&&i<psf->glyph_count;i++) psf_ascii[i]=(uint8_t)i;
     if (!(psf->flags&1u)) return;
     const uint8_t *p=psf_glyphs+(size_t)psf->glyph_count*psf->bytes_per_glyph;
-    const uint8_t *end=_binary_assets_fonts_terminus_12x24_psf_end;
+    const uint8_t *end=_binary_assets_fonts_ter_powerline_v16n_psf_end;
     unsigned glyph=0;
     while (p<end&&glyph<psf->glyph_count) {
         if (*p==0xffu){++glyph;++p;continue;}
