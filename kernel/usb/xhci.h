@@ -59,6 +59,9 @@ int xhci_reset_port(size_t controller, uint8_t port);
 void xhci_dump_ports(void);
 /* Returns 1 when a port-status-change event was consumed, 0 when none is ready. */
 int xhci_poll_port_status_change(size_t controller, uint8_t *port, uint8_t *connected);
+/* Host/state-machine diagnostic: returns -2 once after a full pending-event
+ * queue, requesting the caller's bounded full-port rescan path. */
+int xhci_pending_port_pop(size_t controller, uint8_t *port, uint8_t *connected);
 /* Services one port event: attach/reset/address on connect, disable on disconnect. */
 int xhci_service_hotplug(size_t controller, rix_xhci_device_t *device, uint8_t *connected);
 int xhci_enable_slot(size_t controller, uint8_t *out_slot);

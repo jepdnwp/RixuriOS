@@ -1570,6 +1570,7 @@ static uint8_t pending_conn[XHCI_MAX][XHCI_PENDING_PORTS];
 static uint8_t pending_head[XHCI_MAX];
 static uint8_t pending_tail[XHCI_MAX];
 static uint8_t pending_count[XHCI_MAX];
+static uint8_t pending_overflow[XHCI_MAX];
 
 static void xhci_pending_port_push(size_t controller, uint8_t port, uint8_t connected) {
     if (controller >= XHCI_MAX || port == 0u) return;
@@ -1581,7 +1582,13 @@ static void xhci_pending_port_push(size_t controller, uint8_t port, uint8_t conn
         }
         idx = (uint8_t)((idx + 1u) % XHCI_PENDING_PORTS);
     }
-    if (pending_count[controller] >= XHCI_PENDING_PORTS) return;
+    if (pending_count[controller] >= XHCI_PENDING_PORTS) {
+        /* Do not silently lose a hotplug event.  The consumer will receive
+         * an overflow indication after draining the retained events and
+         * enter its bounded full-port rescan path. */
+        pending_overflow[controller] = 1u;
+        return;
+    }
     pending_port[controller][pending_tail[controller]] = port;
     pending_conn[controller][pending_tail[controller]] = connected;
     pending_tail[controller] = (uint8_t)((pending_tail[controller] + 1u) % XHCI_PENDING_PORTS);
@@ -1591,7 +1598,13 @@ static void xhci_pending_port_push(size_t controller, uint8_t port, uint8_t conn
 int xhci_pending_port_pop(size_t controller, uint8_t *port, uint8_t *connected) {
     if (controller >= XHCI_MAX || !port || !connected) return -1;
     if (controller >= count) return -1;
-    if (!pending_count[controller]) return 0;
+    if (!pending_count[controller]) {
+        if (pending_overflow[controller]) {
+            pending_overflow[controller] = 0u;
+            return -2;
+        }
+        return 0;
+    }
     *port = pending_port[controller][pending_head[controller]];
     *connected = pending_conn[controller][pending_head[controller]];
     pending_head[controller] =
