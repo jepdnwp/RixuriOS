@@ -137,6 +137,18 @@ static int ptr_in_heap(const void *header_ptr) {
     return (const uint8_t *)header_ptr >= (const uint8_t *)rix_heap_base &&
            (const uint8_t *)header_ptr < (const uint8_t *)end;
 }
+static int header_valid(const rix_alloc_header_t *h, uint32_t expected_used) {
+    void *end = heap_end();
+    size_t raw, total;
+    if (!h || ((uintptr_t)h & 15u) != 0 || !ptr_in_heap(h) ||
+        h->magic != RIX_ALLOC_MAGIC || h->used != expected_used ||
+        end == (void *)-1 || !rix_heap_base) return 0;
+    if (h->size > (size_t)-1 - sizeof(*h) ||
+        (raw = sizeof(*h) + h->size) > (size_t)-1 - 15u) return 0;
+    total = align_up(raw);
+    return total >= sizeof(*h) && (uintptr_t)h <= (uintptr_t)end &&
+           total <= (uintptr_t)end - (uintptr_t)h;
+}
 static void free_push(rix_alloc_header_t *h) {
     void **slot = (void **)(h + 1);
     *slot = rix_free_head;
@@ -151,7 +163,7 @@ void *malloc(size_t size) {
     rix_alloc_header_t **prev = (rix_alloc_header_t **)&rix_free_head;
     for (rix_alloc_header_t *cur = rix_free_head; cur; cur = *(rix_alloc_header_t **)prev) {
         void **link = (void **)(cur + 1);
-        if (cur->magic != RIX_ALLOC_MAGIC || cur->used != 0) { *prev = (rix_alloc_header_t *)*link; continue; }
+        if (!header_valid(cur, 0)) break;
         size_t have = block_total(cur);
         if (have < need) { prev = (rix_alloc_header_t **)link; continue; }
         *prev = (rix_alloc_header_t *)*link;
@@ -182,10 +194,9 @@ void *calloc(size_t count, size_t size) {
 }
 void free(void *pointer) {
     if (!pointer) return;
-    if (((uintptr_t)pointer & 7u) != 0) { errno = RIX_EINVAL; return; }
+    if (((uintptr_t)pointer & 15u) != 0) { errno = RIX_EINVAL; return; }
     rix_alloc_header_t *header = ((rix_alloc_header_t *)pointer) - 1;
-    if (!ptr_in_heap(header)) { errno = RIX_EINVAL; return; }
-    if (header->magic != RIX_ALLOC_MAGIC || header->used != 1) { errno = RIX_EINVAL; return; }
+    if (!header_valid(header, 1)) { errno = RIX_EINVAL; return; }
     header->used = 0;
     /* Scrub first word after pushing link (link occupies it). Poison the
      * rest to catch use-after-free reads in debug builds. */
@@ -194,9 +205,9 @@ void free(void *pointer) {
 void *realloc(void *pointer, size_t size) {
     if (!pointer) return malloc(size);
     if (!size) { free(pointer); return 0; }
-    if (((uintptr_t)pointer & 7u) != 0) { errno = RIX_EINVAL; return 0; }
+    if (((uintptr_t)pointer & 15u) != 0) { errno = RIX_EINVAL; return 0; }
     rix_alloc_header_t *header = ((rix_alloc_header_t *)pointer) - 1;
-    if (!ptr_in_heap(header) || header->magic != RIX_ALLOC_MAGIC || header->used != 1) { errno = RIX_EINVAL; return 0; }
+    if (!header_valid(header, 1)) { errno = RIX_EINVAL; return 0; }
     if (header->size >= size) { header->size = size; return pointer; }
     void *replacement = malloc(size);
     if (!replacement) return 0;
