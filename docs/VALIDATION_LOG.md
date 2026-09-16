@@ -2298,3 +2298,18 @@ The test passed. This is host-only evidence for the bounded reassembly implement
 A user-supplied photograph from a physical target provides non-fabricated diagnostic evidence for the xHCI path. The visible serial output identifies EP0 context/ring operations and records `USB Transaction Error`, `TRANSFER RETRY`, `RESET EP0`, port reset/clear activity, and a subsequent enable-slot command. This confirms that the target reached the controller command/transfer error-recovery path; it does not by itself prove successful USB enumeration, keyboard interrupt-IN delivery, sustained transfer stability, or recovery after a second fault.
 
 The evidence is therefore recorded as **physical diagnostic evidence only**. Functional xHCI/HID qualification remains **UNVERIFIED** pending a timestamped raw serial capture showing PCI/controller identity, port status, successful descriptor/address/configuration completion, keyboard input delivery, and repeated attach/detach or recovery behavior.
+
+## 2026-09-16 — xHCI USB2 reset-recovery settle window
+
+The physical diagnostic trace showed a USB2 EP0 `USB Transaction Error` immediately around port reset and first control traffic. The USB2 reset path now waits 10 ms after observing PRC and confirming device presence, allowing the device-side USB reset-recovery interval to complete before Enable Slot, Address Device, or EP0 traffic begins. The existing bounded EP0 Reset Endpoint retry remains as a second-line recovery path.
+
+Repository validation passed:
+
+```text
+git diff --check
+make xhci-caps-test HOST_CC=gcc
+make xhci-profile-test HOST_CC=gcc
+make test CROSS=x86_64-linux-gnu- HOST_CC=gcc
+```
+
+This fixes the identified timing race in software, but post-fix physical enumeration and keyboard input are not claimed until a new target log shows successful Address Device, descriptor/configuration completion, and interrupt-IN traffic.

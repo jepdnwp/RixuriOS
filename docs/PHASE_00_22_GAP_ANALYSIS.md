@@ -850,7 +850,7 @@ A clean compile cannot resolve the profile source/types/functions. A full 16-ent
 | Unit | No TRB/ring/completion/timeout/reset/hotplug/DMA suite. | **MISSING**. |
 | Integration | Initialization path exists. | Generic QEMU had controllers=0. |
 | QEMU | `qemu_xhci_probe_test.py` requests NEC xHCI + keyboard. | No retained current PASS; **UNVERIFIED**. |
-| Physical | User-supplied serial photograph shows a real xHCI controller issuing EP0 context/command-ring operations, a `USB Transaction Error`, bounded `TRANSFER RETRY`, `RESET EP0`, and subsequent port reset/enable-slot activity. | Diagnostic/recovery path observed; successful device enumeration, keyboard interrupt-IN traffic, sustained I/O, and independent physical capture remain **UNVERIFIED**. |
+| Physical | User-supplied serial photograph shows a real xHCI controller issuing EP0 context/command-ring operations, a `USB Transaction Error`, bounded `TRANSFER RETRY`, `RESET EP0`, and subsequent port reset/enable-slot activity. USB2 reset handling now adds a 10 ms device-side recovery settle window after PRC. | Diagnostic/recovery path observed and timing race hardened; successful post-fix device enumeration, keyboard interrupt-IN traffic, sustained I/O, and independent physical capture remain **UNVERIFIED**. |
 
 ### Validation gaps
 

@@ -1454,6 +1454,13 @@ static int xhci_usb2_reset(volatile uint32_t *reg) {
             // Post-reset: device must still be present
             uint32_t after = *reg;
             if ((after & XHCI_PORT_CCS) == 0u) return -3;
+            /* PRC is the host-controller completion indication, not a
+             * guarantee that the device has completed its USB reset recovery
+             * interval.  Real USB2 devices on physical controllers can
+             * return cc=4 to the first SETUP when Address Device follows PRC
+             * immediately.  Allow the device-side reset recovery window to
+             * close before slot/address traffic starts. */
+            xhci_udelay(10000u);
             xhci_trace_portsc("RESET FINAL", reg);
             return 0;
         }
