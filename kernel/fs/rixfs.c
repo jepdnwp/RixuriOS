@@ -25,7 +25,8 @@ static uint32_t load32(const uint8_t *p) {
 static int journal_replay(rixfs_t *f) {
     if (f->super.journal_sectors < 2) return 0;
     uint64_t js = f->super.journal_sector;
-    if (js + 1 >= f->super.total_sectors) return -1;
+    if (js >= f->super.total_sectors ||
+        f->super.journal_sectors > f->super.total_sectors - js) return -1;
     uint64_t q = pmm_alloc_page();
     if (!q) return -2;
     uint8_t *buffer = (uint8_t *)(uintptr_t)q;
@@ -48,7 +49,7 @@ static int journal_replay(rixfs_t *f) {
             targets[i] = load64(buffer + 24u + (size_t)i * 16u);
             checksums[i] = load64(buffer + 32u + (size_t)i * 16u);
             if (targets[i] >= f->super.total_sectors ||
-                (targets[i] >= js && targets[i] < js + f->super.journal_sectors)) {
+                (targets[i] >= js && targets[i] - js < f->super.journal_sectors)) {
                 pmm_free_page(q);
                 return -5;
             }
@@ -79,7 +80,7 @@ static int journal_replay(rixfs_t *f) {
     uint64_t sequence = load64(buffer + 16u);
     uint64_t stored = load64(buffer + 32u);
     if (!sequence || target >= f->super.total_sectors ||
-        (target >= js && target < js + f->super.journal_sectors)) {
+        (target >= js && target - js < f->super.journal_sectors)) {
         pmm_free_page(q);
         return -7;
     }
