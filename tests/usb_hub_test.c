@@ -29,6 +29,7 @@ void serial_write(const char *s) { (void)s; }
 void serial_write_hex(uint64_t v) { (void)v; }
 void serial_write_dec(uint64_t v) { (void)v; }
 uint64_t time_monotonic_ns(void) { return 0; }
+void usb_storage_detach(size_t c, uint8_t s) { (void)c; (void)s; }
 
 int main(void) {
     rix_usb_hub_descriptor_t hub;

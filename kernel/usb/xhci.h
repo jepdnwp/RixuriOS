@@ -66,6 +66,8 @@ typedef struct {
 int xhci_init(void);
 size_t xhci_controller_count(void);
 const rix_xhci_controller_t *xhci_controller(size_t index);
+/* Pre-PIT-safe microsecond pacing for boot code (USB settle). */
+void xhci_udelay(uint32_t microseconds);
 int xhci_port_status(size_t controller, uint8_t port, rix_xhci_port_status_t *out);
 int xhci_reset_port(size_t controller, uint8_t port);
 void xhci_dump_ports(void);

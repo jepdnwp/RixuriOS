@@ -181,6 +181,11 @@ void xhc_udelay(uint32_t us) {
     while (us--) xhc_pause_delay(64u);
 }
 
+/* Public pre-PIT-safe pacing for boot code (USB settle); same idiom. */
+void xhci_udelay(uint32_t us) {
+    xhc_udelay(us);
+}
+
 /* Wait for HCHalted to reach the wanted state (Linux xhci_handshake on
  * STS_HALT). Returns -2 on host system error, -1 on timeout. */
 int xhc_wait_halted(volatile uint8_t *op, int halted) {
