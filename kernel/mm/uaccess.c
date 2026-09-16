@@ -57,8 +57,8 @@ int uaccess_fixup_frame(struct x86_fault_frame *frame){
 int copy_from_user(void *kernel_dst,uint64_t user_src,size_t length){
     uint32_t me;
     int rc;
-    if(!kernel_dst||user_range_valid(user_src,length,0)!=0)return -RIX_EFAULT;
     if(!length)return 0;
+    if(!kernel_dst||user_range_valid(user_src,length,0)!=0)return -RIX_EFAULT;
     me=uaccess_cpu();
     scheduler_preempt_disable();
     uaccess_recovery[me].armed=1;
@@ -70,8 +70,8 @@ int copy_from_user(void *kernel_dst,uint64_t user_src,size_t length){
 int copy_to_user(uint64_t user_dst,const void *kernel_src,size_t length){
     uint32_t me;
     int rc;
-    if(!kernel_src||user_range_valid(user_dst,length,1)!=0)return -RIX_EFAULT;
     if(!length)return 0;
+    if(!kernel_src||user_range_valid(user_dst,length,1)!=0)return -RIX_EFAULT;
     me=uaccess_cpu();
     scheduler_preempt_disable();
     uaccess_recovery[me].armed=1;
