@@ -1200,11 +1200,11 @@ Dynamic loader/TLS, full pthread/futex threads, signal delivery frames/handlers,
 
 ### Partial
 
-The PASS is a declared static-scope closure, not a general POSIX/Linux claim. `pthread_create/join/detach`, `signal/sigaction`, `listen/accept/shutdown`, `poll`, most `ioctl`, file-backed memory mapping, and several stat/link APIs fail closed with `ENOSYS`.[5] [49]
+The PASS is a declared static-scope closure, not a general POSIX/Linux claim. `pthread_create/join/detach`, `signal/sigaction`, `listen/accept/shutdown`, `poll`, most `ioctl`, file-backed memory mapping, and several stat/link APIs fail closed with `ENOSYS`.[5] [49] TTY/PTY `ISIG` now discards only the unfinished canonical line before broadcasting `Ctrl-C`/`Ctrl-Z`/`Ctrl-\\` to the foreground process group; userspace signal-handler frames and `sigreturn` remain absent.
 
 ### Bugs / correctness risks
 
-`free()` marks an allocation unused but the bump allocator does not reclaim/reuse heap space. `realloc()` reads a preceding header before proving the pointer is a valid libc allocation. `WIFEXITED` is always true. Process-local spin mutexes are not a substitute for kernel threads/futexes. Ported software can compile and then fail at runtime if it ignores the compatibility document.[49]
+`WIFEXITED` is always true. Process-local spin mutexes are not a substitute for kernel threads/futexes. Ported software can compile and then fail at runtime if it ignores the compatibility document.[49]
 
 ### Tests
 

@@ -56,9 +56,13 @@ int main(void) {
     if (expect(tty_get_foreground_pgrp(0, &pgrp) == 0 && pgrp == 42,
                 "get foreground pgrp")) return 1;
     tty_set_signal_hook(signal_hook);
-    if (expect(tty_set_canonical(0, 1) == 0 && tty_input(0, 3) == 0 &&
+    if (expect(tty_set_canonical(0, 1) == 0 && tty_input(0, 'q') == 0 &&
+                tty_input(0, 3) == 0 && tty_input(0, 'o') == 0 &&
+                tty_input(0, 'k') == 0 && tty_input(0, '\n') == 0 &&
+                tty_read(0, buffer, sizeof(buffer), &count) == 0 && count == 3 &&
+                memcmp(buffer, "ok\n", 3) == 0 &&
                 seen_group == 42 && seen_signal == 2,
-                "CTRL-C sends SIGINT to foreground group")) return 1;
+                "CTRL-C discards unfinished line and signals foreground group")) return 1;
     if (expect(tty_set_session(0, 42, 1) == 0, "set controlling session")) return 1;
     uint32_t session = 0;
     int controlling = 0;

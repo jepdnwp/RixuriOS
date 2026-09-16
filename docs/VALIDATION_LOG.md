@@ -2256,3 +2256,17 @@ git diff --check
 ```
 
 This closes only bitmap reconstruction. Inode repair, directory reconstruction, journal replay/repair, power-loss durability, and physical media fault injection remain unimplemented or UNVERIFIED.
+
+## 2026-09-16 — PTY canonical signal-line hardening
+
+TTY and PTY `ISIG` handling now consumes `Ctrl-C`, `Ctrl-Z`, and `Ctrl-\\` after discarding only the unfinished canonical input line. Previously completed newline-terminated lines remain readable by the foreground process. The foreground process-group signal hook remains responsible for broadcasting `SIGINT`, `SIGTSTP`, or `SIGQUIT`; no userspace signal-frame or `sigreturn` ABI is claimed.
+
+The TTY host test covers unfinished-line discard, preservation of the following complete line, and delivery of `SIGINT` to the configured foreground group. Both the focused test and full host suite passed:
+
+```text
+make tty-test HOST_CC=gcc
+make test CROSS=x86_64-linux-gnu- HOST_CC=gcc
+git diff --check
+```
+
+This closes a terminal line-discipline/job-control slice only. Userspace handler installation, register-frame construction, signal-mask restoration, `sigreturn`, stopped/continued wait statuses, and physical PTY qualification remain open.

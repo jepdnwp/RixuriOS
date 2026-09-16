@@ -116,8 +116,21 @@ typedef struct {
 static rix_pty_t ptys[RIX_PTY_COUNT];
 static tty_signal_hook_t signal_hook;
 
+static void tty_discard_current_line(rix_tty_t *t) {
+    if (!t) return;
+    while (t->line_chars) {
+        t->tail = (t->tail + RIX_TTY_INPUT - 1u) % RIX_TTY_INPUT;
+        if (t->count) --t->count;
+        --t->line_chars;
+    }
+}
+
 static int tty_control_signal(rix_tty_t *t, uint8_t ch) {
     unsigned signal = ch == 0x03u ? 2u : (ch == 0x1au ? 20u : 3u);
+    if (!t) return -1;
+    /* ISIG consumes the control byte and discards only the unfinished
+     * canonical line; complete lines already terminated by NL remain queued. */
+    tty_discard_current_line(t);
     if (!signal_hook || !t->foreground_pgrp) return 0;
     return signal_hook(t->foreground_pgrp, signal);
 }
