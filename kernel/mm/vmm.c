@@ -143,6 +143,8 @@ uint64_t vmm_map_mmio(uint64_t pa,uint64_t size){
  if(end>UINT64_MAX-0xFFFULL||(end+0xFFFULL<=end))return 0;
  uint64_t pages=(end+0xFFFULL)>>12;if(!pages||pages>MMIO_WINDOW_PAGES)return 0;
  uint64_t va=0;
+ int new_mapping=0;
+ uint64_t old_window_next=mmio_window_next;
  for(unsigned i=0;i<mmio_reg_count;i++)if(mmio_regs[i].phys==base&&mmio_regs[i].pages==pages){va=mmio_regs[i].va;break;}
  if(!va){
   if(mmio_reg_count>=MMIO_REG_MAX)return 0;
@@ -152,8 +154,16 @@ uint64_t vmm_map_mmio(uint64_t pa,uint64_t size){
    if(!mmio_window_next)mmio_window_next=MMIO_WINDOW_BASE;
    if(mmio_window_next-MMIO_WINDOW_BASE>(MMIO_WINDOW_PAGES-pages)*0x1000ULL)return 0;
    va=mmio_window_next;mmio_window_next+=pages*0x1000ULL;
+   new_mapping=1;
   }
-  for(uint64_t p=0;p<pages;p++)if(vmm_map_page_in_pml4(kernel_pml4_phys,va+p*0x1000ULL,base+p*0x1000ULL,MMIO_PTE_FLAGS)!=0)return 0;
+  if(!new_mapping)new_mapping=1;
+  uint64_t mapped=0;
+  for(;mapped<pages;mapped++)
+   if(vmm_map_page_in_pml4(kernel_pml4_phys,va+mapped*0x1000ULL,base+mapped*0x1000ULL,MMIO_PTE_FLAGS)!=0){
+    while(mapped>0){--mapped;(void)vmm_unmap_page_in_pml4(kernel_pml4_phys,va+mapped*0x1000ULL);}
+    mmio_window_next=old_window_next;
+    return 0;
+   }
   mmio_regs[mmio_reg_count].phys=base;mmio_regs[mmio_reg_count].va=va;mmio_regs[mmio_reg_count].pages=pages;mmio_reg_count++;
  }
  if(current_pml4_phys!=kernel_pml4_phys){
