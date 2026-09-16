@@ -69,8 +69,11 @@ static void prune_empty_path(uint64_t pml4_phys,uint64_t va){
  if(!pmm_is_reserved(e4&PAGE_MASK)){pml4[i4]=0;pmm_free_page(e4&PAGE_MASK);}
 }
 static void reserve_table_range(uint64_t start, size_t bytes){
+ if(!bytes||start>UINT64_MAX-(uint64_t)bytes)return;
+ uint64_t end=start+(uint64_t)bytes;
+ if(end>UINT64_MAX-0xFFFULL)return;
  uint64_t first=start&~0xfffULL;
- uint64_t last=(start+(uint64_t)bytes+0xfffULL)&~0xfffULL;
+ uint64_t last=(end+0xfffULL)&~0xfffULL;
  for(uint64_t page=first;page<last;page+=0x1000ULL)pmm_reserve_page(page);
 }
 extern uint8_t __text_start[], __text_end[], __rodata_start[], __rodata_end[];
@@ -79,9 +82,13 @@ extern uint8_t __data_start[], __bss_end[];
 static int protect_kernel_range(uintptr_t start, uintptr_t end, uint64_t flags) {
     if (end <= start) return 0;
     start &= ~0xFFFULL;
+    if (end > UINTPTR_MAX - 0xFFFULL) return -1;
     end = (end + 0xFFFULL) & ~0xFFFULL;
-    for (uintptr_t va = start; va < end; va += 0x1000ULL)
+    for (uintptr_t va = start; va < end;) {
         if (vmm_map_page_in_pml4(kernel_pml4_phys, va, va, flags) != 0) return -1;
+        if (end - va <= 0x1000ULL) break;
+        va += 0x1000ULL;
+    }
     return 0;
 }
 
