@@ -20,7 +20,14 @@ static inline uint8_t inb(uint16_t port){uint8_t v;__asm__ volatile("inb %1,%0":
 static uint8_t cmos_read(uint8_t reg){outb(CMOS_INDEX,(uint8_t)(reg|0x80u));return inb(CMOS_DATA);}
 static uint8_t bcd_to_bin(uint8_t v){return (uint8_t)((v&0x0Fu)+((v>>4)*10u));}
 static uint8_t leap(uint16_t y){return (uint8_t)((y%4u==0u&&y%100u!=0u)||y%400u==0u);}
-static int valid(const rix_rtc_time_t*t){if(!t||t->year<1970||t->month<1||t->month>12||t->day<1||t->day>31||t->hour>23||t->minute>59||t->second>59)return -1;return 0;}
+static int valid(const rix_rtc_time_t*t){
+ if(!t||t->year<1970||t->month<1||t->month>12||t->hour>23||
+    t->minute>59||t->second>59)return -1;
+ static const uint8_t days[]={31,28,31,30,31,30,31,31,30,31,30,31};
+ uint8_t max=days[t->month-1u];
+ if(t->month==2u&&leap(t->year))max=29u;
+ return t->day>=1u&&t->day<=max?0:-1;
+}
 int rtc_init(void){return 0;}
 /* Bounded UIP wait: a stuck RTC must fail closed (-2) instead of hanging
  * the boot. 30k port reads is ample for the ~244us update window on real
