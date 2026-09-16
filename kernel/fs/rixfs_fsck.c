@@ -18,11 +18,31 @@ static int bitmap_test(rixfs_t *fs,uint64_t sector,int *used){
     if(!r)*used=(buf[off]&(uint8_t)(1u<<(sector%8ULL)))!=0;
     (void)bits; pmm_free_page(p); return r;
 }
+static int extent_overlap(uint64_t a_start,uint64_t a_len,uint64_t b_start,uint64_t b_len){
+    if(!a_len||!b_len)return 0;
+    return (a_start<b_start?(b_start-a_start)<a_len:(a_start-b_start)<b_len);
+}
 static int check_inode(rixfs_t *fs,uint64_t ino,uint64_t *referenced){
     rixfs_inode_disk_t in; if(rixfs_read_inode(fs,ino,&in))return -1;
     if(in.inode==0)return 0;
     uint32_t type=in.mode&RIXFS_IFMT;
     if(type!=RIXFS_IFREG&&type!=RIXFS_IFDIR&&type!=RIXFS_IFLNK)return -2;
+    for(unsigned a=0;a<RIXFS_DIRECT_EXTENTS;a++)
+        for(unsigned b=a+1;b<RIXFS_DIRECT_EXTENTS;b++)
+            if(extent_overlap(in.extent_start[a],in.extent_length[a],
+                              in.extent_start[b],in.extent_length[b]))return -9;
+    /* Each data sector must have one inode owner. Shared extents make
+     * truncate/unlink and recovery order-dependent, so reject them before
+     * reporting the image as clean. */
+    for(uint64_t prior=1;prior<ino;prior++){
+        rixfs_inode_disk_t other;
+        if(rixfs_read_inode(fs,prior,&other))return -10;
+        if(!other.inode)continue;
+        for(unsigned a=0;a<RIXFS_DIRECT_EXTENTS;a++)
+            for(unsigned b=0;b<RIXFS_DIRECT_EXTENTS;b++)
+                if(extent_overlap(in.extent_start[a],in.extent_length[a],
+                                  other.extent_start[b],other.extent_length[b]))return -9;
+    }
     uint64_t total=0;
     for(unsigned e=0;e<RIXFS_DIRECT_EXTENTS;e++){
         uint64_t start=in.extent_start[e], len=in.extent_length[e];
