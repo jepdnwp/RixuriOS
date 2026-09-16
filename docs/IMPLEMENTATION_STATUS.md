@@ -1068,3 +1068,10 @@ instead of round-tripping the same helper. QEMU proof: INQUIRY reports
 "QEMU HARDDISK", capacity 16384×512, LBA0 carries the planted
 "RIXUSBST" magic. Bulk-OUT 512B payloads and block-layer integration
 remain open (usb_storage_write exists for explicit future use).
+
+Recovery is proven, not just coded: probe issues an illegal opcode
+(every compliant device must reject it, read-only), then a plain LBA0
+read must succeed, logging recovery=PASS — the reset-recovery path runs
+against real device behavior on every boot. A scripted-peer host test
+(stall-then-healthy) proves the retry state machine returns success
+with the tag advanced.

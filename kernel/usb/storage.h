@@ -80,3 +80,8 @@ int usb_storage_read(size_t controller, uint8_t slot, uint32_t lba,
 int usb_storage_write(size_t controller, uint8_t slot, uint32_t lba,
                       const void *buffer);
 const usb_storage_dev_t *usb_storage_find(size_t controller, uint8_t slot);
+/* Recovery drill (read-only): issue an illegal opcode, which every
+ * compliant device must reject, then prove the device is healthy again
+ * with a plain LBA0 read. Exercises the reset-recovery + retry path
+ * against real device behavior. Returns 0 with recovery proven. */
+int usb_storage_verify_recovery(size_t controller, uint8_t slot);

@@ -285,12 +285,56 @@ int usb_storage_command(size_t controller, uint8_t slot,
     return -90;
 }
 
+static usb_storage_dev_t *storage_mut(size_t controller, uint8_t slot) {
+    for (unsigned i = 0; i < USB_STORAGE_MAX_DEVS; ++i) {
+        if (storages[i].used && storages[i].controller == controller &&
+            storages[i].slot == slot)
+            return &storages[i];
+    }
+    return 0;
+}
+
 const usb_storage_dev_t *usb_storage_find(size_t controller, uint8_t slot) {
     for (unsigned i = 0; i < USB_STORAGE_MAX_DEVS; ++i) {
         if (storages[i].used && storages[i].controller == controller &&
             storages[i].slot == slot)
             return &storages[i];
     }
+    return 0;
+}
+
+int usb_storage_verify_recovery(size_t controller, uint8_t slot) {
+    usb_storage_dev_t *dev = storage_mut(controller, slot);
+    uint8_t cdb[16];
+    uint8_t sector[USB_STORAGE_SECTOR];
+    unsigned i;
+    int rc;
+    if (!dev) return -1;
+    for (i = 0; i < 6u; ++i) cdb[i] = 0;
+    cdb[0] = 0xFFu;
+    /* A compliant device must reject the illegal opcode (CSW failed or
+     * stall). Acceptance would mean the device executed the unknown. */
+    rc = usb_storage_command(controller, slot, dev->interface_number,
+                             dev->bulk_in, dev->bulk_out, &dev->tag, cdb,
+                             6, 0, 0, 1);
+    if (rc == 0) {
+        serial_write("xHCI: storage illegal opcode accepted\r\n");
+        return -13;
+    }
+    /* The command above already ran reset recovery internally; a plain
+     * read must now succeed, proving the device is healthy again. */
+    for (i = 0; i < USB_STORAGE_SECTOR; ++i) sector[i] = 0;
+    usb_storage_build_read10(cdb, 0u, 1u);
+    rc = usb_storage_command(controller, slot, dev->interface_number,
+                             dev->bulk_in, dev->bulk_out, &dev->tag, cdb,
+                             10, sector, USB_STORAGE_SECTOR, 1);
+    if (rc != 0) {
+        serial_write("xHCI: storage post-recovery read failed=");
+        serial_write_dec((uint64_t)(rc < 0 ? -rc : rc));
+        serial_write("\r\n");
+        return -14;
+    }
+    serial_write("xHCI: storage recovery=PASS\r\n");
     return 0;
 }
 
@@ -375,16 +419,11 @@ int usb_storage_probe(size_t controller, uint8_t slot,
     serial_write("xHCI: storage ready blocks=");
     serial_write_dec(blocks);
     serial_write("\r\n");
-    if (out_dev) *out_dev = dev;
-    return 0;
-}
-
-static usb_storage_dev_t *storage_mut(size_t controller, uint8_t slot) {
-    for (unsigned i = 0; i < USB_STORAGE_MAX_DEVS; ++i) {
-        if (storages[i].used && storages[i].controller == controller &&
-            storages[i].slot == slot)
-            return &storages[i];
+    if (usb_storage_verify_recovery(controller, slot) != 0) {
+        dev->used = 0;
+        return -15;
     }
+    if (out_dev) *out_dev = dev;
     return 0;
 }
 
