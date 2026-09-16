@@ -16,33 +16,59 @@ static uint8_t xhc_ep_type(uint8_t endpoint_address, uint8_t attributes) {
     return 0;
 }
 
-/* Endpoint Context Interval field (Linux xhci_get_endpoint_interval):
- * log2 of the service period in microframes. FS/LS interrupt bInterval
- * is in frames: fls(bInterval*8)-1 clamped 3..10. HS/SS interrupt
- * bInterval is already an exponent: clamp 1..16 minus 1. Bulk/control
- * take 0. Programming raw bInterval (e.g. FS 10) would schedule every
- * 2^10 = 1024 microframes = 128ms instead of ~8ms. */
+/* Direct port of the Linux xhci-mem.c interval helpers
+ * (xhci_microframes_to_exponent, xhci_parse_microframe_interval,
+ * xhci_parse_exponent_interval, xhci_parse_frame_interval,
+ * xhci_get_endpoint_interval): same arithmetic and clamp order, only the
+ * fls/clamp_val primitives are spelled out. The Endpoint Context Interval
+ * field is log2 of the service period in microframes; programming a raw
+ * bInterval (e.g. FS 10) would schedule every 2^10 microframes = 128ms
+ * instead of ~8ms. */
+static unsigned xhci_fls(unsigned x) {
+    unsigned r = 0u;
+    while (x != 0u) {
+        x >>= 1;
+        r++;
+    }
+    return r;
+}
+
+static unsigned xhci_clamp_val(unsigned v, unsigned lo, unsigned hi) {
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
+
+static unsigned xhci_microframes_to_exponent(unsigned desc_interval,
+                                             unsigned min_exponent,
+                                             unsigned max_exponent) {
+    unsigned interval = xhci_fls(desc_interval) - 1u;
+    return xhci_clamp_val(interval, min_exponent, max_exponent);
+}
+
+static unsigned xhci_parse_microframe_interval(uint8_t binterval) {
+    if (binterval == 0u) return 0u;
+    return xhci_microframes_to_exponent(binterval, 0u, 15u);
+}
+
+static unsigned xhci_parse_exponent_interval(uint8_t binterval) {
+    return xhci_clamp_val(binterval, 1u, 16u) - 1u;
+}
+
+static unsigned xhci_parse_frame_interval(uint8_t binterval) {
+    return xhci_microframes_to_exponent((unsigned)binterval * 8u, 3u, 10u);
+}
+
 unsigned xhc_ep_interval(uint8_t speed, uint8_t ep_type, uint8_t binterval) {
-    unsigned e;
-    unsigned v;
-    if (ep_type != 3u) return 0u;
-    if (speed == 1u || speed == 2u) {
-        v = (unsigned)binterval * 8u;
-        e = 0u;
-        while (v > 1u) {
-            v >>= 1;
-            e++;
-        }
-        if (e < 3u) e = 3u;
-        if (e > 10u) e = 10u;
-        return e;
+    if (ep_type == 3u) {
+        if (speed == 1u || speed == 2u)
+            return xhci_parse_frame_interval(binterval);
+        if (speed == 3u || speed == 4u || speed == 5u)
+            return xhci_parse_exponent_interval(binterval);
+        return 0u;
     }
-    if (speed == 3u || speed == 4u || speed == 5u) {
-        e = binterval;
-        if (e < 1u) e = 1u;
-        if (e > 16u) e = 16u;
-        return e - 1u;
-    }
+    if (ep_type == 2u && speed == 3u)
+        return xhci_parse_microframe_interval(binterval);
     return 0u;
 }
 

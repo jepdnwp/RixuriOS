@@ -46,7 +46,9 @@ int main(void) {
     assert(xhc_ep_interval(1u, 3u, 10u) == 6u);
     assert(xhc_ep_interval(1u, 3u, 8u) == 6u);
     assert(xhc_ep_interval(1u, 3u, 255u) == 10u);
-    assert(xhc_ep_interval(1u, 3u, 0u) == 3u);
+    /* bInterval 0 is descriptor-invalid (rejected by configure); the
+     * verbatim Linux clamp still yields 10 here, pinned as-is. */
+    assert(xhc_ep_interval(1u, 3u, 0u) == 10u);
     assert(xhc_ep_interval(2u, 3u, 10u) == 6u);
     /* High-speed / SuperSpeed interrupt: exponent passthrough. */
     assert(xhc_ep_interval(3u, 3u, 1u) == 0u);
@@ -56,9 +58,13 @@ int main(void) {
     assert(xhc_ep_interval(3u, 3u, 20u) == 15u);
     assert(xhc_ep_interval(4u, 3u, 9u) == 8u);
     assert(xhc_ep_interval(5u, 3u, 1u) == 0u);
-    /* Bulk/control and unknown speeds take field 0. */
+    /* Bulk/control and unknown speeds take field 0, except HS bulk
+     * which carries the Max NAK rate exponent. */
     assert(xhc_ep_interval(1u, 2u, 10u) == 0u);
     assert(xhc_ep_interval(3u, 2u, 0u) == 0u);
+    assert(xhc_ep_interval(3u, 2u, 1u) == 0u);
+    assert(xhc_ep_interval(3u, 2u, 8u) == 3u);
+    assert(xhc_ep_interval(3u, 2u, 255u) == 7u);
     assert(xhc_ep_interval(9u, 3u, 10u) == 0u);
     assert(xhc_ep_interval(1u, 0u, 10u) == 0u);
     printf("xhci-ep-interval: OK\n");

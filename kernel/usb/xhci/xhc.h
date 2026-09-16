@@ -160,8 +160,11 @@ static inline uint32_t xhc_db_off(size_t ctl) {
     return XHCI_MMIO_READ32(xhc_cap_base(ctl), XHCI_DBOFF) & ~0x3u;
 }
 static inline void xhc_doorbell(size_t ctl, uint8_t slot, uint32_t target) {
-    *(volatile uint32_t *)(xhc_cap_base(ctl) + xhc_db_off(ctl) +
-        (uint32_t)slot * 4u) = target;
+    volatile uint32_t *db = (volatile uint32_t *)(xhc_cap_base(ctl) +
+        xhc_db_off(ctl) + (uint32_t)slot * 4u);
+    *db = target;
+    /* Flush the posted write like Linux's readl after the doorbell writel. */
+    (void)*db;
 }
 
 /* ---- core.c ---- */
