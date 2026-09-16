@@ -999,3 +999,12 @@ Nothing is masked: errors still complete to callers and recovery is explicit
 and bounded. QEMU re-verified (probe PASS, keyboard registered, no
 enumeration failures); the first-CC=4 trigger on silicon still needs the
 B650 serial log with the new per-endpoint snapshot lines.
+
+Follow-up cleanup: the hand-rolled interval loop was replaced by a direct
+port of the Linux xhci-mem.c helpers (same fls/clamp arithmetic, bInterval-0
+edge and HS bulk NAK-rate path pinned by host vectors); doorbell writes are
+flushed with a readback; recovery follows the Linux usb_clear_halt order
+(device CLEAR_FEATURE first so both toggles restart at DATA0, abort
+fail-closed on failure). Single-flight stays deliberately: the fixed
+64-slot ring cannot grow like Linux expandable segments, and with one
+consumer it matches the Linux steady state.
