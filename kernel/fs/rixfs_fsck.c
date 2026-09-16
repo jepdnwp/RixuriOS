@@ -4,6 +4,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define RIXFS_FSCK_MAX_INODES 65536u
+static uint8_t fsck_reachable[(RIXFS_FSCK_MAX_INODES+7u)/8u];
+
 static int bio_read(rix_block_device_t *d,uint64_t sector,void *buffer){
     rix_bio_t b={0}; b.op=RIX_BIO_READ; b.sector=sector; b.count=1; b.buffer=buffer; b.buffer_size=d->sector_size;
     return block_submit(d,&b);
@@ -77,6 +80,44 @@ static int inode_link_count(rixfs_t *fs,uint64_t target,uint32_t *links){
     }
     return 0;
 }
+static int check_reachable(rixfs_t *fs){
+    uint64_t bytes=(fs->super.inode_count+7u)/8u;
+    if(bytes==0||bytes>sizeof(fsck_reachable))return -1;
+    uint8_t *seen=fsck_reachable;
+    for(size_t i=0;i<sizeof(fsck_reachable);i++)seen[i]=0;
+    seen[fs->super.root_inode>>3]|=(uint8_t)(1u<<(fs->super.root_inode&7u));
+    int changed=1;
+    while(changed){
+        changed=0;
+        for(uint64_t dir=1;dir<=fs->super.inode_count;dir++){
+            if(!(seen[dir>>3]&(uint8_t)(1u<<(dir&7u))))continue;
+            rixfs_inode_disk_t in;
+            if(rixfs_read_inode(fs,dir,&in)){
+                return -2;
+            }
+            if((in.mode&RIXFS_IFMT)!=RIXFS_IFDIR)continue;
+            uint64_t off=0; rixfs_dirent_disk_t ent; char name[RIXFS_NAME_MAX+1];
+            for(;;){
+                int r=rixfs_readdir(fs,dir,&off,&ent,name,sizeof(name));
+                if(r==1)break;
+                if(r||ent.inode==0||ent.inode>fs->super.inode_count){
+                    return -3;
+                }
+                uint8_t *slot=&seen[ent.inode>>3];
+                uint8_t bit=(uint8_t)(1u<<(ent.inode&7u));
+                if(!(*slot&bit)){*slot|=bit;changed=1;}
+            }
+        }
+    }
+    for(uint64_t ino=1;ino<=fs->super.inode_count;ino++){
+        rixfs_inode_disk_t in;
+        if(rixfs_read_inode(fs,ino,&in))return -4;
+        if(in.inode&&!((seen[ino>>3]>>(ino&7u))&1u)){
+            return -5;
+        }
+    }
+    return 0;
+}
 
 int rixfs_fsck(rix_block_device_t *device,uint64_t *checked_inodes,uint64_t *referenced_sectors){
     if(checked_inodes)*checked_inodes=0;
@@ -93,6 +134,7 @@ int rixfs_fsck(rix_block_device_t *device,uint64_t *checked_inodes,uint64_t *ref
         checked++;
     }
     rixfs_inode_disk_t root; if(rixfs_read_inode(&fs,fs.super.root_inode,&root)||root.inode!=fs.super.root_inode||(root.mode&RIXFS_IFMT)!=RIXFS_IFDIR){rixfs_unmount(&fs);return -20;}
+    if(check_reachable(&fs)!=0){rixfs_unmount(&fs);return -25;}
     for(uint64_t ino=1;ino<=fs.super.inode_count;ino++){
         rixfs_inode_disk_t in; uint32_t links=0;
         if(rixfs_read_inode(&fs,ino,&in)){rixfs_unmount(&fs);return -21;}
