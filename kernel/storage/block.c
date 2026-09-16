@@ -10,9 +10,9 @@ rix_block_device_t *block_find(const char *name){for(size_t i=0;i<device_count;i
 const rix_block_device_t *block_device_at(size_t index){return index<device_count?devices[index]:NULL;}
 int block_submit(rix_block_device_t *device,rix_bio_t *bio){
  if(!device||!bio||!device->submit)return -1;
- if(bio->op==RIX_BIO_FLUSH){if(bio->count!=0)return -1;bio->state=RIX_BIO_PENDING;bio->error=0;int rc=device->submit(device,bio);if(rc!=0){bio->state=RIX_BIO_ERROR;bio->error=rc;}return rc;}
+ if(bio->op==RIX_BIO_FLUSH){if(bio->count!=0)return -1;bio->state=RIX_BIO_PENDING;bio->error=0;int rc=device->submit(device,bio);if(rc!=0){bio->state=RIX_BIO_ERROR;bio->error=rc;return rc;}if(bio->state!=RIX_BIO_COMPLETE){bio->state=RIX_BIO_ERROR;bio->error=bio->error?bio->error:-1;return -1;}return 0;}
  if(bio->count==0||bio->count>device->max_sectors||!bio->buffer||bio->sector>=device->sector_count||bio->count>device->sector_count-bio->sector)return -1;
  size_t bytes=(size_t)bio->count*(size_t)device->sector_size;if(bytes/bio->count!=(size_t)device->sector_size||bio->buffer_size<bytes)return -1;
- bio->state=RIX_BIO_PENDING;bio->error=0;int rc=device->submit(device,bio);if(rc!=0){bio->state=RIX_BIO_ERROR;bio->error=rc;}return rc;
+ bio->state=RIX_BIO_PENDING;bio->error=0;int rc=device->submit(device,bio);if(rc!=0){bio->state=RIX_BIO_ERROR;bio->error=rc;return rc;}if(bio->state!=RIX_BIO_COMPLETE){bio->state=RIX_BIO_ERROR;bio->error=bio->error?bio->error:-1;return -1;}return 0;
 }
 size_t block_device_count(void){return device_count;}
