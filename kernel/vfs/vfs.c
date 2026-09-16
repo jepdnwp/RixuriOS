@@ -271,6 +271,7 @@ int vfs_set_cloexec(uint64_t pid,int fd,uint32_t flags){VFS_GUARD();
 int vfs_close_cloexec(uint64_t pid){VFS_GUARD();size_t ps;if(pid_slot(pid,&ps))return -1;for(int fd=0;fd<(int)RIX_VFS_FD_MAX;fd++)if(fds[ps][fd].used&&fds[ps][fd].cloexec)(void)vfs_close_locked(pid,fd);return 0;}
 
 int vfs_fd_is_open(uint64_t pid, int fd) {
+    VFS_GUARD();
     size_t ps;
     if (pid_slot(pid, &ps) || fd < 0 || fd >= RIX_VFS_FD_MAX) return 0;
     return fds[ps][fd].used ? 1 : 0;
