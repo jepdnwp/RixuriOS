@@ -36,6 +36,10 @@ void xhc_record_doorbell(size_t c, uint8_t s, uint8_t e, uint32_t v) {
     (void)c; (void)s; (void)e; (void)v;
 }
 uint64_t xhc_dma_linear_pa(const void *b, uint64_t l) { (void)b; (void)l; return 0; }
+int xhci_control_transfer(size_t c, uint8_t s, const rix_usb_setup_packet_t *q,
+                          void *d, uint16_t *a) {
+    (void)c; (void)s; (void)q; (void)d; (void)a; return -1;
+}
 void serial_write(const char *s) { (void)s; }
 void serial_write_hex(uint64_t v) { (void)v; }
 void serial_write_dec(uint64_t v) { (void)v; }

@@ -181,10 +181,10 @@ int xhci_configure_endpoint(size_t controller, uint8_t slot_id,
     return 0;
 }
 
-/* Reset a halted non-control endpoint (Linux endpoint-halt recovery:
- * Reset Endpoint, then Set Transfer Ring Dequeue Pointer past the dead
- * TD). HARD reset (no TSP): toggle restarts at DATA0, matching the
- * device side after CLEAR_FEATURE(ENDPOINT_HALT). Skips the dead TD by
+/* Reset a halted non-control endpoint (Linux usb_clear_halt discipline:
+ * CLEAR_FEATURE(ENDPOINT_HALT) on the device, then host Reset Endpoint,
+ * then Set Transfer Ring Dequeue Pointer past the dead TD). HARD reset
+ * (no TSP): both toggles restart at DATA0 together. Skips the dead TD by
  * restarting at the current enqueue/cycle; the failed TD already
  * completed to its caller with an error and is never replayed. */
 int xhci_reset_endpoint(size_t controller, uint8_t slot_id,
@@ -209,6 +209,20 @@ int xhci_reset_endpoint(size_t controller, uint8_t slot_id,
         return -2;
     ep_rt = &xhc_runtimes[controller].slots[slot_id].endpoints[ep_id];
     if (!ep_rt->ring_phys || ep_rt->type == 0u) return -2;
+    /* Linux usb_clear_halt order: clear the device-side halt first so both
+     * toggles restart at DATA0 together. A failed clear aborts recovery
+     * (fail closed) instead of resyncing only the host side. */
+    {
+        rix_usb_setup_packet_t clear;
+        clear.request_type = (uint8_t)(USB_DIR_OUT | USB_TYPE_STANDARD |
+                                       USB_RECIP_ENDPOINT);
+        clear.request = USB_REQ_CLEAR_FEATURE;
+        clear.value = USB_ENDPOINT_HALT;
+        clear.index = endpoint_address;
+        clear.length = 0;
+        rc = xhci_control_transfer(controller, slot_id, &clear, 0, 0);
+        if (rc != 0) return rc;
+    }
     rc = xhc_submit_command(controller, 0,
                             XHCI_TRB_TYPE(XHCI_TRB_RESET_ENDPOINT) |
                                 ((uint32_t)ep_id << XHCI_TRB_EP_SHIFT) |
@@ -266,10 +280,13 @@ int xhc_endpoint_transfer(size_t controller, uint8_t slot_id,
     if (!ep_rt->ring_phys || ep_rt->type != ep_type) return -2;
     if (ep_rt->in_flight) {
         /* A previous TD is still owned by the controller (e.g. a NAK-
-         * waiting interrupt-IN that outlived its wait). Never orphan
-         * another TD on top of it: keep waiting on the live TD instead
-         * of piling up zombie TDs that wrap the ring under the live
-         * dequeue. Returns -100 while still pending. */
+         * waiting interrupt-IN that outlived its wait). Linux keeps such
+         * TDs valid on expandable ring segments; this fixed 64-slot ring
+         * cannot grow, so orphaning another TD on top would eventually
+         * wrap the ring under the live dequeue. Keep waiting on the live
+         * TD instead: with a single consumer this is the same steady
+         * state (Linux interrupt URBs never time out either). Returns
+         * -100 while still pending. */
         int wrc = xhc_wait_transfer(controller, rt, ep_rt->in_flight_first,
                                     ep_rt->in_flight_last, slot_id, ep_id,
                                     length, actual_length);
