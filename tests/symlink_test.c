@@ -150,6 +150,10 @@ int main(void) {
         }
         assert(n == 10);
     }
+    uint64_t bitmap_sector = fs.super.bitmap_sector;
+    uint64_t bitmap_sectors = fs.super.bitmap_sectors;
+    uint64_t data_start = fs.super.data_start_sector;
+    uint64_t total_sectors = fs.super.total_sectors;
     rixfs_unmount(&fs);
 
     /* Packed layout must pass fsck. */
@@ -157,6 +161,26 @@ int main(void) {
         uint64_t checked = 0, refs = 0;
         assert(rixfs_fsck(&fake_disk_dev, &checked, &refs) == 0);
         assert(checked > 0 && refs > 0);
+
+        /* A bitmap-only allocation is an orphaned data sector. */
+        uint64_t orphan = 0;
+        for (uint64_t sector = data_start; sector < total_sectors; ++sector) {
+            uint64_t rel = sector / 8u;
+            uint64_t bsec = bitmap_sector + rel / DISK_SECTOR_SIZE;
+            uint8_t bit = (uint8_t)(1u << (sector % 8u));
+            if (bsec < bitmap_sector + bitmap_sectors &&
+                !(disk[bsec][rel % DISK_SECTOR_SIZE] & bit)) {
+                disk[bsec][rel % DISK_SECTOR_SIZE] |= bit;
+                orphan = sector;
+                break;
+            }
+        }
+        assert(orphan != 0);
+        assert(rixfs_fsck(&fake_disk_dev, &checked, &refs) != 0);
+        uint64_t rel = orphan / 8u;
+        uint64_t bsec = bitmap_sector + rel / DISK_SECTOR_SIZE;
+        disk[bsec][rel % DISK_SECTOR_SIZE] &= (uint8_t)~(1u << (orphan % 8u));
+        assert(rixfs_fsck(&fake_disk_dev, &checked, &refs) == 0);
     }
     return 0;
 }

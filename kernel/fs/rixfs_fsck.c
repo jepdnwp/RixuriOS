@@ -118,6 +118,17 @@ static int check_reachable(rixfs_t *fs){
     }
     return 0;
 }
+static int count_allocated_data_sectors(rixfs_t *fs,uint64_t *count){
+    if(!fs||!count||fs->super.data_start_sector>=fs->super.total_sectors)return -1;
+    uint64_t total=0;
+    for(uint64_t sector=fs->super.data_start_sector;sector<fs->super.total_sectors;sector++){
+        int used=0;
+        if(bitmap_test(fs,sector,&used)!=0)return -2;
+        if(used){if(total==UINT64_MAX)return -3;total++;}
+    }
+    *count=total;
+    return 0;
+}
 
 int rixfs_fsck(rix_block_device_t *device,uint64_t *checked_inodes,uint64_t *referenced_sectors){
     if(checked_inodes)*checked_inodes=0;
@@ -135,6 +146,8 @@ int rixfs_fsck(rix_block_device_t *device,uint64_t *checked_inodes,uint64_t *ref
     }
     rixfs_inode_disk_t root; if(rixfs_read_inode(&fs,fs.super.root_inode,&root)||root.inode!=fs.super.root_inode||(root.mode&RIXFS_IFMT)!=RIXFS_IFDIR){rixfs_unmount(&fs);return -20;}
     if(check_reachable(&fs)!=0){rixfs_unmount(&fs);return -25;}
+    uint64_t allocated=0;
+    if(count_allocated_data_sectors(&fs,&allocated)!=0||allocated!=refs){rixfs_unmount(&fs);return -26;}
     for(uint64_t ino=1;ino<=fs.super.inode_count;ino++){
         rixfs_inode_disk_t in; uint32_t links=0;
         if(rixfs_read_inode(&fs,ino,&in)){rixfs_unmount(&fs);return -21;}
