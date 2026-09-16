@@ -79,5 +79,20 @@ int main(void) {
         assert(pmm_free_pages() == fb);
     }
     assert(lockdep_warnings == 0u);
+
+    /* Corrupt firmware descriptors must not wrap their region end and
+     * accidentally report a match. */
+    memset(memory_map, 0, sizeof(memory_map));
+    put32(memory_map, 0u, 7u);
+    put64(memory_map, 8u, 0x100000u);
+    put64(memory_map, 24u, UINT64_MAX);
+    pmm_init(memory_map, sizeof(memory_map), sizeof(memory_map), 0u, 0u, 0u, 0u);
+    uint64_t region_base = 0u;
+    uint64_t region_end = 0u;
+    uint32_t region_type = 0u;
+    int region_usable = 0;
+    assert(pmm_region_info(0x100000u, &region_base, &region_end,
+                           &region_type, &region_usable) == 1);
+
     return 0;
 }

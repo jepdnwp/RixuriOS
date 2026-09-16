@@ -192,7 +192,11 @@ int pmm_region_info(uint64_t physical_address,uint64_t *out_base,uint64_t *out_e
         __builtin_memcpy(&pages,d+24,sizeof(pages));
         if(pages&&base<PMM_MAX_PHYS&&physical_address>=base){
             uint64_t span=pages*RIXURI_PAGE_SIZE;
-            if(span/RIXURI_PAGE_SIZE==pages&&physical_address<base+span){
+            /* Reject malformed firmware descriptors whose page count or
+             * base+span wraps.  Region queries are diagnostics, but they
+             * must never turn corrupt firmware data into a false match. */
+            if(span/RIXURI_PAGE_SIZE==pages && base<=UINT64_MAX-span &&
+               physical_address<base+span){
                 if(out_base){*out_base=base;}if(out_end){*out_end=base+span;}
                 if(out_type){*out_type=type;}if(out_usable){*out_usable=usable_type(type);}
                 return 0;
