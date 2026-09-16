@@ -501,9 +501,22 @@ int scheduler_wait_prepare(rix_waitqueue_t *wq, rix_wait_handle_t *out){
     if(!wq||!out)return -1;
     uint32_t me=sched_cpu();
     if(me>=SMP_MAX_CPUS)return -1;
+    uint64_t irq;
+    rix_spin_lock_irqsave(&sched_lock,&irq);
     rix_task_t *t=&tasks[cpu_current[me]];
-    if(rix_waitqueue_prepare(wq,(uint64_t)t->id,out)!=0)return -1;
+    /* A task may have only one live waiter binding.  Refuse a second
+     * prepare instead of overwriting the first handle and leaking its slot;
+     * this also makes repeated blocking retries fail closed. */
+    if(t->wait_wq){
+        rix_spin_unlock_irqrestore(&sched_lock,irq);
+        return -1;
+    }
+    if(rix_waitqueue_prepare(wq,(uint64_t)t->id,out)!=0){
+        rix_spin_unlock_irqrestore(&sched_lock,irq);
+        return -1;
+    }
     t->wait_wq=wq;t->wait_handle=*out;
+    rix_spin_unlock_irqrestore(&sched_lock,irq);
     return 0;
 }
 void scheduler_block_current(void){
