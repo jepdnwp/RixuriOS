@@ -78,6 +78,7 @@
 #define XHCI_TRB_EP_SHIFT 16u
 #define XHCI_TRB_SLOT_SHIFT 24u
 #define XHCI_TRB_TC (1u << 1)
+#define XHCI_TRB_TSP (1u << 9)
 #define XHCI_TRB_ENT (1u << 1)
 #define XHCI_TRB_CH (1u << 4)
 #define XHCI_TRB_IOC (1u << 5)
@@ -2424,6 +2425,7 @@ static int xhci_reset_ep0_for_retry(size_t controller, uint8_t slot_id) {
 #endif
     int rc = submit_command(controller, 0,
                             (XHCI_TRB_RESET_ENDPOINT << XHCI_TRB_TYPE_SHIFT) |
+                            XHCI_TRB_TSP |
                             ((uint32_t)1u << XHCI_TRB_EP_SHIFT) |
                             ((uint32_t)slot_id << XHCI_TRB_SLOT_SHIFT), NULL);
 #if XHCI_EP0_TRACE

@@ -2313,3 +2313,9 @@ make test CROSS=x86_64-linux-gnu- HOST_CC=gcc
 ```
 
 This fixes the identified timing race in software, but post-fix physical enumeration and keyboard input are not claimed until a new target log shows successful Address Device, descriptor/configuration completion, and interrupt-IN traffic.
+
+## 2026-09-16 — xHCI EP0 retry transfer-state preservation
+
+The follow-up physical trace still reached `USB Transaction Error` and exhausted all three EP0 retries. The trace showed that retry recovery issued `RESET ENDPOINT` while the implementation assumed the failed transfer-ring dequeue state would be preserved, but the command did not set the xHCI Transfer State Preserve (TSP) bit. EP0 retry recovery now sets TSP=1, matching the transaction-error soft-reset path: the endpoint is reset while its transfer-ring/dequeue state is retained, then the failed control TD is re-emitted at the same ring position.
+
+This directly fixes the mismatch between the recovery comment and the command TRB. Host compilation and tests must pass before physical requalification; the supplied photograph remains evidence of the pre-fix failure path, not post-fix success.
