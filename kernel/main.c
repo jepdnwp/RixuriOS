@@ -72,9 +72,15 @@ static int xhci_enumerate_and_configure(size_t controller, const rix_xhci_device
  int rc=xhci_enumerate_device(controller,device->slot_id,&usb_device,xhci_configuration,
                               sizeof(xhci_configuration),&configuration,xhci_interfaces,
                               RIX_USB_MAX_INTERFACES,xhci_endpoints,RIX_USB_MAX_ENDPOINTS,
-                              &interface_count,&endpoint_count);
- if(rc!=0)return rc;
- for(size_t i=0;i<endpoint_count;i++){
+                               &interface_count,&endpoint_count);
+  if(rc!=0)return rc;
+  /* USB 2.0 ch9: the device must receive SET_CONFIGURATION before its
+   * non-EP0 endpoints are usable. Program the HC endpoints only after
+   * the device itself entered the Configured state (Linux order). */
+  rc=xhci_set_configuration(controller,device->slot_id,configuration.configuration_value);
+  if(rc!=0)return -9;
+  xhci_usb_state_transition(controller,device->slot_id,XHCI_USB_CONFIGURED,"set-configuration-ok");
+  for(size_t i=0;i<endpoint_count;i++){
   const rix_usb_endpoint_info_t *endpoint=&xhci_endpoints[i];
   uint8_t transfer=endpoint->attributes&RIX_USB_EP_TRANSFER_MASK;
   if(transfer==RIX_USB_EP_CONTROL||transfer==RIX_USB_EP_ISOCHRONOUS)continue;
@@ -124,7 +130,7 @@ static int xhci_enumerate_and_configure(size_t controller, const rix_xhci_device
      }
      serial_write("xHCI: keyboard registered slot=");serial_write_dec(device->slot_id);
      serial_write(" port=");serial_write_dec(device->port);
-     serial_write(" ep=0x");serial_write_hex(known_keyboards[k].endpoint);
+     serial_write(" ep=");serial_write_hex(known_keyboards[k].endpoint);
      serial_write(" report-id=");serial_write_dec(report_info.report_id);serial_write("\r\n");
      break;
     }
@@ -161,11 +167,12 @@ static void xhci_hotplug_worker(void *arg){
     serial_write(" slot=");serial_write_dec(device.slot_id);serial_write("\r\n");
     if(connected){
      int enum_rc=xhci_enumerate_and_configure(controller,&device);
-     if(enum_rc!=0){
-      serial_write("xHCI: enumeration/configuration failed=");
-     klog_write_dec((uint64_t)(-enum_rc));klog_write("\r\n");
-     (void)xhci_device_detach(controller,device.slot_id);
-    }
+      if(enum_rc!=0){
+       serial_write("xHCI: enumeration/configuration failed=");
+      klog_write_dec((uint64_t)(-enum_rc));klog_write("\r\n");
+      xhci_park_port(controller,device.port);
+      (void)xhci_device_detach(controller,device.slot_id);
+     }
    }
    } else if(rc<0){
    int log_it=1;
