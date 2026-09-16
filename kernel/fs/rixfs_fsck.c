@@ -61,6 +61,23 @@ static int check_inode(rixfs_t *fs,uint64_t ino,uint64_t *referenced){
     return 0;
 }
 
+static int inode_referenced(rixfs_t *fs,uint64_t target,int *found){
+    *found=0;
+    for(uint64_t dir=1;dir<=fs->super.inode_count;dir++){
+        rixfs_inode_disk_t in;
+        if(rixfs_read_inode(fs,dir,&in))return -1;
+        if(!in.inode||(in.mode&RIXFS_IFMT)!=RIXFS_IFDIR)continue;
+        uint64_t off=0; rixfs_dirent_disk_t ent; char name[RIXFS_NAME_MAX+1];
+        for(;;){
+            int r=rixfs_readdir(fs,dir,&off,&ent,name,sizeof(name));
+            if(r==1)break;
+            if(r)return -2;
+            if(ent.inode==target){*found=1;return 0;}
+        }
+    }
+    return 0;
+}
+
 int rixfs_fsck(rix_block_device_t *device,uint64_t *checked_inodes,uint64_t *referenced_sectors){
     if(checked_inodes)*checked_inodes=0;
     if(referenced_sectors)*referenced_sectors=0;
@@ -76,5 +93,12 @@ int rixfs_fsck(rix_block_device_t *device,uint64_t *checked_inodes,uint64_t *ref
         checked++;
     }
     rixfs_inode_disk_t root; if(rixfs_read_inode(&fs,fs.super.root_inode,&root)||root.inode!=fs.super.root_inode||(root.mode&RIXFS_IFMT)!=RIXFS_IFDIR){rixfs_unmount(&fs);return -20;}
+    for(uint64_t ino=1;ino<=fs.super.inode_count;ino++){
+        rixfs_inode_disk_t in; int found=0;
+        if(rixfs_read_inode(&fs,ino,&in)){rixfs_unmount(&fs);return -21;}
+        if(!in.inode||ino==fs.super.root_inode)continue;
+        if(inode_referenced(&fs,ino,&found)!=0){rixfs_unmount(&fs);return -22;}
+        if(!found){rixfs_unmount(&fs);return -23;}
+    }
     rixfs_unmount(&fs); if(checked_inodes)*checked_inodes=checked; if(referenced_sectors)*referenced_sectors=refs; return 0;
 }
