@@ -57,12 +57,12 @@ static int check_inode(rixfs_t *fs,uint64_t ino,uint64_t *referenced){
     }
     uint64_t needed=(in.size+(fs->device->sector_size-1ULL))/(uint64_t)fs->device->sector_size;
     if(type==RIXFS_IFREG&&needed>total)return -6;
-    if(type==RIXFS_IFDIR){uint64_t off=0;rixfs_dirent_disk_t ent;char name[RIXFS_NAME_MAX+1];while(1){int r=rixfs_readdir(fs,ino,&off,&ent,name,sizeof(name));if(r==1)break;if(r)return -7;if(ent.inode==0||ent.inode>fs->super.inode_count)return -8;}}
+    if(type==RIXFS_IFDIR){uint64_t off=0;rixfs_dirent_disk_t ent;char name[RIXFS_NAME_MAX+1];while(1){int r=rixfs_readdir(fs,ino,&off,&ent,name,sizeof(name));if(r==1)break;if(r)return -7;if(ent.inode==0||ent.inode>fs->super.inode_count)return -8;rixfs_inode_disk_t child;if(rixfs_read_inode(fs,ent.inode,&child)||!child.inode)return -8;uint32_t child_type=child.mode&RIXFS_IFMT;uint8_t expected=child_type==RIXFS_IFDIR?RIXFS_DIR_TYPE_DIR:(child_type==RIXFS_IFLNK?RIXFS_DIR_TYPE_SYMLINK:RIXFS_DIR_TYPE_FILE);if(ent.type!=expected)return -8;}}
     return 0;
 }
 
-static int inode_referenced(rixfs_t *fs,uint64_t target,int *found){
-    *found=0;
+static int inode_link_count(rixfs_t *fs,uint64_t target,uint32_t *links){
+    *links=0;
     for(uint64_t dir=1;dir<=fs->super.inode_count;dir++){
         rixfs_inode_disk_t in;
         if(rixfs_read_inode(fs,dir,&in))return -1;
@@ -72,7 +72,7 @@ static int inode_referenced(rixfs_t *fs,uint64_t target,int *found){
             int r=rixfs_readdir(fs,dir,&off,&ent,name,sizeof(name));
             if(r==1)break;
             if(r)return -2;
-            if(ent.inode==target){*found=1;return 0;}
+            if(ent.inode==target){if(*links==UINT32_MAX)return -3;(*links)++;}
         }
     }
     return 0;
@@ -94,11 +94,12 @@ int rixfs_fsck(rix_block_device_t *device,uint64_t *checked_inodes,uint64_t *ref
     }
     rixfs_inode_disk_t root; if(rixfs_read_inode(&fs,fs.super.root_inode,&root)||root.inode!=fs.super.root_inode||(root.mode&RIXFS_IFMT)!=RIXFS_IFDIR){rixfs_unmount(&fs);return -20;}
     for(uint64_t ino=1;ino<=fs.super.inode_count;ino++){
-        rixfs_inode_disk_t in; int found=0;
+        rixfs_inode_disk_t in; uint32_t links=0;
         if(rixfs_read_inode(&fs,ino,&in)){rixfs_unmount(&fs);return -21;}
         if(!in.inode||ino==fs.super.root_inode)continue;
-        if(inode_referenced(&fs,ino,&found)!=0){rixfs_unmount(&fs);return -22;}
-        if(!found){rixfs_unmount(&fs);return -23;}
+        if(inode_link_count(&fs,ino,&links)!=0){rixfs_unmount(&fs);return -22;}
+        if(!links){rixfs_unmount(&fs);return -23;}
+        if((in.mode&RIXFS_IFMT)!=RIXFS_IFDIR&&in.links!=links){rixfs_unmount(&fs);return -24;}
     }
     rixfs_unmount(&fs); if(checked_inodes)*checked_inodes=checked; if(referenced_sectors)*referenced_sectors=refs; return 0;
 }
