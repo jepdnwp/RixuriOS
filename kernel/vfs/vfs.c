@@ -240,7 +240,25 @@ int vfs_dup_to(uint64_t pid, int old_fd, int new_fd) {VFS_GUARD();
     vfs_fd_t copy;
     if (retain_fd(&fds[ps][old_fd], &copy) != 0) return -2;
     copy.cloexec=0;
-    if (fds[ps][new_fd].used && vfs_close_locked(pid, new_fd) != 0) return -3;
+    if (fds[ps][new_fd].used && vfs_close_locked(pid, new_fd) != 0) {
+        /* retain_fd already acquired a pipe/object reference.  The target
+         * descriptor is still live when close fails, so undo only that
+         * temporary reference and leave the target untouched. */
+        if (copy.type == VFS_FD_PIPE_READ || copy.type == VFS_FD_PIPE_WRITE) {
+            for (size_t i = 0; i < VFS_PIPE_MAX; ++i) {
+                if (pipe_slots[i].used && &pipe_slots[i].pipe == copy.pipe) {
+                    int rc = copy.pipe_write ? pipe_close_write(copy.pipe) :
+                                               pipe_close_read(copy.pipe);
+                    if (rc == 0) {
+                        if (pipe_slots[i].refs) pipe_slots[i].refs--;
+                        if (!pipe_slots[i].refs) pipe_slots[i].used=0;
+                    }
+                    break;
+                }
+            }
+        }
+        return -3;
+    }
     fds[ps][new_fd] = copy;
     return 0;
 }
