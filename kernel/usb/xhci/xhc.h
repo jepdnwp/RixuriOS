@@ -89,6 +89,13 @@ typedef struct {
     uint32_t ep0_seq;
     uint64_t addr_done_ns;
     uint8_t usb_state;
+    /* Hub topology: parent hub slot for hub-attached devices (0 when the
+     * device sits on a root port). Only the hotplug/attach paths read it. */
+    uint8_t tt_parent_slot;
+    /* Root hub port number for the whole chain (xHCI RH Port field).
+     * Equals port for root-attached devices; resolved through the parent
+     * chain for hub children. Never a hub-relative number. */
+    uint8_t root_port;
     xhci_endpoint_runtime_t endpoints[32];
 } xhci_slot_runtime_t;
 
@@ -203,7 +210,8 @@ uint16_t xhc_initial_ep0_mps(uint8_t speed);
 int xhc_allocate_slot_context(size_t ctl, xhci_slot_runtime_t *slot);
 void xhc_release_slot_context(size_t ctl, uint8_t slot_id);
 int xhc_prepare_address_context(size_t ctl, uint8_t slot_id, uint8_t port,
-                                uint8_t speed);
+                                uint8_t speed,
+                                const rix_xhci_tt_info_t *tt);
 int xhc_reset_ep0_for_retry(size_t ctl, uint8_t slot_id);
 int xhc_set_ep0_dequeue_for_retry(size_t ctl, uint8_t slot_id,
                                   uint16_t enqueue, uint8_t cycle);

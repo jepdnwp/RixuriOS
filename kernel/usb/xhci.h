@@ -34,7 +34,19 @@ typedef struct {
 int xhci_port_protocol(size_t controller, uint8_t port);
 
 typedef struct { uint8_t connected, enabled, speed, reset_complete; } rix_xhci_port_status_t;
-typedef struct { uint8_t slot_id, port, speed, state; } rix_xhci_device_t;
+typedef struct {
+    uint8_t slot_id;
+    uint8_t port;
+    uint8_t speed;
+    uint8_t state;
+    /* Hub-attached devices: parent_hub_slot is the hub's slot (0 when the
+     * device sits on a root port and port is a root port number);
+     * otherwise port is hub-relative. route/level follow the USB 2.0
+     * route-string rules (route 0 at the root, level 1 per tier). */
+    uint8_t parent_hub_slot;
+    uint32_t route;
+    uint8_t level;
+} rix_xhci_device_t;
 typedef struct { uint8_t request_type, request; uint16_t value, index, length; } rix_usb_setup_packet_t;
 typedef struct {
     uint8_t endpoint_address;
@@ -66,7 +78,20 @@ int xhci_pending_port_pop(size_t controller, uint8_t *port, uint8_t *connected);
 int xhci_service_hotplug(size_t controller, rix_xhci_device_t *device, uint8_t *connected);
 int xhci_enable_slot(size_t controller, uint8_t *out_slot);
 int xhci_disable_slot(size_t controller, uint8_t slot);
-int xhci_address_device(size_t controller, uint8_t slot, uint8_t port, uint8_t speed);
+/* Transaction-translator inputs for hub-attached devices (xHCI 6.2.1.1
+ * TT fields + 20-bit route string). think_code is the 2-bit TT think
+ * time ((ns / 666) - 1). Pass NULL for directly attached devices; pass
+ * the struct for EVERY hub child (the route string is required even
+ * behind full-speed hubs without any TT — only the slot_ctx[2] split
+ * fields additionally gate on a high-speed parent). */
+typedef struct {
+    uint32_t route;
+    uint8_t hub_slot;
+    uint8_t hub_port;
+    uint8_t think_code;
+} rix_xhci_tt_info_t;
+int xhci_address_device(size_t controller, uint8_t slot, uint8_t port,
+                        uint8_t speed, const rix_xhci_tt_info_t *tt);
 int xhci_device_attach(size_t controller, uint8_t port, rix_xhci_device_t *out);
 int xhci_device_detach(size_t controller, uint8_t slot);
 void xhci_park_port(size_t controller, uint8_t port);

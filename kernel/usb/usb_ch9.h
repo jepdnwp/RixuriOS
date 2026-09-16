@@ -105,3 +105,49 @@
 
 /* Feature selectors. */
 #define USB_ENDPOINT_HALT 0u
+
+/* USB interface class codes (assigned numbers). */
+#define USB_CLASS_HUB 9u
+
+/* USB interface class codes (assigned numbers). */
+#define USB_CLASS_HUB 9u
+
+/* USB2 hub (uapi ch11.h): descriptor, requests and port features. */
+#define USB_DT_HUB 0x29u
+#define USB_DT_HUB_NONVAR_SIZE 7u
+#define USB_RT_HUB (USB_TYPE_CLASS | USB_RECIP_DEVICE)
+#define USB_RT_PORT (USB_TYPE_CLASS | USB_RECIP_OTHER)
+#define USB_PORT_FEAT_CONNECTION 0u
+#define USB_PORT_FEAT_ENABLE 1u
+#define USB_PORT_FEAT_SUSPEND 2u
+#define USB_PORT_FEAT_OVER_CURRENT 3u
+#define USB_PORT_FEAT_RESET 4u
+#define USB_PORT_FEAT_POWER 8u
+#define USB_PORT_FEAT_LOWSPEED 9u
+#define USB_PORT_FEAT_C_CONNECTION 16u
+#define USB_PORT_FEAT_C_ENABLE 17u
+#define USB_PORT_FEAT_C_SUSPEND 18u
+#define USB_PORT_FEAT_C_OVER_CURRENT 19u
+#define USB_PORT_FEAT_C_RESET 20u
+/* wPortStatus bits (USB 2.0 Table 11-21). */
+#define USB_PORT_STAT_CONNECTION 0x0001u
+#define USB_PORT_STAT_ENABLE 0x0002u
+#define USB_PORT_STAT_SUSPEND 0x0004u
+#define USB_PORT_STAT_OVERCURRENT 0x0008u
+#define USB_PORT_STAT_RESET 0x0010u
+#define USB_PORT_STAT_POWER 0x0100u
+#define USB_PORT_STAT_LOW_SPEED 0x0200u
+#define USB_PORT_STAT_HIGH_SPEED 0x0400u
+/* wPortChange bits (USB 2.0 Table 11-22). */
+#define USB_PORT_STAT_C_CONNECTION 0x0001u
+#define USB_PORT_STAT_C_ENABLE 0x0002u
+#define USB_PORT_STAT_C_RESET 0x0010u
+/* Hub characteristics: TT think time is bits 6:5 (units of 666ns >> 5). */
+#define USB_HUB_CHAR_TTTT_SHIFT 5u
+#define USB_HUB_CHAR_TTTT_MASK 0x0060u
+/* Hub reset/recovery pacing (Linux hub.c, milliseconds). */
+#define USB_HUB_RESET_TIMEOUT_MS 800u
+#define USB_HUB_SHORT_RESET_MS 10u
+#define USB_HUB_LONG_RESET_MS 200u
+#define USB_HUB_RECOVERY_MS 50u
+#define USB_HUB_POWER_MIN_MS 100u

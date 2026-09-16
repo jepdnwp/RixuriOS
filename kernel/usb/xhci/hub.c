@@ -226,10 +226,14 @@ int xhci_device_attach(size_t controller, uint8_t port,
     out->port = 0;
     out->speed = 0;
     out->state = XHCI_DEVICE_DETACHED;
+    out->parent_hub_slot = 0;
+    out->route = 0;
+    out->level = 1;
     if (xhci_port_status(controller, port, &status) != 0 || !status.connected)
         return -2;
     for (uint16_t s = 1; s <= xhc_controllers[controller].max_slots; ++s) {
         if (xhc_runtimes[controller].slots[s].allocated &&
+            xhc_runtimes[controller].slots[s].tt_parent_slot == 0u &&
             xhc_runtimes[controller].slots[s].port == port)
             return -3;
     }
@@ -242,7 +246,7 @@ int xhci_device_attach(size_t controller, uint8_t port,
     if (xhci_enable_slot(controller, &slot_id) != 0) return -6;
     xhci_usb_state_transition(controller, slot_id, XHCI_USB_DEFAULT,
                               "enable-slot-ok");
-    rc = xhci_address_device(controller, slot_id, port, status.speed);
+    rc = xhci_address_device(controller, slot_id, port, status.speed, 0);
     if (rc == 0) {
         out->slot_id = slot_id;
         out->port = port;
@@ -258,7 +262,7 @@ int xhci_device_attach(size_t controller, uint8_t port,
             !status.connected || status.speed == 0u)
             return -5;
         if (xhci_enable_slot(controller, &slot_id) != 0) return -6;
-        rc = xhci_address_device(controller, slot_id, port, status.speed);
+        rc = xhci_address_device(controller, slot_id, port, status.speed, 0);
         if (rc == 0) {
             out->slot_id = slot_id;
             out->port = port;
@@ -306,6 +310,9 @@ int xhci_service_hotplug(size_t controller, rix_xhci_device_t *device,
     device->port = 0;
     device->speed = 0;
     device->state = XHCI_DEVICE_DETACHED;
+    device->parent_hub_slot = 0;
+    device->route = 0;
+    device->level = 1;
     *connected = 0;
     profile = xhc_controller_profile(c);
     rc = xhci_poll_port_status_change(controller, &port, &is_connected);
@@ -341,7 +348,10 @@ int xhci_service_hotplug(size_t controller, rix_xhci_device_t *device,
                 !ps.connected)
                 continue;
             for (uint16_t s = 1; s <= c->max_slots; ++s) {
+                /* Hub children carry hub-relative ports; only
+                 * root-attached slots occupy root ports. */
                 if (xhc_runtimes[controller].slots[s].allocated &&
+                    xhc_runtimes[controller].slots[s].tt_parent_slot == 0u &&
                     xhc_runtimes[controller].slots[s].port == candidate) {
                     occupied = 1;
                     break;
@@ -390,11 +400,15 @@ int xhci_service_hotplug(size_t controller, rix_xhci_device_t *device,
             /* Already attached: refill the existing slot identity. */
             for (uint16_t s = 1; s <= c->max_slots; ++s) {
                 xhci_slot_runtime_t *slot = &xhc_runtimes[controller].slots[s];
-                if (slot->allocated && slot->port == port) {
+                if (slot->allocated && slot->tt_parent_slot == 0u &&
+                    slot->port == port) {
                     device->slot_id = (uint8_t)s;
                     device->port = port;
                     device->speed = slot->speed;
                     device->state = XHCI_DEVICE_ADDRESSED;
+                    device->parent_hub_slot = 0;
+                    device->route = 0;
+                    device->level = 1;
                     return 0;
                 }
             }
@@ -421,18 +435,23 @@ int xhci_service_hotplug(size_t controller, rix_xhci_device_t *device,
         }
         return 1;
     }
-    /* Disconnect: find the slot bound to this port and disable it. */
+    /* Disconnect: find the root-attached slot bound to this port and
+     * disable it. Hub children carry hub-relative ports and are owned
+     * by the hub sweep, never by root port numbers. */
     for (uint16_t s = 1; s <= c->max_slots; ++s) {
         if (xhc_runtimes[controller].slots[s].allocated &&
+            xhc_runtimes[controller].slots[s].tt_parent_slot == 0u &&
             xhc_runtimes[controller].slots[s].port == port) {
             int detach_rc = xhci_device_detach(controller, (uint8_t)s);
             if (detach_rc == 0) {
                 if (controller < XHCI_MAX)
                     xhc_port_attach_failed[controller][port] = 0;
+                device->slot_id = (uint8_t)s;
                 device->port = port;
                 device->state = XHCI_DEVICE_DETACHED;
                 return 1;
             }
+            device->slot_id = (uint8_t)s;
             device->port = port;
             device->state = XHCI_DEVICE_ERROR;
             return detach_rc;

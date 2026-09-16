@@ -24,6 +24,7 @@
 #include "storage/nvme.h"
 #include "usb/xhci.h"
 #include "usb/hid.h"
+#include "usb/hub.h"
 #include "tty/tty.h"
 #include "time/rtc.h"
 #include "time/time.h"
@@ -136,12 +137,56 @@ static int xhci_enumerate_and_configure(size_t controller, const rix_xhci_device
     }
    }
   }
-  serial_write("xHCI: HID interface=");serial_write_dec(interface->number);
-  serial_write(" keyboard=");serial_write_dec(report_info.has_keyboard);
-  serial_write(" mouse=");serial_write_dec(report_info.has_mouse);
-  serial_write(" report-id=");serial_write_dec(report_info.report_id);serial_write("\r\n");
- }
- serial_write("xHCI: enumerated vid=");serial_write_hex(usb_device.vendor_id);
+   serial_write("xHCI: HID interface=");serial_write_dec(interface->number);
+   serial_write(" keyboard=");serial_write_dec(report_info.has_keyboard);
+   serial_write(" mouse=");serial_write_dec(report_info.has_mouse);
+   serial_write(" report-id=");serial_write_dec(report_info.report_id);serial_write("\r\n");
+  }
+  /* USB hub class: bring up the first hub interface inline (external
+   * tiers at device level <= 2; deeper hubs are logged and skipped).
+   * Child enumeration reuses the static buffers above; the parent's
+   * interface data is fully consumed by this point and the final log
+   * below uses locals only, so clobbering is safe. */
+  for(size_t hi=0;hi<interface_count;hi++){
+   const rix_usb_interface_info_t *hiface=&xhci_interfaces[hi];
+   rix_usb_hub_descriptor_t hub_info;uint16_t actual_hub=0;uint8_t nports;
+   usb_hub_parent_t parent;rix_xhci_device_t child;
+   if(hiface->class_code!=USB_CLASS_HUB)continue;
+   if(device->level>2u){serial_write("xHCI: nested hub ignored\r\n");break;}
+   if(usb_hub_get_descriptor(controller,device->slot_id,
+                             xhci_hid_report,16u,&actual_hub)!=0||actual_hub<9u){
+    serial_write("xHCI: hub descriptor failed\r\n");break;
+   }
+   if(usb_hub_parse_descriptor(xhci_hid_report,actual_hub,&hub_info)!=0)break;
+   nports=hub_info.port_count>USB_HUB_MAX_PORTS?USB_HUB_MAX_PORTS:hub_info.port_count;
+   usb_hub_register(controller,device->slot_id,device->route,device->level,
+                    device->speed,usb_hub_think_code(hub_info.characteristics),nports);
+   serial_write("xHCI: hub slot=");serial_write_dec(device->slot_id);
+   serial_write(" ports=");serial_write_dec(nports);serial_write("\r\n");
+   usb_hub_power_all(controller,device->slot_id,nports,hub_info.power_good_2ms);
+   parent.parent_slot=device->slot_id;parent.parent_route=device->route;
+   parent.parent_level=device->level;
+   parent.think_code=usb_hub_think_code(hub_info.characteristics);
+   for(uint8_t hp=1;hp<=nports;hp++){
+    uint16_t pst=0,pch=0;int child_rc;
+    if(usb_hub_port_status(controller,device->slot_id,hp,&pst,&pch)!=0)continue;
+    if(!(pst&USB_PORT_STAT_CONNECTION))continue;
+    child_rc=usb_hub_attach_child(controller,&parent,hp,&child);
+    if(child_rc!=0){
+     serial_write("xHCI: hub child attach failed port=");serial_write_dec(hp);
+     serial_write(" rc=");serial_write_dec((uint64_t)(child_rc<0?-child_rc:child_rc));
+     serial_write("\r\n");continue;
+    }
+    child_rc=xhci_enumerate_and_configure(controller,&child);
+    if(child_rc!=0){
+     serial_write("xHCI: hub child enum failed slot=");serial_write_dec(child.slot_id);
+     serial_write("\r\n");(void)xhci_device_detach(controller,child.slot_id);continue;
+    }
+    usb_hub_register_child(controller,device->slot_id,hp,child.slot_id);
+   }
+   break;
+  }
+  serial_write("xHCI: enumerated vid=");serial_write_hex(usb_device.vendor_id);
  serial_write(" pid=");serial_write_hex(usb_device.product_id);
  serial_write(" interfaces=");serial_write_dec(interface_count);
  serial_write(" endpoints=");serial_write_dec(endpoint_count);serial_write("\r\n");
@@ -165,15 +210,17 @@ static void xhci_hotplug_worker(void *arg){
     serial_write(" controller=");serial_write_dec(controller);
     serial_write(" port=");serial_write_dec(device.port);
     serial_write(" slot=");serial_write_dec(device.slot_id);serial_write("\r\n");
-    if(connected){
-     int enum_rc=xhci_enumerate_and_configure(controller,&device);
-      if(enum_rc!=0){
-       serial_write("xHCI: enumeration/configuration failed=");
-      klog_write_dec((uint64_t)(-enum_rc));klog_write("\r\n");
-      xhci_park_port(controller,device.port);
-      (void)xhci_device_detach(controller,device.slot_id);
+     if(connected){
+      int enum_rc=xhci_enumerate_and_configure(controller,&device);
+       if(enum_rc!=0){
+        serial_write("xHCI: enumeration/configuration failed=");
+       klog_write_dec((uint64_t)(-enum_rc));klog_write("\r\n");
+       xhci_park_port(controller,device.port);
+       (void)xhci_device_detach(controller,device.slot_id);
+      }
+     }else if(device.state==XHCI_DEVICE_DETACHED){
+      usb_hub_detach_sweep(controller,device.slot_id);
      }
-   }
    } else if(rc<0){
    int log_it=1;
    if(controller<4u){
@@ -235,6 +282,12 @@ static void keyboard_poll_worker(void *arg){
                                known_keyboards[k].endpoint);
     }
    }
+   /* Hub port rescan every 16th round: hub children have no root-port
+    * events, so a dark hub port is the only disconnect signal. Bounded
+    * by the registries; control transfers only. */
+   {static unsigned hub_div=0;
+    if(++hub_div>=16u){hub_div=0;
+     for(size_t c2=0;c2<xhci_controller_count();c2++)(void)usb_hub_rescan_ports(c2);}}
    scheduler_yield();
   }
 }

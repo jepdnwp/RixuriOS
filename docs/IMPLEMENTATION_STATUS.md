@@ -1008,3 +1008,14 @@ flushed with a readback; recovery follows the Linux usb_clear_halt order
 fail-closed on failure). Single-flight stays deliberately: the fixed
 64-slot ring cannot grow like Linux expandable segments, and with one
 consumer it matches the Linux steady state.
+
+USB hub class (Linux ch11 + hub.c subset): hub descriptor fetch/parse,
+per-port power, bounded port reset with HIGH>LOW>FULL speed decode, TT
+think codes and 20-bit route strings, plus a bounded hub/child registry
+(depth 2 tiers, polling-only — no status-change URB). Address Device now
+takes TT/route input: RH Port resolves through the parent chain (never a
+hub-relative number), TT split fields gate on a high-speed parent only.
+This fixed a real QEMU failure: the child address carried route 0, QEMU's
+lookup hit the hub's own path and returned TRB Error (caught via the new
+ADDR-END completion log). Verified: make test + make iso exit 0; direct
+keyboard and hub-behind-hub keyboard both register with zero failures.

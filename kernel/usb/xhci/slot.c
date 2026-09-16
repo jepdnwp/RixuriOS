@@ -75,6 +75,8 @@ void xhc_release_slot_context(size_t ctl, uint8_t slot_id) {
     slot->ep0_seq = 0;
     slot->addr_done_ns = 0;
     slot->usb_state = XHCI_USB_DETACHED;
+    slot->tt_parent_slot = 0;
+    slot->root_port = 0;
 }
 
 /* Build the Address Device input context (Linux xhci_setup_addressable_virt_dev
@@ -82,7 +84,8 @@ void xhc_release_slot_context(size_t ctl, uint8_t slot_id) {
  * Speed/Route/Context-Entries=1/RH-Port, EP0 context with Control type,
  * CERR and the transfer-ring dequeue pointer with DCS. */
 int xhc_prepare_address_context(size_t ctl, uint8_t slot_id, uint8_t port,
-                                uint8_t speed) {
+                                uint8_t speed,
+                                const rix_xhci_tt_info_t *tt) {
     rix_xhci_controller_t *c = &xhc_controllers[ctl];
     xhci_slot_runtime_t *slot = &xhc_runtimes[ctl].slots[slot_id];
     uint32_t context_size;
@@ -113,8 +116,34 @@ int xhc_prepare_address_context(size_t ctl, uint8_t slot_id, uint8_t port,
     input[1] = XHCI_INPUT_ADD_SLOT | XHCI_INPUT_ADD_EP0;
     slot_ctx[0] = (((uint32_t)speed & 0xfu) << XHCI_SLOT_SPEED_SHIFT) |
         (1u << XHCI_SLOT_LAST_CTX_SHIFT);
-    slot_ctx[1] = (uint32_t)port << 16;
-    slot_ctx[2] = 0;
+    /* The route string identifies the hub path and is required for EVERY
+     * hub-attached device, even behind full-speed hubs with no TT. */
+    if (tt) slot_ctx[0] |= tt->route & 0xfffffu;
+    /* RH Port is the ROOT port of the whole chain, never a hub-relative
+     * number: resolve through the parent hub's recorded root port (the
+     * parent is always addressed before its children, so its root port
+     * is already stored). TT split fields additionally apply only to
+     * non-high-speed devices behind a high-speed hub (Linux
+     * hub_port_init rule). */
+    {
+        uint8_t rport = port;
+        uint32_t ttdw = 0u;
+        if (tt) {
+            const xhci_slot_runtime_t *parent;
+            if (tt->hub_slot == 0u) return -1;
+            parent = &xhc_runtimes[ctl].slots[tt->hub_slot];
+            if (!parent->allocated) return -1;
+            rport = parent->root_port;
+            if (speed != 3u && parent->speed == 3u) {
+                ttdw = (uint32_t)tt->hub_slot |
+                    ((uint32_t)tt->hub_port << 8) |
+                    (((uint32_t)tt->think_code & 0x3u) << 16);
+            }
+        }
+        slot_ctx[1] = (uint32_t)rport << 16;
+        slot->root_port = rport;
+        slot_ctx[2] = ttdw;
+    }
     slot_ctx[3] = 0;
     mps = xhc_initial_ep0_mps(speed);
     cerr = (speed >= 4u) ? 0u : 3u;
@@ -130,6 +159,8 @@ int xhc_prepare_address_context(size_t ctl, uint8_t slot_id, uint8_t port,
     slot->ep0_cycle = 1;
     slot->port = port;
     slot->speed = speed;
+    slot->tt_parent_slot = tt ? tt->hub_slot : 0u;
+    slot->route_string = tt ? (tt->route & 0xfffffu) : 0u;
     return 0;
 }
 
@@ -167,7 +198,7 @@ int xhci_disable_slot(size_t controller, uint8_t slot_id) {
  * delay; the same input context is legal to re-issue in Default state.
  * On success the zero-address guard rejects a no-op completion. */
 int xhci_address_device(size_t controller, uint8_t slot_id, uint8_t port,
-                        uint8_t speed) {
+                        uint8_t speed, const rix_xhci_tt_info_t *tt) {
     rix_xhci_controller_t *c;
     xhci_slot_runtime_t *slot;
     int rc = -1;
@@ -178,7 +209,7 @@ int xhci_address_device(size_t controller, uint8_t slot_id, uint8_t port,
     (void)c;
     slot = &xhc_runtimes[controller].slots[slot_id];
     if (!slot->allocated || slot->addressed) return -2;
-    if (xhc_prepare_address_context(controller, slot_id, port, speed) != 0)
+    if (xhc_prepare_address_context(controller, slot_id, port, speed, tt) != 0)
         return -3;
 #if XHCI_ADDR_TRACE
     xhc_log_address_device_begin(controller, slot_id, port, speed);
@@ -189,9 +220,11 @@ int xhci_address_device(size_t controller, uint8_t slot_id, uint8_t port,
                                     XHCI_TRB_SLOT_FOR(slot_id),
                                 0);
         if (rc == 0 || rc != -(int)XHCI_COMP_USB_TRANSACTION_ERROR) break;
+        if (tt != 0) break;
         {
             rix_xhci_port_status_t ps;
-            if (xhci_port_status(controller, port, &ps) != 0 || !ps.connected)
+            if (xhci_port_status(controller, port, &ps) != 0 ||
+                !ps.connected)
                 break;
         }
         xhc_udelay(50000u);
@@ -201,7 +234,22 @@ int xhci_address_device(size_t controller, uint8_t slot_id, uint8_t port,
             (volatile uint32_t *)(uintptr_t)slot->device_context_phys;
         if ((devctx[3] & 0xffu) == 0u) rc = -(int)XHCI_COMP_USB_TRANSACTION_ERROR;
     }
-    if (rc != 0) return rc;
+    if (rc != 0) {
+#if XHCI_ADDR_TRACE
+        serial_write("xHCI: ADDR-END ctl=");
+        serial_write_dec(controller);
+        serial_write(" slot=");
+        serial_write_dec(slot_id);
+        serial_write(" rc=");
+        serial_write_dec((uint64_t)(rc < 0 ? -rc : rc));
+        serial_write(" ");
+        serial_write(rc == -(int)XHCI_COMP_USB_TRANSACTION_ERROR
+                         ? "Transaction"
+                         : xhc_cc_name((uint8_t)(rc < 0 ? -rc : rc)));
+        serial_write("\r\n");
+#endif
+        return rc;
+    }
     slot->addressed = 1;
     slot->addr_done_ns = time_monotonic_ns();
     xhci_usb_state_transition(controller, slot_id, XHCI_USB_ADDRESSED,
