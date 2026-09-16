@@ -2210,3 +2210,20 @@ The xHCI result is limited to PCI probe, BIOS handoff, controller discovery, and
 The current HEAD also contains validated hardening for PMM/VMM/EFI arithmetic, RTC calendar validation, xHCI pending-queue overflow rescan signaling, block BIO completion state, VFS descriptor lifecycle, RixFS extent ownership, orphan and root reachability checks, directory-entry type/link consistency, journal bounds, mount metadata ranges, and process-group signal wakeups. The RixFS fsck checks are read-only integrity rejection checks; fsck repair and power-loss durability remain unimplemented or unverified. The power-loss test was stopped and is intentionally excluded from this validation record.
 
 The remaining closure blockers are physical hardware evidence, NVMe reset/recovery, full xHCI/HID/hotplug behavior, RixFS transaction repair and durability, TCP reassembly/retransmission/window/readiness/server semantics, complete PTY/job-control and signal-frame semantics, and sustained fault/recovery/soak matrices. No Phase 00–22 phase is promoted to unconditional `PASS` by this entry.
+
+## 2026-09-16 — allocator metadata and bounded TCP reassembly hardening
+
+The libc allocator now validates header alignment, magic/usage state, size arithmetic, and block containment within the current `sbrk` heap before `free()` or `realloc()` proceeds. The change was committed as `b94ffe4` (`harden libc allocator metadata validation`).
+
+External TCP input now retains up to four out-of-order segments per socket, sends duplicate ACKs while a prefix is missing, and drains retained segments in sequence once the gap closes. Duplicate sequence numbers are ignored, and FIN is carried through the bounded reassembly path. The change was committed as `b189de9` (`add bounded TCP out-of-order reassembly`).
+
+Validation completed with exit code 0:
+
+```text
+make libc-test HOST_CC=gcc
+make net-test HOST_CC=gcc
+make test CROSS=x86_64-linux-gnu- HOST_CC=gcc
+git diff --check
+```
+
+This closes only the bounded software reassembly slice. Timer-backed retransmission, congestion control, dynamic windows, blocking readiness, overlap trimming, NIC recovery, and physical network qualification remain open or UNVERIFIED.

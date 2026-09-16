@@ -1140,15 +1140,15 @@ The stack integrates routing, ARP, Ethernet, IPv4/ICMP/UDP, bounded TCP, socket 
 
 ### Implemented
 
-Packet parsing/building, routes, ARP resolution, loopback/external UDP and ICMP, bounded in-order TCP client behavior, sockets, DHCP, DNS, E1000 descriptor paths, RTL8125 register/ring source, ping/curl, and host models exist.
+Packet parsing/building, routes, ARP resolution, loopback/external UDP and ICMP, bounded TCP client behavior with duplicate ACKs and a four-slot out-of-order reassembly window, sockets, DHCP, DNS, E1000 descriptor paths, RTL8125 register/ring source, ping/curl, and host models exist.
 
 ### Missing
 
-Timer-backed TCP retransmission, duplicate-ACK/congestion logic, out-of-order reassembly, dynamic windows, real blocking waits, readiness/poll, server listen/accept/shutdown, sustained traffic, NIC reset recovery, SMP network qualification, and physical RTL8125 operation are missing.
+Timer-backed TCP retransmission, congestion control, dynamic windows, real blocking waits, readiness/poll, server listen/accept/shutdown, sustained traffic, NIC reset recovery, SMP network qualification, and physical RTL8125 operation are missing. Reassembly remains bounded and does not yet provide overlap trimming or a full receive-window implementation.
 
 ### Partial
 
-TCP drops out-of-order segments and advertises a fixed 4096-byte window. Retransmission is caller-driven/stateless. An empty blocking socket returns EAGAIN rather than sleeping. One unresolved-ARP packet slot bounds progress under bursts. IPv6 has host-tested software foundations but no independent QEMU/physical traffic.[5] [47] [48]
+TCP retains up to four out-of-order segments, emits duplicate ACKs for a missing prefix, and drains retained payloads when the gap closes, but still advertises a fixed 4096-byte window. Retransmission is caller-driven/stateless. An empty blocking socket returns EAGAIN rather than sleeping. One unresolved-ARP packet slot bounds progress under bursts. IPv6 has host-tested software foundations but no independent QEMU/physical traffic.[5] [47] [48]
 
 ### Bugs / correctness risks
 
