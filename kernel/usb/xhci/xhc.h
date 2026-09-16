@@ -25,6 +25,8 @@
 #include "portsc.h"
 #include "caps.h"
 #include "profile.h"
+#include "../usb_ch9.h"
+#include "../hid_defs.h"
 
 /* ---- Compile-time trace flags (same defaults as the previous driver) ---- */
 #define XHCI_ADDR_TRACE 1

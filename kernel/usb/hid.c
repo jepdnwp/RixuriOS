@@ -1,4 +1,5 @@
 #include "hid.h"
+#include "hid_defs.h"
 #include "../tty/tty.h"
 #include <stddef.h>
 #include <stdint.h>
@@ -130,6 +131,20 @@ static uint32_t hid_item_value(const uint8_t *data, uint8_t size) {
     return value;
 }
 
+/* Sign-extend a raw item value (Linux item_sdata rules). */
+static int32_t hid_item_signed(uint32_t raw, uint8_t size) {
+    if (size == 1u) return (int8_t)raw;
+    if (size == 2u) return (int16_t)raw;
+    return (int32_t)raw;
+}
+
+/* Report-descriptor item walk after Linux drivers/hid/hid-core.c
+ * (fetch_item short/long split, open/close_collection balancing, usage
+ * minimum/maximum ranges, signed logical limits, report ID rules).
+ * Deliberate subset: no HID_MAX_USAGES-scale tables, no Push/Pop stack,
+ * no physical/unit accounting — only what boot keyboard/mouse detection
+ * and input-size accounting need. New fail-closed code is -9 (malformed
+ * item); -1..-8 keep their previous meanings. */
 int hid_parse_report_descriptor(const uint8_t *data, size_t length,
                                 rix_hid_report_info_t *out) {
     if (!data || !out) return -1;
@@ -141,18 +156,21 @@ int hid_parse_report_descriptor(const uint8_t *data, size_t length,
     out->input_bytes = 0;
     uint32_t usage_page = 0;
     uint32_t usage = 0;
+    uint32_t usage_min = 0;
+    uint32_t usage_max = 0;
+    int have_range = 0;
+    int32_t logical_min = 0;
+    int32_t logical_max = 0;
     uint32_t report_size = 0;
     uint32_t report_count = 0;
+    unsigned collections = 0;
+    int delimiter_depth = 0;
     size_t offset = 0;
     while (offset < length) {
         uint8_t prefix = data[offset++];
         if (prefix == 0xfeu) {
-            if (length - offset < 2u) return -2;
-            uint8_t long_size = data[offset++];
-            offset++;
-            if ((size_t)long_size > length - offset) return -3;
-            offset += long_size;
-            continue;
+            /* Long items are parse-fatal in Linux hid-core. */
+            return -9;
         }
         uint8_t size_code = prefix & 0x03u;
         uint8_t item_size = size_code == 3u ? 4u : size_code;
@@ -161,28 +179,100 @@ int hid_parse_report_descriptor(const uint8_t *data, size_t length,
         if ((size_t)item_size > length - offset) return -4;
         uint32_t value = hid_item_value(&data[offset], item_size);
         offset += item_size;
-        if (type == 1u) {
-            if (tag == 0u) usage_page = value;
-            else if (tag == 7u) report_size = value;
-            else if (tag == 8u) {
-                if (value == 0u || value > 0xffu) return -5;
+        if (type == HID_ITEM_TYPE_GLOBAL) {
+            switch (tag) {
+            case HID_GLOBAL_ITEM_TAG_USAGE_PAGE:
+                usage_page = value;
+                break;
+            case HID_GLOBAL_ITEM_TAG_LOGICAL_MINIMUM:
+                logical_min = hid_item_signed(value, item_size);
+                break;
+            case HID_GLOBAL_ITEM_TAG_LOGICAL_MAXIMUM:
+                /* Linux: maximum decodes signed when minimum is negative. */
+                logical_max = (logical_min < 0)
+                    ? hid_item_signed(value, item_size)
+                    : (int32_t)value;
+                break;
+            case HID_GLOBAL_ITEM_TAG_REPORT_SIZE:
+                report_size = value;
+                break;
+            case HID_GLOBAL_ITEM_TAG_REPORT_ID:
+                /* Linux rejects explicit Report ID 0 and IDs above 255. */
+                if (value == 0u) return -9;
+                if (value > 0xffu) return -5;
                 out->has_report_id = 1;
                 out->report_id = (uint8_t)value;
-            } else if (tag == 9u) report_count = value;
-        } else if (type == 2u && tag == 0u) {
-            usage = value;
-        } else if (type == 0u && tag == 8u) {
-            if (report_size > 0xffffu || report_count > 0xffffu ||
-                (report_size != 0u && report_count > 0xffffu / report_size)) return -6;
-            uint32_t bits = report_size * report_count;
-            if (bits > 0xffffu - out->input_bits) return -7;
-            out->input_bits = (uint16_t)(out->input_bits + bits);
-            out->input_bytes = (uint16_t)((out->input_bits + 7u) / 8u);
-            if (usage_page == 0x07u && usage == 0x06u) out->has_keyboard = 1;
-            if (usage_page == 0x01u && usage == 0x02u) out->has_mouse = 1;
+                break;
+            case HID_GLOBAL_ITEM_TAG_REPORT_COUNT:
+                report_count = value;
+                break;
+            default:
+                /* Physical/unit/push/pop and unknown globals: accepted and
+                 * ignored for boot input purposes (Linux aborts on truly
+                 * unknown global tags, but none of those appear in
+                 * keyboard/mouse descriptors and failing on them would
+                 * only brick input on odd-but-harmless firmware). */
+                break;
+            }
+        } else if (type == HID_ITEM_TYPE_LOCAL) {
+            if (tag == HID_LOCAL_ITEM_TAG_USAGE) {
+                usage = value;
+            } else if (tag == HID_LOCAL_ITEM_TAG_USAGE_MINIMUM) {
+                usage_min = value;
+                usage_max = value;
+                have_range = 1;
+            } else if (tag == HID_LOCAL_ITEM_TAG_USAGE_MAXIMUM) {
+                /* Linux expands minimum..maximum inclusive; a maximum
+                 * below the minimum is malformed. */
+                if (!have_range || value < usage_min) return -9;
+                usage_max = value;
+            } else if (tag == HID_LOCAL_ITEM_TAG_DELIMITER) {
+                if (value != 0u) {
+                    if (delimiter_depth != 0) return -9;
+                    delimiter_depth = 1;
+                } else {
+                    if (delimiter_depth != 1) return -9;
+                    delimiter_depth = 0;
+                }
+            }
+            /* Designators/strings: ignored like Linux. */
+        } else if (type == HID_ITEM_TYPE_MAIN) {
+            if (tag == HID_MAIN_ITEM_TAG_BEGIN_COLLECTION) {
+                if (collections >= 32u) return -9;
+                collections++;
+            } else if (tag == HID_MAIN_ITEM_TAG_END_COLLECTION) {
+                if (collections == 0u) return -9;
+                collections--;
+            } else if (tag == HID_MAIN_ITEM_TAG_INPUT) {
+                /* Linux validates the signed logical range per field. */
+                if (logical_max < logical_min) return -9;
+                if (report_size > 0xffffu || report_count > 0xffffu ||
+                    (report_size != 0u && report_count > 0xffffu / report_size)) return -6;
+                uint32_t bits = report_size * report_count;
+                if (bits > 0xffffu - out->input_bits) return -7;
+                out->input_bits = (uint16_t)(out->input_bits + bits);
+                out->input_bytes = (uint16_t)((out->input_bits + 7u) / 8u);
+                if (usage_page == HID_UP_KEYBOARD &&
+                    (usage == HID_GD_KEYBOARD || usage == 0x07u ||
+                     (have_range && usage_min <= HID_GD_KEYBOARD &&
+                      usage_max >= HID_GD_KEYBOARD)))
+                    out->has_keyboard = 1;
+                if (usage_page == HID_UP_GENDESK &&
+                    (usage == HID_GD_MOUSE ||
+                     (have_range && usage_min <= HID_GD_MOUSE &&
+                      usage_max >= HID_GD_MOUSE)))
+                    out->has_mouse = 1;
+            }
+            /* Output/Feature items contribute no input bits; every main
+             * item resets the local usage state like Linux. */
             usage = 0;
+            usage_min = 0;
+            usage_max = 0;
+            have_range = 0;
         }
+        /* Reserved type 3: ignored like Linux. */
     }
+    if (collections != 0u || delimiter_depth != 0) return -9;
     return out->input_bits != 0u ? 0 : -8;
 }
 

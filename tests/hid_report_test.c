@@ -59,6 +59,57 @@ int main(void) {
     if (expect(hid_mouse_report_protocol(mouse_no_id, sizeof(mouse_no_id), 0,
                                          &mouse) == 0 && mouse.buttons == 1,
                 "mouse report without ID parsed")) return 1;
+    /* Linux-derived: keyboard detected through a Usage Minimum/Maximum
+     * range alone, with no bare Usage item. */
+    static const uint8_t range_kbd[] = {
+        0x05, 0x01, 0xa1, 0x01, 0x05, 0x07, 0x19, 0x00,
+        0x29, 0x65, 0x15, 0x00, 0x25, 0x01, 0x75, 0x01,
+        0x95, 0x08, 0x81, 0x02, 0xc0
+    };
+    if (expect(hid_parse_report_descriptor(range_kbd, sizeof(range_kbd), &info) == 0 &&
+               info.has_keyboard && !info.has_mouse && info.input_bytes == 1u,
+                "keyboard via usage range")) return 1;
+    /* Same bytes without End Collection: unbalanced, must fail. */
+    if (expect(hid_parse_report_descriptor(range_kbd, sizeof(range_kbd) - 1u,
+                                           &info) != 0,
+                "unbalanced collection rejected")) return 1;
+    /* Lone End Collection and explicit Report ID 0: rejected like Linux. */
+    static const uint8_t lone_end[] = {0xc0};
+    if (expect(hid_parse_report_descriptor(lone_end, sizeof(lone_end), &info) != 0,
+                "lone end-collection rejected")) return 1;
+    static const uint8_t report_id_zero[] = {0x85, 0x00};
+    if (expect(hid_parse_report_descriptor(report_id_zero, sizeof(report_id_zero),
+                                           &info) != 0,
+                "explicit report ID 0 rejected")) return 1;
+    /* Long items are parse-fatal in Linux hid-core. */
+    static const uint8_t long_item[] = {0xfe, 0x01, 0x00, 0xaa};
+    if (expect(hid_parse_report_descriptor(long_item, sizeof(long_item), &info) != 0,
+                "long item rejected")) return 1;
+    /* Inverted signed logical range must fail at the Input item. */
+    static const uint8_t bad_range[] = {
+        0x05, 0x07, 0x09, 0x06, 0x15, 0x01, 0x25, 0x00,
+        0x75, 0x01, 0x95, 0x01, 0x81, 0x02
+    };
+    if (expect(hid_parse_report_descriptor(bad_range, sizeof(bad_range), &info) != 0,
+                "inverted logical range rejected")) return 1;
+    /* Mouse detected through a Generic-Desktop usage range. */
+    static const uint8_t range_mouse[] = {
+        0x05, 0x01, 0xa1, 0x01, 0x19, 0x01, 0x29, 0x03,
+        0x75, 0x01, 0x95, 0x03, 0x81, 0x02, 0xc0
+    };
+    if (expect(hid_parse_report_descriptor(range_mouse, sizeof(range_mouse),
+                                           &info) == 0 &&
+               info.has_mouse && !info.has_keyboard,
+                "mouse via usage range")) return 1;
+    /* Nonzero Report ID still accepted with the ID recorded. */
+    static const uint8_t with_id[] = {
+        0x05, 0x01, 0x85, 0x07, 0x09, 0x02, 0x75, 0x08,
+        0x95, 0x01, 0x81, 0x02
+    };
+    if (expect(hid_parse_report_descriptor(with_id, sizeof(with_id), &info) == 0 &&
+               info.has_report_id && info.report_id == 7u &&
+               info.has_mouse && info.input_bytes == 1u,
+                "nonzero report ID accepted")) return 1;
     puts("hid report tests: PASS");
     return 0;
 }

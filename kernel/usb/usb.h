@@ -1,6 +1,7 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
+#include "usb_ch9.h"
 
 #define RIX_USB_DESC_DEVICE 1u
 #define RIX_USB_DESC_CONFIGURATION 2u
@@ -17,6 +18,26 @@
 #define RIX_USB_EP_ISOCHRONOUS 1u
 #define RIX_USB_EP_BULK 2u
 #define RIX_USB_EP_INTERRUPT 3u
+
+/* Native names above, Linux chapter-9 values below: any drift between
+ * the two tables breaks descriptor parsing silently, so bind them here
+ * at compile time (checked in both kernel and host builds). */
+_Static_assert(RIX_USB_DESC_DEVICE == USB_DT_DEVICE, "usb ch9 device");
+_Static_assert(RIX_USB_DESC_CONFIGURATION == USB_DT_CONFIG, "usb ch9 config");
+_Static_assert(RIX_USB_DESC_INTERFACE == USB_DT_INTERFACE, "usb ch9 iface");
+_Static_assert(RIX_USB_DESC_ENDPOINT == USB_DT_ENDPOINT, "usb ch9 ep");
+_Static_assert(RIX_USB_DESC_HID == HID_DT_HID, "usb ch9 hid");
+_Static_assert(RIX_USB_DESC_HID_REPORT == HID_DT_REPORT, "usb ch9 report");
+_Static_assert(RIX_USB_DESC_ENDPOINT_COMPANION == USB_DT_SS_ENDPOINT_COMP,
+               "usb ch9 ss companion");
+_Static_assert(RIX_USB_EP_COMPANION_SIZE == USB_DT_SS_EP_COMP_SIZE,
+               "usb ch9 ss companion size");
+_Static_assert(RIX_USB_EP_TRANSFER_MASK == USB_ENDPOINT_XFERTYPE_MASK,
+               "usb ch9 xfer mask");
+_Static_assert(RIX_USB_EP_CONTROL == USB_ENDPOINT_XFER_CONTROL, "usb ch9 ctrl");
+_Static_assert(RIX_USB_EP_ISOCHRONOUS == USB_ENDPOINT_XFER_ISOC, "usb ch9 isoc");
+_Static_assert(RIX_USB_EP_BULK == USB_ENDPOINT_XFER_BULK, "usb ch9 bulk");
+_Static_assert(RIX_USB_EP_INTERRUPT == USB_ENDPOINT_XFER_INT, "usb ch9 intr");
 
 #define RIX_USB_MAX_INTERFACES 32u
 #define RIX_USB_MAX_ENDPOINTS 64u

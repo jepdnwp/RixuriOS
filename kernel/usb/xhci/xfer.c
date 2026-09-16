@@ -157,7 +157,7 @@ int xhci_control_transfer(size_t controller, uint8_t slot_id,
         data_pa = xhc_dma_linear_pa(data, length);
         if (!data_pa) return -5;
     }
-    data_in = (setup->request_type & 0x80u) != 0u;
+    data_in = (setup->request_type & USB_DIR_IN) != 0u;
     setup_param = (uint64_t)setup->request_type |
         ((uint64_t)setup->request << 8) |
         ((uint64_t)setup->value << 16) |
@@ -230,8 +230,9 @@ int xhci_get_descriptor(size_t controller, uint8_t slot_id,
                         uint16_t *actual_length) {
     rix_usb_setup_packet_t setup;
     if (descriptor_type == 0u || (length != 0u && !buffer)) return -1;
-    setup.request_type = 0x80u;
-    setup.request = 6u;
+    setup.request_type = (uint8_t)(USB_DIR_IN | USB_TYPE_STANDARD |
+                                   USB_RECIP_DEVICE);
+    setup.request = USB_REQ_GET_DESCRIPTOR;
     setup.value = (uint16_t)(((uint16_t)descriptor_type << 8) | descriptor_index);
     setup.index = language_id;
     setup.length = length;
@@ -242,8 +243,9 @@ int xhci_get_descriptor(size_t controller, uint8_t slot_id,
 int xhci_set_configuration(size_t controller, uint8_t slot_id,
                            uint8_t configuration_value) {
     rix_usb_setup_packet_t setup;
-    setup.request_type = 0x00u;
-    setup.request = 9u;
+    setup.request_type = (uint8_t)(USB_DIR_OUT | USB_TYPE_STANDARD |
+                                   USB_RECIP_DEVICE);
+    setup.request = USB_REQ_SET_CONFIGURATION;
     setup.value = configuration_value;
     setup.index = 0;
     setup.length = 0;
@@ -253,11 +255,19 @@ int xhci_set_configuration(size_t controller, uint8_t slot_id,
 int xhci_get_hid_report_descriptor(size_t controller, uint8_t slot_id,
                                    uint8_t interface_number, void *buffer,
                                    uint16_t length, uint16_t *actual_length) {
+    /* Pinned: 0x81. A past cleanup "fixed" this to CLASS type and real
+     * firmware stalled the fetch (QEMU failed=8). */
+    _Static_assert((USB_DIR_IN | USB_TYPE_STANDARD | USB_RECIP_INTERFACE) ==
+                   0x81u, "hid report bmRequestType");
     rix_usb_setup_packet_t setup;
     if (interface_number >= 32u || length == 0u || !buffer) return -1;
-    setup.request_type = 0x81u;
-    setup.request = 6u;
-    setup.value = (uint16_t)(0x22u << 8);
+    /* GET_DESCRIPTOR is a STANDARD request even for class-defined
+     * descriptor types (USB 2.0 §9.4.3, HID 1.11 §7.1.1): only wValue
+     * carries the class type. CLASS here would stall real firmware. */
+    setup.request_type = (uint8_t)(USB_DIR_IN | USB_TYPE_STANDARD |
+                                   USB_RECIP_INTERFACE);
+    setup.request = USB_REQ_GET_DESCRIPTOR;
+    setup.value = (uint16_t)((uint16_t)HID_DT_REPORT << 8);
     setup.index = interface_number;
     setup.length = length;
     return xhci_control_transfer(controller, slot_id, &setup, buffer,
@@ -268,8 +278,9 @@ int xhci_hid_set_protocol(size_t controller, uint8_t slot_id,
                           uint8_t interface_number, uint8_t protocol) {
     rix_usb_setup_packet_t setup;
     if (interface_number >= 32u || protocol > 1u) return -1;
-    setup.request_type = 0x21u;
-    setup.request = 0x0bu;
+    setup.request_type = (uint8_t)(USB_DIR_OUT | USB_TYPE_CLASS |
+                                   USB_RECIP_INTERFACE);
+    setup.request = HID_REQ_SET_PROTOCOL;
     setup.value = protocol;
     setup.index = interface_number;
     setup.length = 0;
@@ -281,8 +292,9 @@ int xhci_hid_set_idle(size_t controller, uint8_t slot_id,
                       uint8_t duration_4ms) {
     rix_usb_setup_packet_t setup;
     if (interface_number >= 32u) return -1;
-    setup.request_type = 0x21u;
-    setup.request = 0x0au;
+    setup.request_type = (uint8_t)(USB_DIR_OUT | USB_TYPE_CLASS |
+                                   USB_RECIP_INTERFACE);
+    setup.request = HID_REQ_SET_IDLE;
     setup.value = (uint16_t)(((uint16_t)duration_4ms << 8) | report_id);
     setup.index = interface_number;
     setup.length = 0;
@@ -296,8 +308,9 @@ int xhci_hid_get_protocol(size_t controller, uint8_t slot_id,
     uint16_t actual = 0;
     int rc;
     if (interface_number >= 32u || !protocol) return -1;
-    setup.request_type = 0xa1u;
-    setup.request = 0x03u;
+    setup.request_type = (uint8_t)(USB_DIR_IN | USB_TYPE_CLASS |
+                                   USB_RECIP_INTERFACE);
+    setup.request = HID_REQ_GET_PROTOCOL;
     setup.value = 0;
     setup.index = interface_number;
     setup.length = 1;

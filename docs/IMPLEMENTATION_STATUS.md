@@ -965,3 +965,16 @@ B650 hardware run remains open, and QEMU PASS is never reported as hardware
 PASS. New files carry `SPDX-License-Identifier: GPL-2.0` with Linux
 provenance; the repository still has no `LICENSE` file, so GPL placement must
 be resolved before release.
+
+USB/HID port (same Linux line-by-line discipline): new `kernel/usb/usb_ch9.h`
+(descriptor/request/bmRequestType/endpoint codes from uapi ch9.h + HID class
+codes) and `kernel/usb/hid_defs.h` (item format/type/tag, collections, usage
+pages, HID class requests from HID 1.11 §7.2); `usb.h` binds native `RIX_USB_*`
+names to ch9 values with `_Static_assert`; `hid.c` parser gains usage
+minimum/maximum ranges, collection balancing, signed logical limits, explicit
+Report-ID-0 and long-item rejection (new fail-closed code -9); `xfer.c` and
+`debug.c` use ch9/HID names instead of magic numbers. One real regression was
+caught by QEMU: rewriting the report-descriptor fetch as CLASS type stalled
+firmware (`failed=8`); GET_DESCRIPTOR stays STANDARD-to-interface (`0x81`,
+pinned by static assert). Host vectors added (usage-range keyboard/mouse,
+unbalanced/long/inverted items, QEMU-observed 34-byte config, IAD skip).

@@ -46,49 +46,49 @@ const char *xhc_speed_name(uint8_t speed) {
 }
 
 const char *xhc_setup_req_name(uint8_t request_type, uint8_t request) {
-    if ((request_type & 0x60u) == 0x20u) {
+    if ((request_type & USB_TYPE_MASK) == USB_TYPE_CLASS) {
         switch (request) {
-        case 1u: return "GET_REPORT";
-        case 2u: return "GET_IDLE";
-        case 3u: return "GET_PROTOCOL";
-        case 9u: return "SET_REPORT";
-        case 10u: return "SET_IDLE";
-        case 11u: return "SET_PROTOCOL";
+        case HID_REQ_GET_REPORT: return "GET_REPORT";
+        case HID_REQ_GET_IDLE: return "GET_IDLE";
+        case HID_REQ_GET_PROTOCOL: return "GET_PROTOCOL";
+        case HID_REQ_SET_REPORT: return "SET_REPORT";
+        case HID_REQ_SET_IDLE: return "SET_IDLE";
+        case HID_REQ_SET_PROTOCOL: return "SET_PROTOCOL";
         default: return "CLASS?";
         }
     }
     switch (request) {
-    case 0u: return "GET_STATUS";
-    case 1u: return "CLEAR_FEATURE";
-    case 3u: return "SET_FEATURE";
-    case 5u: return "SET_ADDRESS";
-    case 6u: return "GET_DESCRIPTOR";
-    case 7u: return "SET_DESCRIPTOR";
-    case 8u: return "GET_CONFIGURATION";
-    case 9u: return "SET_CONFIGURATION";
-    case 10u: return "GET_INTERFACE";
-    case 11u: return "SET_INTERFACE";
-    case 12u: return "SYNCH_FRAME";
+    case USB_REQ_GET_STATUS: return "GET_STATUS";
+    case USB_REQ_CLEAR_FEATURE: return "CLEAR_FEATURE";
+    case USB_REQ_SET_FEATURE: return "SET_FEATURE";
+    case USB_REQ_SET_ADDRESS: return "SET_ADDRESS";
+    case USB_REQ_GET_DESCRIPTOR: return "GET_DESCRIPTOR";
+    case USB_REQ_SET_DESCRIPTOR: return "SET_DESCRIPTOR";
+    case USB_REQ_GET_CONFIGURATION: return "GET_CONFIGURATION";
+    case USB_REQ_SET_CONFIGURATION: return "SET_CONFIGURATION";
+    case USB_REQ_GET_INTERFACE: return "GET_INTERFACE";
+    case USB_REQ_SET_INTERFACE: return "SET_INTERFACE";
+    case USB_REQ_SYNCH_FRAME: return "SYNCH_FRAME";
     default: return "STD?";
     }
 }
 
 const char *xhc_desc_name(uint8_t desc_type) {
     switch (desc_type) {
-    case 1u: return "DEVICE";
-    case 2u: return "CONFIG";
-    case 3u: return "STRING";
-    case 4u: return "INTERFACE";
-    case 5u: return "ENDPOINT";
-    case 6u: return "DEV_QUAL";
-    case 7u: return "OTHER_SPEED";
-    case 9u: return "OTG";
-    case 11u: return "ASSOC";
-    case 0x21u: return "HID";
-    case 0x22u: return "HID_REPORT";
-    case 0x24u: return "CS_IFACE";
-    case 0x25u: return "CS_EP";
-    case 0x30u: return "SS_COMP";
+    case USB_DT_DEVICE: return "DEVICE";
+    case USB_DT_CONFIG: return "CONFIG";
+    case USB_DT_STRING: return "STRING";
+    case USB_DT_INTERFACE: return "INTERFACE";
+    case USB_DT_ENDPOINT: return "ENDPOINT";
+    case USB_DT_DEVICE_QUALIFIER: return "DEV_QUAL";
+    case USB_DT_OTHER_SPEED_CONFIG: return "OTHER_SPEED";
+    case USB_DT_OTG: return "OTG";
+    case USB_DT_INTERFACE_ASSOCIATION: return "ASSOC";
+    case HID_DT_HID: return "HID";
+    case HID_DT_REPORT: return "HID_REPORT";
+    case USB_DT_CS_INTERFACE: return "CS_IFACE";
+    case USB_DT_CS_ENDPOINT: return "CS_EP";
+    case USB_DT_SS_ENDPOINT_COMP: return "SS_COMP";
     default: return "?";
     }
 }

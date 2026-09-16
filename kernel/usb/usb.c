@@ -1,5 +1,19 @@
 #include "usb.h"
 
+/* Descriptor parsing follows Linux drivers/usb/core/config.c
+ * (usb_parse_configuration / usb_parse_interface / find_next_descriptor):
+ * validate the 9-byte config header and wTotalLength first, walk the
+ * buffer descriptor by descriptor (bLength < 2 or overrun fails closed),
+ * require interface context before HID/endpoint descriptors, skip unknown
+ * types silently, and attach a SuperSpeed companion only when it
+ * immediately follows its endpoint. Deliberate deviation: wire bytes are
+ * read positionally instead of through packed structs, because this
+ * kernel builds with strict aliasing enabled (no -fno-strict-aliasing)
+ * and packed-struct casts over DMA buffers would be undefined behaviour.
+ * Error codes stay RixuriOS-local (the tested contract); field offsets
+ * match include/uapi/linux/usb/ch9.h.
+ */
+
 static uint16_t le16(const uint8_t *p) {
     return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
 }

@@ -105,10 +105,61 @@ static void test_companion(void) {
     assert(endpoints[0].max_burst == 0 && endpoints[0].esit_payload == 0);
 }
 
+static void test_qemu_keyboard(void);
+static void test_association_skip(void);
+
 int main(void) {
     test_device();
     test_configuration();
     test_companion();
     test_rejections();
+    test_qemu_keyboard();
+    test_association_skip();
     return 0;
+}
+
+static void test_qemu_keyboard(void) {
+    /* Shape observed on QEMU usb-kbd (vid 0627:0001): 34-byte total,
+     * one interface, HID report length 63, interrupt-IN 0x81. Only the
+     * observed fields are asserted below; class/interval/MPS bytes use
+     * typical boot-keyboard values and are deliberately not asserted. */
+    static const uint8_t descriptor[] = {
+        9, RIX_USB_DESC_CONFIGURATION, 34, 0, 1, 1, 0, 0x80, 50,
+        9, RIX_USB_DESC_INTERFACE, 0, 0, 1, 3, 1, 1, 0,
+        9, RIX_USB_DESC_HID, 0x11, 0x01, 0, 1, RIX_USB_DESC_HID_REPORT, 63, 0,
+        7, RIX_USB_DESC_ENDPOINT, 0x81, RIX_USB_EP_INTERRUPT, 8, 0, 10
+    };
+    rix_usb_configuration_info_t config;
+    rix_usb_interface_info_t interfaces[1];
+    rix_usb_endpoint_info_t endpoints[1];
+    size_t interface_count = 0, endpoint_count = 0;
+    assert(usb_parse_configuration_descriptor(
+        descriptor, sizeof(descriptor), &config, interfaces, 1, endpoints, 1,
+        &interface_count, &endpoint_count) == 0);
+    assert(config.total_length == 34);
+    assert(interface_count == 1 && endpoint_count == 1);
+    assert(interfaces[0].hid_descriptor_present);
+    assert(interfaces[0].hid_report_descriptor_length == 63);
+    assert(endpoints[0].address == 0x81);
+    assert((endpoints[0].attributes & RIX_USB_EP_TRANSFER_MASK) ==
+           RIX_USB_EP_INTERRUPT);
+}
+
+static void test_association_skip(void) {
+    /* Interface Association Descriptors carry no RixuriOS state; like
+     * Linux they are skipped without counting or failing. */
+    static const uint8_t descriptor[] = {
+        9, RIX_USB_DESC_CONFIGURATION, 26, 0, 1, 1, 0, 0x80, 50,
+        8, 0x0b, 0, 1, 1, 3, 1, 1,
+        9, RIX_USB_DESC_INTERFACE, 0, 0, 0, 3, 1, 1, 0
+    };
+    rix_usb_configuration_info_t config;
+    rix_usb_interface_info_t interfaces[1];
+    size_t interface_count = 0, endpoint_count = 0;
+    assert(usb_parse_configuration_descriptor(
+        descriptor, sizeof(descriptor), &config, interfaces, 1, NULL, 0,
+        &interface_count, &endpoint_count) == 0);
+    assert(config.total_length == 26);
+    assert(interface_count == 1 && endpoint_count == 0);
+    assert(interfaces[0].class_code == 3);
 }
