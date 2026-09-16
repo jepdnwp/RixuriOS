@@ -1100,3 +1100,8 @@ Detour learned: device_del also drops the drive backend, so the
 re-add needs a second pre-created backend, and serial-test timing must
 bracket device_add (the guest re-attaches in seconds, faster than
 monitor round-trips).
+
+Pre-scheduler settle proof: with only a hub keyboard attached (empty
+NVMe), the keyboard registers during the settle — before "BOOT:
+scheduler begin" — and a later sendkey byte arrives intact. Input is
+ready at the first prompt without waiting on the worker.
