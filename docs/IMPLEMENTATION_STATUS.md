@@ -899,3 +899,69 @@ QEMU / `repro-twice.sh` flow. Phase 23 stays LOCKED.
 matrix fails on any `SKIP` in its log; `docs/RELEASE_BLOCKERS.md` records the
 gates. Automated harnesses never skip — they fail on missing markers. Phase 23
 stays LOCKED.
+
+## Linux-derived xHCI driver port — 2026-09-16
+
+The monolithic `kernel/usb/xhci.c` plus `xhci_caps.*`, `xhci_profile.*` and
+`xhci_portsc.h` are deleted and replaced by a Linux-derived tree under
+`kernel/usb/xhci/`: `compat.h` (Linux→RixuriOS API map), `regs.h`/`trb.h`
+(register/TRB/context definitions from `drivers/usb/host/xhci.h`),
+`core.c` (PCI probe, BIOS handoff, HCRESET+CNR, DCBAA/command-ring/ERST/
+interrupter-0 polling setup), `ring.c` (command submit, TRB-pointer-matched
+completion, event-ring cycle/ERDP+EHB, PSC queue), `slot.c` (input contexts,
+Enable/Disable Slot, BSR=0 Address Device with CC4 retry, EP0 reset+dequeue
+retry, Evaluate MPS), `xfer.c` (Setup/Data/Status TRBs, residual accounting,
+short-packet success, two-stage enumeration), `ep.c` (Configure Endpoint,
+interrupt/bulk rings), `hub.c` (USB2 reset, USB3 train→warm-reset, RxDetect,
+power-cycle, attach/detach, hotplug policy), `debug.c` (serial diagnostics),
+plus verbatim-moved `caps.c`, `profile.c` (ASUS B650 per-ID data) and
+`portsc.h` (PORTSC neutralize). Public `kernel/usb/xhci.h` API is unchanged;
+`kernel/main.c` and `kernel/usb/hid.c` callers untouched. Not ported by
+design: USB core/HCD, MSI-X multi-vector, streams/isoch, suspend/resume,
+debugfs/trace, non-AMD quirks, workqueues (bounded paced polls instead).
+
+Verified in this environment: all 9 translation units plus `usb.c`,
+`hid.c`, `main.c` compile clean under freestanding
+`-Wall -Wextra -Werror`; host `xhci-caps`, `xhci-profile`, `xhci-portsc`,
+`xhci-linux-derived`, `usb`, `hid` tests PASS; full host sweep otherwise
+unchanged (pre-existing mingw-only failures in `libc-test`,
+`rixfs-mount`/`symlink`/`statfs` stubs and ELF-only `smp-test` remain).
+`uint8_t` port loops are wraparound-safe; the PORTSC-read HSE wart is gone.
+Follow-up: the `compat.h` shim layer is deleted — MMIO is direct volatile
+access (`XHCI_MMIO_READ32/WRITE32`, cf. e1000/rtl8125), barriers are inline
+`mfence`, endian types are plain `uint32_t`/`uint64_t`, and the previously
+dead `XHCI_HID_TRACE` flag now gates a one-line interrupt-IN payload dump
+(first 8 bytes) in `ep.c`. Host link check over all 9 TUs + `usb.c` is clean
+(no duplicate/undefined symbols); this caught and fixed one real bug (public
+`xhci_usb_state_transition` had been defined under the wrong `xhc_` name).
+Cleanup rounds since: `RIX_XHCI_`/`RIX_TRB_*` translation prefixes renamed to
+native `XHCI_*` (matching `XHCI_PORT_*`/`XHCI_PROFILE_*` style; `EXT_CAP_ID_
+PROTOCOL` deduplicated into `caps.h`), the dead `XHCI_HID_TRACE` flag wired
+to an interrupt-IN payload dump, `uint8_t` port loops wraparound-hardened,
+and the probe path resets `proto_ranges` so a failed candidate cannot leak
+its protocol map into the next one at the same index.
+Full-image link check (Windows sandbox, clang/lld stand-in for the
+x86_64-elf cross toolchain): all 86 kernel objects + user_init + font blobs
+compile and link into `kernel.elf` via `linker/kernel.ld` with `R-X`/`R--`/
+`RW-` segments intact and all public `xhci_*` symbols present. Two honest
+deltas vs the official build: one pre-existing clang-only
+`-Wunused-but-set-global` warning in untouched `ps2_keyboard.c`, and
+compiler-generated `memcpy`/`memset` (clang lowers struct copies to calls
+where gcc inlines them) satisfied by a TEMP-local builtins shim that is not
+committed. This proves cross-TU integration, not bootability.
+
+QEMU evidence (WSL, official `x86_64-linux-gnu-` toolchain, `make iso` +
+`make test` exit 0): plain ISO boot reaches `RIXURI:KERNEL_READY` with
+`xHCI: controllers=0` and zero fault markers; with `nec-usb-xhci` + `usb-kbd`
+the new driver probes `1033:0194` (HCRESET/CNR clean, DCBAA/CRCR/ERST/ERDP
+programmed, RUN set, 8 ports), enables slot 1, addresses port 5, runs the full
+EP0 sequence (GET_DESCRIPTOR device/config, SET_CONFIGURATION, HID report
+descriptor, SET_PROTOCOL, SET_IDLE) with no retries/errors, and registers the
+keyboard on interrupt-IN `0x81` (vid `0627`). A monitor `sendkey` run captured
+a real 8-byte HID report (`05` = 'b') through transfer-event completion and
+residual accounting. Fast press-release keys between the slow emulated polls
+are missed (second run captured none) — QEMU timing, not a driver error. AMD
+B650 hardware run remains open, and QEMU PASS is never reported as hardware
+PASS. New files carry `SPDX-License-Identifier: GPL-2.0` with Linux
+provenance; the repository still has no `LICENSE` file, so GPL placement must
+be resolved before release.

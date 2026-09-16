@@ -63,7 +63,8 @@ Nothing here is guessed: unknown items say TBD.
 
 ### Kernel xHCI hardware profile (Phase H6)
 
-`kernel/usb/xhci_profile.{c,h}` holds this board's per-PCI-ID facts as
+`kernel/usb/xhci/profile.{c,h}` (Linux-derived `kernel/usb/xhci/` driver tree)
+holds this board's per-PCI-ID facts as
 pure, host-tested data (`make xhci-profile-test`): expected port count,
 expected xHCI interface version, the failing-port list above, and quirk
 flags. At init the kernel compares those expectations against each
