@@ -159,9 +159,9 @@ static int split_parent(const char*path,char*parent,size_t pc,char*name,size_t n
     for(size_t i=0;i<nl;i++)name[i]=norm[slash+i];
     name[nl]=0;if(slash==1){if(pc<2)return -1;parent[0]='/';parent[1]=0;return 0;}if(slash>=pc)return -1;for(size_t i=0;i<slash-1;i++)parent[i]=norm[i];parent[slash-1]=0;return 0;
 }
-int vfs_init(void){rix_lockdep_register("vfs",6u,&vfs_lockdep_class);root.node.inode=1;root.node.type=RIX_VFS_DIR;root.node.mode=0755;root.node.uid=0;root.node.gid=0;root.node.size=0;for(size_t i=0;i<VFS_MAX_MOUNTS;i++)mounts[i].active=0;for(size_t p=0;p<RIX_PROCESS_MAX;p++)for(size_t f=0;f<RIX_VFS_FD_MAX;f++)fds[p][f].used=0;return 0;}
+int vfs_init(void){rix_lockdep_register("vfs",6u,&vfs_lockdep_class);root.node.inode=1;root.node.type=RIX_VFS_DIR;root.node.mode=0755;root.node.uid=0;root.node.gid=0;root.node.size=0;for(size_t i=0;i<VFS_MAX_MOUNTS;i++)mounts[i].active=0;for(size_t i=0;i<VFS_PIPE_MAX;i++)pipe_slots[i].used=0;for(size_t p=0;p<RIX_PROCESS_MAX;p++)for(size_t f=0;f<RIX_VFS_FD_MAX;f++)fds[p][f].used=0;return 0;}
 int vfs_mount_root(rix_block_device_t*d){VFS_GUARD();if(!d||mounts[0].active)return -1;int r=rixfs_mount(d,&mounts[0].fs);if(r)return r;mounts[0].active=1;mounts[0].path[0]='/';mounts[0].path[1]=0;root.node.inode=mounts[0].fs.super.root_inode;return 0;}
-int vfs_unmount_root(void){VFS_GUARD();if(!mounts[0].active)return -1;for(size_t p=0;p<RIX_PROCESS_MAX;p++)for(size_t f=0;f<RIX_VFS_FD_MAX;f++)fds[p][f].used=0;rixfs_unmount(&mounts[0].fs);mounts[0].active=0;root.node.inode=1;return 0;}
+int vfs_unmount_root(void){VFS_GUARD();if(!mounts[0].active)return -1;for(uint64_t pid=0;pid<RIX_PROCESS_MAX;pid++)for(int fd=0;fd<(int)RIX_VFS_FD_MAX;fd++)if(fds[pid][fd].used)(void)vfs_close_locked(pid,fd);rixfs_unmount(&mounts[0].fs);mounts[0].active=0;root.node.inode=1;return 0;}
 rixfs_t*vfs_root_fs(void){return mounts[0].active?&mounts[0].fs:(rixfs_t*)0;}
 int vfs_root(rix_vfs_path_t*out){if(!out)return -1;out->node=&root.node;out->path[0]='/';out->path[1]=0;return 0;}
 static int vfs_lookup_locked(const char*path,rix_vfs_path_t*out){if(!path||!out)return -1;if(vfs_normalize_path(path,out->path,sizeof(out->path)))return -1;if(out->path[0]=='/'&&!out->path[1])return vfs_root(out);return lookup_rixfs_path(out->path,out);}
