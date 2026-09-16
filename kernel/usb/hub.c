@@ -11,6 +11,7 @@
 #include "hub.h"
 #include "usb_ch9.h"
 #include "xhci/trb.h"
+#include "storage.h"
 #include "../serial.h"
 #include "../time/time.h"
 
@@ -340,6 +341,7 @@ static void usb_hub_detach_sweep_depth(size_t controller, uint8_t hub_slot,
                                        depth + 1u);
         }
         (void)xhci_device_detach(controller, hub_children[i].child_slot);
+        usb_storage_detach(controller, hub_children[i].child_slot);
         hub_children[i].used = 0;
     }
     for (i = 0; i < USB_HUB_MAX_HUBS; ++i) {
@@ -399,6 +401,8 @@ int usb_hub_rescan_ports(size_t controller) {
                         controller, hub_children[i].child_slot, 0u);
                     (void)xhci_device_detach(
                         controller, hub_children[i].child_slot);
+                    usb_storage_detach(controller,
+                                       hub_children[i].child_slot);
                     hub_children[i].used = 0;
                     detached++;
                 }

@@ -28,6 +28,7 @@
 #define SCSI_READ_CAPACITY10 0x25u
 #define SCSI_READ10 0x28u
 #define SCSI_WRITE10 0x2Au
+#define SCSI_SYNC_CACHE10 0x35u
 
 #define USB_STORAGE_MAX_DEVS 4u
 #define USB_STORAGE_SECTOR 512u
@@ -60,6 +61,7 @@ void usb_storage_build_inquiry(uint8_t cdb[6], uint16_t alloc_len);
 void usb_storage_build_read_capacity10(uint8_t cdb[10]);
 void usb_storage_build_read10(uint8_t cdb[10], uint32_t lba, uint16_t count);
 void usb_storage_build_write10(uint8_t cdb[10], uint32_t lba, uint16_t count);
+void usb_storage_build_sync_cache10(uint8_t cdb[10]);
 
 /* Wire path (control + bulk transfers, bounded, fail-closed). */
 int usb_storage_get_max_lun(size_t controller, uint8_t slot,
@@ -80,6 +82,9 @@ int usb_storage_read(size_t controller, uint8_t slot, uint32_t lba,
 int usb_storage_write(size_t controller, uint8_t slot, uint32_t lba,
                       const void *buffer);
 const usb_storage_dev_t *usb_storage_find(size_t controller, uint8_t slot);
+/* Forget a device and its block binding (idempotent, safe for unknown
+ * slots). Called on detach paths so replugs never hit stale entries. */
+void usb_storage_detach(size_t controller, uint8_t slot);
 /* Recovery drill (read-only): issue an illegal opcode, which every
  * compliant device must reject, then prove the device is healthy again
  * with a plain LBA0 read. Exercises the reset-recovery + retry path

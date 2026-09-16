@@ -30,6 +30,9 @@ typedef struct { uint64_t inode; uint8_t type; uint8_t reserved[7]; } rix_vfs_di
 int vfs_init(void);
 int vfs_mount_root(rix_block_device_t *device);
 int vfs_unmount_root(void);
+/* 1 when a root filesystem is mounted, 0 otherwise. Lets boot retry
+ * the mount after late (USB) block devices appear. */
+int vfs_root_active(void);
 rixfs_t *vfs_root_fs(void);
 int vfs_normalize_path(const char *input,char *output,size_t output_size);
 int vfs_root(rix_vfs_path_t *out);

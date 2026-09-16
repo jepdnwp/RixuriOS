@@ -1066,8 +1066,9 @@ while BOT headers are little-endian on the wire (only CDB/data are BE).
 Fixed with put/get_le32, and the host test now asserts raw wire bytes
 instead of round-tripping the same helper. QEMU proof: INQUIRY reports
 "QEMU HARDDISK", capacity 16384×512, LBA0 carries the planted
-"RIXUSBST" magic. Bulk-OUT 512B payloads and block-layer integration
-remain open (usb_storage_write exists for explicit future use).
+"RIXUSBST" magic. What remains open is secondary (non-root) mounts —
+there is no mount syscall yet — plus multi-LUN card readers (only LUN 0
+is exercised; QEMU offers no multi-LUN device to verify against).
 
 Recovery is proven, not just coded: probe issues an illegal opcode
 (every compliant device must reject it, read-only), then a plain LBA0
@@ -1075,3 +1076,17 @@ read must succeed, logging recovery=PASS — the reset-recovery path runs
 against real device behavior on every boot. A scripted-peer host test
 (stall-then-healthy) proves the retry state machine returns success
 with the tag advanced.
+
+USB stick as root filesystem: the stick registers a block device
+(usb0..usb3) whose submit maps BIOs to single-sector BOT transfers
+(plus SYNCHRONIZE CACHE for flush) with per-call DMA staging, because
+block-cache BIO buffers are stack slices that can straddle a physical
+page. Boot settles USB synchronously (up to 16 rounds, quiet-round
+exit, no clock dependency) and retries the mount only while unmounted,
+so NVMe boots never wait on USB. QEMU proof with an empty NVMe and a
+RixFS stick: VFS mounts usb0, the shell runs from USB, and echo/cat
+round-trips a new file (bulk-OUT 512, journal, flush and readback all
+live). Two real bugs fell out: the submit path rejected NULL-buffer
+flushes, which fails every journal commit (file creation impossible —
+NVMe accepts them, so USB root is what caught it), and the host test
+only flushed with a buffer, so a NULL-flush case pins it now.

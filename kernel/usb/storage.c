@@ -15,8 +15,32 @@
 #include "xhci.h"
 #include "xhci/trb.h"
 #include "../serial.h"
+#include "../storage/block.h"
+#include "../mm/pmm.h"
+#include "../mm/vmm.h"
 
 static usb_storage_dev_t storages[USB_STORAGE_MAX_DEVS];
+/* Block-layer bindings, parallel to storages[]: registered once,
+ * activated per probe, deactivated on detach. */
+typedef struct {
+    rix_block_device_t bdev;
+    uint8_t registered;
+    uint8_t active;
+    size_t controller;
+    uint8_t slot;
+    uint32_t blocks;
+} usb_block_t;
+
+static usb_block_t usb_blocks[USB_STORAGE_MAX_DEVS];
+
+static void usb_block_register(size_t controller, uint8_t slot,
+                               uint32_t blocks);
+static int usb_storage_transaction(size_t controller, uint8_t slot,
+                                   uint8_t interface_number, uint8_t bulk_in,
+                                   uint8_t bulk_out, uint32_t *tag,
+                                   const uint8_t *cdb, uint8_t cdb_len,
+                                   uint8_t *xfer, uint32_t data_len,
+                                   int data_in);
 /* Single 512-byte staging sector (.bss image memory is physically
  * contiguous, satisfying the DMA linearity check). */
 static uint8_t sector_stage[USB_STORAGE_SECTOR];
@@ -113,6 +137,12 @@ void usb_storage_build_write10(uint8_t cdb[10], uint32_t lba, uint16_t count) {
     cdb[0] = SCSI_WRITE10;
     usb_storage_put_be32(cdb + 2u, lba);
     usb_storage_put_be16(cdb + 7u, count);
+}
+
+void usb_storage_build_sync_cache10(uint8_t cdb[10]) {
+    unsigned i;
+    for (i = 0; i < 10u; ++i) cdb[i] = 0;
+    cdb[0] = SCSI_SYNC_CACHE10;
 }
 
 static int storage_control(size_t controller, uint8_t slot,
@@ -214,22 +244,58 @@ static int bulk_exact(size_t controller, uint8_t slot, uint8_t ep,
 
 /* One BOT transaction with exactly one recovery + retry. data_len is
  * capped to 512 (one sector): the only caller sizes are INQUIRY(36),
- * CAPACITY(8) and single-sector READ/WRITE. larger sizes fail closed. */
+ * CAPACITY(8) and single-sector READ/WRITE/SYNC (512/0). Larger sizes
+ * fail closed.
+ *
+ * DMA staging: transfer buffers come from callers that may hand stack
+ * slices straddling a physical page boundary (the block cache does), so
+ * the payload always moves through a freshly allocated DMA page. The
+ * page is per-call, so this stays correct under SMP concurrency with no
+ * new locks; transfers never yield, so no other task can interleave. */
 int usb_storage_command(size_t controller, uint8_t slot,
                         uint8_t interface_number, uint8_t bulk_in,
                         uint8_t bulk_out, uint32_t *tag, const uint8_t *cdb,
                         uint8_t cdb_len, void *data, uint32_t data_len,
                         int data_in) {
-    uint8_t cbw[BOT_CBW_SIZE];
-    uint8_t csw[BOT_CSW_SIZE];
-    uint32_t my_tag;
+    uint64_t stage = 0;
+    uint8_t *xfer = (uint8_t *)data;
     int rc;
-    unsigned attempt;
     if (!tag || !cdb || cdb_len == 0u || cdb_len > 16u ||
         interface_number >= 32u || bulk_in == 0u || bulk_out == 0u)
         return -1;
     if (data_len > USB_STORAGE_SECTOR) return -1;
     if (data_len != 0u && !data) return -1;
+    if (data_len != 0u) {
+        /* Below 4 GiB: safe for xHCIs without 64-bit addressing. */
+        stage = pmm_alloc_page_below(0x100000000ULL);
+        if (!stage) return -20;
+        xfer = (uint8_t *)vmm_phys_ptr(stage);
+        if (!xfer) {
+            pmm_free_page(stage);
+            return -20;
+        }
+        if (!data_in) __builtin_memcpy(xfer, data, data_len);
+    }
+    rc = usb_storage_transaction(controller, slot, interface_number,
+                                 bulk_in, bulk_out, tag, cdb, cdb_len,
+                                 xfer, data_len, data_in);
+    if (data_in && data_len != 0u && data)
+        __builtin_memcpy(data, xfer, data_len);
+    if (stage) pmm_free_page(stage);
+    return rc;
+}
+
+static int usb_storage_transaction(size_t controller, uint8_t slot,
+                                   uint8_t interface_number, uint8_t bulk_in,
+                                   uint8_t bulk_out, uint32_t *tag,
+                                   const uint8_t *cdb, uint8_t cdb_len,
+                                   uint8_t *xfer, uint32_t data_len,
+                                   int data_in) {
+    uint8_t cbw[BOT_CBW_SIZE];
+    uint8_t csw[BOT_CSW_SIZE];
+    uint32_t my_tag;
+    int rc;
+    unsigned attempt;
     for (attempt = 0; attempt < 2u; ++attempt) {
         uint16_t csw_actual = 0;
         uint16_t chunk;
@@ -251,11 +317,11 @@ int usb_storage_command(size_t controller, uint8_t slot,
             chunk = left > USB_STORAGE_SECTOR ? USB_STORAGE_SECTOR
                                               : (uint16_t)left;
             if (data_in)
-                rc = bulk_exact(controller, slot, bulk_in,
-                                (uint8_t *)data + done, chunk, 1);
+                rc = bulk_exact(controller, slot, bulk_in, xfer + done,
+                                chunk, 1);
             else
-                rc = bulk_exact(controller, slot, bulk_out,
-                                (uint8_t *)data + done, chunk, 0);
+                rc = bulk_exact(controller, slot, bulk_out, xfer + done,
+                                chunk, 0);
             if (rc != 0) {
                 serial_write("xHCI: storage DATA failed=");
                 serial_write_dec((uint64_t)(rc < 0 ? -rc : rc));
@@ -423,6 +489,7 @@ int usb_storage_probe(size_t controller, uint8_t slot,
         dev->used = 0;
         return -15;
     }
+    usb_block_register(controller, slot, blocks);
     if (out_dev) *out_dev = dev;
     return 0;
 }
@@ -442,17 +509,147 @@ int usb_storage_read(size_t controller, uint8_t slot, uint32_t lba,
 int usb_storage_write(size_t controller, uint8_t slot, uint32_t lba,
                       const void *buffer) {
     usb_storage_dev_t *dev = storage_mut(controller, slot);
-    static uint8_t stage[USB_STORAGE_SECTOR];
     uint8_t cdb[16];
-    uint32_t i;
     if (!dev || !buffer) return -1;
     if (lba >= dev->blocks) return -2;
-    /* Stage through .bss so the DMA linearity check always holds, even
-     * for caller buffers that cross a page boundary. */
-    for (i = 0; i < USB_STORAGE_SECTOR; ++i)
-        stage[i] = ((const uint8_t *)buffer)[i];
+    /* DMA staging happens inside usb_storage_command. */
     usb_storage_build_write10(cdb, lba, 1u);
     return usb_storage_command(controller, slot, dev->interface_number,
                                dev->bulk_in, dev->bulk_out, &dev->tag, cdb,
-                               10, stage, USB_STORAGE_SECTOR, 0);
+                               10, (void *)buffer, USB_STORAGE_SECTOR, 0);
+}
+
+void usb_storage_detach(size_t controller, uint8_t slot) {
+    for (unsigned i = 0; i < USB_STORAGE_MAX_DEVS; ++i) {
+        if (storages[i].used && storages[i].controller == controller &&
+            storages[i].slot == slot)
+            storages[i].used = 0;
+    }
+    for (unsigned i = 0; i < USB_STORAGE_MAX_DEVS; ++i) {
+        if (usb_blocks[i].active && usb_blocks[i].controller == controller &&
+            usb_blocks[i].slot == slot)
+            usb_blocks[i].active = 0;
+    }
+}
+
+/* Block-layer backend: one rix_block_device ("usbN") per probed stick.
+ * submit() maps BIO sectors 1:1 to single-sector BOT transfers (the BIO
+ * contract caps count at RIX_BIO_MAX_SECTORS) and SYNCHRONIZE CACHE to
+ * flush. Dead slots fail closed via the active flag plus a live slot
+ * check, so unplugged sticks can never complete ghost I/O. */
+static int usb_block_submit(rix_block_device_t *d, rix_bio_t *bio) {
+    usb_block_t *w = (usb_block_t *)d->driver_data;
+    uint64_t end;
+    uint64_t i;
+    /* FLUSH carries no buffer by contract (block.c only requires
+     * count==0); READ/WRITE must have one. Rejecting a NULL flush
+     * breaks every journal commit, which is exactly how an earlier
+     * revision failed file creation on USB roots. */
+    if (!w || !bio || (bio->op != RIX_BIO_FLUSH && !bio->buffer)) {
+        if (bio) {
+            bio->state = RIX_BIO_ERROR;
+            bio->error = -1;
+        }
+        return -1;
+    }
+    if (!w->active || !xhci_slot_active(w->controller, w->slot)) {
+        bio->state = RIX_BIO_ERROR;
+        bio->error = -1;
+        return -1;
+    }
+    if (bio->op == RIX_BIO_FLUSH) {
+        usb_storage_dev_t *dev = storage_mut(w->controller, w->slot);
+        uint8_t cdb[16];
+        int rc;
+        if (!dev) {
+            bio->state = RIX_BIO_ERROR;
+            bio->error = -1;
+            return -1;
+        }
+        usb_storage_build_sync_cache10(cdb);
+        rc = usb_storage_command(w->controller, w->slot,
+                                 dev->interface_number, dev->bulk_in,
+                                 dev->bulk_out, &dev->tag, cdb, 10, 0, 0,
+                                 1);
+        bio->state = rc == 0 ? RIX_BIO_COMPLETE : RIX_BIO_ERROR;
+        bio->error = rc;
+        return rc;
+    }
+    if (bio->op != RIX_BIO_READ && bio->op != RIX_BIO_WRITE) {
+        bio->state = RIX_BIO_ERROR;
+        bio->error = -2;
+        return -2;
+    }
+    if (bio->count == 0u || bio->count > RIX_BIO_MAX_SECTORS) {
+        bio->state = RIX_BIO_ERROR;
+        bio->error = -2;
+        return -2;
+    }
+    end = bio->sector + (uint64_t)bio->count;
+    if (end < bio->sector || end > w->blocks) {
+        bio->state = RIX_BIO_ERROR;
+        bio->error = -2;
+        return -2;
+    }
+    if (bio->buffer_size < (uint64_t)bio->count * USB_STORAGE_SECTOR) {
+        bio->state = RIX_BIO_ERROR;
+        bio->error = -2;
+        return -2;
+    }
+    for (i = 0; i < bio->count; ++i) {
+        uint32_t lba = (uint32_t)(bio->sector + i);
+        uint8_t *buf = (uint8_t *)bio->buffer + i * USB_STORAGE_SECTOR;
+        int rc = (bio->op == RIX_BIO_READ)
+            ? usb_storage_read(w->controller, w->slot, lba, buf)
+            : usb_storage_write(w->controller, w->slot, lba, buf);
+        if (rc != 0) {
+            serial_write("xHCI: storage BIO op=");
+            serial_write_dec(bio->op);
+            serial_write(" sector=");
+            serial_write_dec(bio->sector + i);
+            serial_write(" rc=");
+            serial_write_dec((uint64_t)(rc < 0 ? -rc : rc));
+            serial_write("\r\n");
+            bio->state = RIX_BIO_ERROR;
+            bio->error = rc;
+            return rc;
+        }
+    }
+    bio->state = RIX_BIO_COMPLETE;
+    bio->error = 0;
+    return 0;
+}
+
+static void usb_block_register(size_t controller, uint8_t slot,
+                               uint32_t blocks) {
+    for (unsigned i = 0; i < USB_STORAGE_MAX_DEVS; ++i) {
+        usb_block_t *w = &usb_blocks[i];
+        if (w->active) continue;
+        w->bdev.name[0] = 'u';
+        w->bdev.name[1] = 's';
+        w->bdev.name[2] = 'b';
+        w->bdev.name[3] = (char)('0' + i);
+        w->bdev.name[4] = 0;
+        w->bdev.sector_size = USB_STORAGE_SECTOR;
+        w->bdev.sector_count = blocks;
+        w->bdev.max_sectors = RIX_BIO_MAX_SECTORS;
+        w->bdev.flags = 0;
+        w->bdev.submit = usb_block_submit;
+        w->bdev.driver_data = w;
+        if (!w->registered) {
+            if (block_register(&w->bdev) != 0) return;
+            w->registered = 1;
+        }
+        w->active = 1;
+        w->controller = controller;
+        w->slot = slot;
+        w->blocks = blocks;
+        serial_write("xHCI: storage block usb");
+        serial_write_dec(i);
+        serial_write(" blocks=");
+        serial_write_dec(blocks);
+        serial_write("\r\n");
+        return;
+    }
+    serial_write("xHCI: storage block registry full\r\n");
 }

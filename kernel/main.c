@@ -224,19 +224,21 @@ static int xhci_enumerate_and_configure(size_t controller, const rix_xhci_device
  return 0;
 }
 static int terminal_signal_group(uint32_t process_group,unsigned signal){return process_signal_group((pid_t)process_group,signal);}
-static void xhci_hotplug_worker(void *arg){
- (void)arg;
+static void xhci_hotplug_worker(void *arg);
+static int xhci_hotplug_round(void){
  /* Per-controller error throttle: parked ports already suppress repeats in
   * xhci_service_hotplug, but transient errors must not repaint the
   * framebuffer at scheduler rate. Log on change or every ~2s. */
  static int last_err[4];
  static uint64_t last_err_ns[4];
  static uint8_t last_err_valid[4];
- for(;;){
+ static unsigned hub_div=0;
+ int activity=0;
   for(size_t controller=0;controller<xhci_controller_count();controller++){
    rix_xhci_device_t device;uint8_t connected=0;
    int rc=xhci_service_hotplug(controller,&device,&connected);
    if(rc>0){
+    activity=1;
     serial_write("xHCI: device ");serial_write(connected?"attached":"detached");
     serial_write(" controller=");serial_write_dec(controller);
     serial_write(" port=");serial_write_dec(device.port);
@@ -248,11 +250,14 @@ static void xhci_hotplug_worker(void *arg){
        klog_write_dec((uint64_t)(-enum_rc));klog_write("\r\n");
        xhci_park_port(controller,device.port);
        (void)xhci_device_detach(controller,device.slot_id);
+       usb_storage_detach(controller,device.slot_id);
       }
      }else if(device.state==XHCI_DEVICE_DETACHED){
       usb_hub_detach_sweep(controller,device.slot_id);
+      usb_storage_detach(controller,device.slot_id);
      }
    } else if(rc<0){
+   activity=1;
    int log_it=1;
    if(controller<4u){
     uint64_t now=time_monotonic_ns();
@@ -266,6 +271,40 @@ static void xhci_hotplug_worker(void *arg){
    }
    }
   }
+  /* Hub port rescan every 16th round: hub children have no root-port
+   * events, so a dark hub port is the only disconnect signal, and a
+   * newly-connected hub port is the only re-attach signal. Bounded
+   * by the registries; control transfers only. */
+  if(++hub_div>=16u){hub_div=0;activity=1;
+   for(size_t c2=0;c2<xhci_controller_count();c2++){
+    (void)usb_hub_rescan_ports(c2);
+    for(unsigned n=0;n<4u;n++){
+     rix_xhci_device_t nd;int prc=usb_hub_poll_new_child(c2,&nd);
+     if(prc<=0)break;
+     if(xhci_enumerate_and_configure(c2,&nd)!=0){
+      (void)xhci_device_detach(c2,nd.slot_id);
+      usb_storage_detach(c2,nd.slot_id);
+      continue;
+     }
+     usb_hub_register_child(c2,nd.parent_hub_slot,nd.port,nd.slot_id);
+    }}}
+ return activity;
+}
+/* Bounded pre-scheduler USB settle so a USB-stick root is mounted, not
+ * skipped: up to 16 rounds, exiting on the first fully quiet round
+ * (parked failures go quiet, so flappers cannot hold the boot). No
+ * clock dependency (monotonic time may be frozen pre-PIT); pacing is a
+ * fixed udelay. Costs one cheap round when no USB is present. */
+static void xhci_settle_usb(void){
+ for(unsigned r=0;r<16u;r++){
+  if(xhci_hotplug_round()==0)break;
+  xhci_udelay(50000u);
+ }
+}
+static void xhci_hotplug_worker(void *arg){
+ (void)arg;
+ for(;;){
+  xhci_hotplug_round();
   scheduler_yield();
  }
 }
@@ -317,24 +356,8 @@ static void keyboard_poll_worker(void *arg){
       (void)xhci_reset_endpoint(known_keyboards[k].controller,known_keyboards[k].slot,
                                 known_keyboards[k].endpoint);
      }
+     }
     }
-   }
-   /* Hub port rescan every 16th round: hub children have no root-port
-    * events, so a dark hub port is the only disconnect signal, and a
-    * newly-connected hub port is the only re-attach signal. Bounded
-    * by the registries; control transfers only. */
-   {static unsigned hub_div=0;
-    if(++hub_div>=16u){hub_div=0;
-     for(size_t c2=0;c2<xhci_controller_count();c2++){
-      (void)usb_hub_rescan_ports(c2);
-      for(unsigned n=0;n<4u;n++){
-       rix_xhci_device_t nd;int prc=usb_hub_poll_new_child(c2,&nd);
-       if(prc<=0)break;
-       if(xhci_enumerate_and_configure(c2,&nd)!=0){
-        (void)xhci_device_detach(c2,nd.slot_id);continue;
-       }
-       usb_hub_register_child(c2,nd.parent_hub_slot,nd.port,nd.slot_id);
-      }}}}
    scheduler_yield();
   }
 }
@@ -426,7 +449,7 @@ static void smp_r4_spinner(const char *tag, volatile uint64_t *ctr){
 static void smp_r4_spinner_h(void *arg){(void)arg;smp_r4_spinner("H",&r4_spin_h);}
 static void smp_r4_spinner_n(void *arg){(void)arg;smp_r4_spinner("N",&r4_spin_n);}
 static const char *vfs_mount_rc_string(int rc){switch(rc){case 0:return "ok";case -1:return "bad device";case -2:return "no memory";case -3:return "superblock read IO error";case -4:return "superblock too small";case -5:return "not a RixFS superblock";case -6:return "superblock geometry inconsistent";case -7:return "inode table overflow";case -8:return "superblock layout overlap";case -9:return "journal replay failed";default:return "unknown";}}
-static void try_mount_root(void){const char *names[]={"nvme0n1","nvme0n1p1","nvme1n1","nvme1n1p1"};for(size_t b=0;b<block_device_count();b++){const rix_block_device_t*bd=block_device_at(b);if(!bd)continue;klog_write("BLOCK: ");klog_write(bd->name);klog_write(" sectors=");klog_write_dec(bd->sector_count);klog_write(" sector_size=");klog_write_dec(bd->sector_size);klog_write("\r\n");}for(size_t c=0;c<nvme_controller_count();c++){const rix_nvme_controller_t*nc=nvme_controller(c);if(!nc)continue;for(uint32_t ns=0;ns<32u;ns++){if(!nc->namespaces[ns].used)continue;klog_write("NVMe: ctrl=");klog_write_dec(c);klog_write(" ns=");klog_write_dec(nc->namespaces[ns].nsid);klog_write(" sectors=");klog_write_dec(nc->namespaces[ns].size_lba);klog_write(" sector_size=");klog_write_dec(nc->namespaces[ns].lba_size);klog_write("\r\n");}}int last_rc=0,tried=0;for(size_t i=0;i<sizeof(names)/sizeof(names[0]);i++){rix_block_device_t*d=block_find(names[i]);if(!d)continue;tried=1;int rc=vfs_mount_root(d);last_rc=rc;klog_write("VFS: mount ");klog_write(names[i]);klog_write(" rc=");klog_write_dec((uint64_t)(rc<0?-rc:rc));klog_write("\r\n");if(rc==0)return;}if(!tried)klog_write("VFS: no candidate block devices present (embedded init continues)\r\n");else if(last_rc!=0){klog_write("VFS: disk root unavailable (");klog_write(vfs_mount_rc_string(last_rc));klog_write("); using embedded init\r\n");}}
+static void try_mount_root(void){const char *names[]={"nvme0n1","nvme0n1p1","nvme1n1","nvme1n1p1","usb0","usb1","usb2","usb3"};for(size_t b=0;b<block_device_count();b++){const rix_block_device_t*bd=block_device_at(b);if(!bd)continue;klog_write("BLOCK: ");klog_write(bd->name);klog_write(" sectors=");klog_write_dec(bd->sector_count);klog_write(" sector_size=");klog_write_dec(bd->sector_size);klog_write("\r\n");}for(size_t c=0;c<nvme_controller_count();c++){const rix_nvme_controller_t*nc=nvme_controller(c);if(!nc)continue;for(uint32_t ns=0;ns<32u;ns++){if(!nc->namespaces[ns].used)continue;klog_write("NVMe: ctrl=");klog_write_dec(c);klog_write(" ns=");klog_write_dec(nc->namespaces[ns].nsid);klog_write(" sectors=");klog_write_dec(nc->namespaces[ns].size_lba);klog_write(" sector_size=");klog_write_dec(nc->namespaces[ns].lba_size);klog_write("\r\n");}}int last_rc=0,tried=0;for(size_t i=0;i<sizeof(names)/sizeof(names[0]);i++){rix_block_device_t*d=block_find(names[i]);if(!d)continue;tried=1;int rc=vfs_mount_root(d);last_rc=rc;klog_write("VFS: mount ");klog_write(names[i]);klog_write(" rc=");klog_write_dec((uint64_t)(rc<0?-rc:rc));klog_write("\r\n");if(rc==0)return;}if(!tried)klog_write("VFS: no candidate block devices present (embedded init continues)\r\n");else if(last_rc!=0){klog_write("VFS: disk root unavailable (");klog_write(vfs_mount_rc_string(last_rc));klog_write("); using embedded init\r\n");}}
 
 void kernel_main(const rixuri_boot_info_t *boot){
  /* serial + GDT/IDT first. NO framebuffer access before VMM init! */
@@ -499,6 +522,15 @@ void kernel_main(const rixuri_boot_info_t *boot){
   klog_write("xHCI: controllers=");klog_write_dec(xhci_controller_count());klog_write("\r\n");
   xhci_dump_ports();
   klog_write("BOOT: xHCI done\r\n");
+  /* USB sticks enumerate asynchronously in the hotplug worker, after
+   * try_mount_root above already ran: settle them synchronously now and
+   * retry the mount, but only while no root is mounted (the NVMe fast
+   * path above never waits on USB). */
+  if(!vfs_root_active()){
+   xhci_settle_usb();
+   if(!vfs_root_active())try_mount_root();
+   klog_write("BOOT: USB settle done\r\n");
+  }
  if(pit_init(100)!=0)panic("PIT initialization failed");
  if(rtc_init()!=0)klog_write("RTC: unavailable or non-24-hour mode\r\n");
  if(time_init(100)!=0)klog_write("TIME: realtime clock unavailable; monotonic clock active\r\n");
