@@ -56,12 +56,23 @@
 #define XHCI_MMIO_READ32(base, off) (*(volatile uint32_t *)((base) + (off)))
 #define XHCI_MMIO_WRITE32(base, off, v) (*(volatile uint32_t *)((base) + (off)) = (v))
 
+/* Transfer wait timeout code (see xhc_wait_transfer): the TD stays owned
+ * by the controller, so callers must not orphan another TD on top of it. */
+#define XHCI_XFER_TIMEOUT (-100)
+
 /* Endpoint runtime: one transfer ring per DCI (Linux xhci_virt_ep ring). */
 typedef struct {
     uint64_t ring_phys;
     uint8_t type;
     uint8_t cycle;
     uint16_t enqueue;
+    /* Single-flight TD tracking: at most one TD is ever outstanding per
+     * endpoint. in_flight_first/last bracket the live TD's TRB range;
+     * cleared on completion/error, on ring replacement, and on slot
+     * teardown. Never cleared by a timeout — the TD is still live. */
+    uint8_t in_flight;
+    uint64_t in_flight_first;
+    uint64_t in_flight_last;
 } xhci_endpoint_runtime_t;
 
 typedef struct {
@@ -205,6 +216,7 @@ int xhc_wait_transfer(size_t ctl, xhci_runtime_t *rt, uint64_t first_phys,
                       uint16_t requested, uint16_t *actual);
 
 /* ---- ep.c (non-control endpoints) ---- */
+unsigned xhc_ep_interval(uint8_t speed, uint8_t ep_type, uint8_t binterval);
 int xhc_endpoint_transfer(size_t ctl, uint8_t slot_id, uint8_t endpoint_address,
                           uint8_t ep_type, void *buffer, uint16_t length,
                           uint16_t *actual_length);
@@ -239,4 +251,4 @@ void xhc_log_address_device_begin(size_t ctl, uint8_t slot_id, uint8_t port,
 void xhc_log_ep0_trb(const char *tag, uint64_t phys);
 void xhc_log_ep0_context_and_ring(size_t ctl, uint8_t slot_id);
 void xhc_cc4_snapshot(size_t ctl, xhci_runtime_t *rt, uint8_t slot_id,
-                      uint64_t first_phys, uint64_t last_phys);
+                      uint8_t ep_id, uint64_t first_phys, uint64_t last_phys);

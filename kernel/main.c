@@ -212,12 +212,28 @@ static void keyboard_poll_worker(void *arg){
   for(;;){
    ps2_keyboard_poll();
    for(size_t k=0;k<RIX_MAX_KEYBOARDS;k++){
+    static uint64_t xhci_recover_ns[RIX_MAX_KEYBOARDS];
     if(!known_keyboards[k].used)continue;
     uint16_t actual=0;
     int rc=hid_xhci_keyboard_poll_protocol(known_keyboards[k].controller,
      known_keyboards[k].slot,known_keyboards[k].endpoint,
      0,known_keyboards[k].report_id,kbd_report_buf,sizeof(kbd_report_buf),&actual);
-    (void)rc;
+    /* A halted endpoint (transaction/stall error) fails every later poll
+     * the same way until it is reset: one bounded Reset Endpoint +
+     * dequeue restart per failure, log throttled to 2s. The error itself
+     * is never masked — recovery only re-arms the next poll. Timeouts
+     * (-100) need no reset: single-flight keeps the live TD pending and
+     * the next poll resumes waiting on it. */
+    if(rc==-4||rc==-6){
+     uint64_t now=time_monotonic_ns();
+     if(now-xhci_recover_ns[k]>=2000000000ULL){
+      xhci_recover_ns[k]=now;
+      serial_write("xHCI: kbd endpoint recovery slot=");serial_write_dec(known_keyboards[k].slot);
+      serial_write(" rc=");serial_write_dec((uint64_t)(rc<0?-rc:rc));serial_write("\r\n");
+     }
+     (void)xhci_reset_endpoint(known_keyboards[k].controller,known_keyboards[k].slot,
+                               known_keyboards[k].endpoint);
+    }
    }
    scheduler_yield();
   }

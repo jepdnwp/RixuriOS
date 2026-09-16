@@ -102,6 +102,8 @@ int xhci_enumerate_device(size_t controller, uint8_t slot,
                           size_t *interface_count, size_t *endpoint_count);
 int xhci_configure_endpoint(size_t controller, uint8_t slot,
                             const rix_xhci_endpoint_config_t *config);
+int xhci_reset_endpoint(size_t controller, uint8_t slot_id,
+                        uint8_t endpoint_address);
 int xhci_interrupt_transfer(size_t controller, uint8_t slot, uint8_t endpoint_address,
                             void *buffer, uint16_t length, uint16_t *actual_length);
 int xhci_bulk_transfer(size_t controller, uint8_t slot, uint8_t endpoint_address,

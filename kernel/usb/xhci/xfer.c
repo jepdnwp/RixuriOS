@@ -121,7 +121,7 @@ int xhc_wait_transfer(size_t ctl, xhci_runtime_t *rt, uint64_t first_phys,
         if (cc == XHCI_COMP_SHORT_PACKET) return 0;
 #if XHCI_CC4_SNAPSHOT
         if (cc == XHCI_COMP_USB_TRANSACTION_ERROR)
-            xhc_cc4_snapshot(ctl, rt, slot_id, first_phys, last_phys);
+            xhc_cc4_snapshot(ctl, rt, slot_id, ep_id, first_phys, last_phys);
 #endif
         return cc != 0u ? -(int)cc : -90;
     }

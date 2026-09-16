@@ -58,6 +58,9 @@ void xhc_release_slot_context(size_t ctl, uint8_t slot_id) {
         slot->endpoints[i].type = 0;
         slot->endpoints[i].cycle = 0;
         slot->endpoints[i].enqueue = 0;
+        slot->endpoints[i].in_flight = 0;
+        slot->endpoints[i].in_flight_first = 0;
+        slot->endpoints[i].in_flight_last = 0;
     }
     slot->device_context_phys = 0;
     slot->input_context_phys = 0;

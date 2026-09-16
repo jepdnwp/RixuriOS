@@ -978,3 +978,24 @@ caught by QEMU: rewriting the report-descriptor fetch as CLASS type stalled
 firmware (`failed=8`); GET_DESCRIPTOR stays STANDARD-to-interface (`0x81`,
 pinned by static assert). Host vectors added (usage-range keyboard/mouse,
 unbalanced/long/inverted items, QEMU-observed 34-byte config, IAD skip).
+
+EP1 transaction-error diagnosis (B650 field report: EP0 completes, EP1
+interrupt-IN returns CC=4 repeatedly): every EP1 context/TRB bit was
+compared against Linux xhci-mem.c/xhci-ring.c — add/drop flags, doorbell
+target, dequeue cycle, CErr and transfer TRB layout all matched, but four
+real divergences were fixed: FS/LS Interval now encodes fls(bInterval*8)-1
+clamped 3..10 instead of raw bInterval (FS 10 scheduled every 128ms instead
+of ~8ms), ESIT payload carries maxp instead of 0, ISP is set on IN
+transfers, MPS is masked to 11 bits with HS burst from bits 12:11, and bulk
+endpoints accept interval 0. Separately, NAK-waiting interrupt-IN polls
+could time out while the TD stayed live, orphaning a new TD per poll
+(single-flight discipline now: at most one outstanding TD per endpoint,
+late polls resume waiting on the live TD), and a halted endpoint failed
+every later poll identically while the worker ignored rc (new
+xhci_reset_endpoint hard-reset + dequeue restart; the worker recovers once
+per CC=4/stall with throttled logging, timeouts need no reset). CC=4
+snapshots now dump the failing endpoint's context/ring instead of EP0's.
+Nothing is masked: errors still complete to callers and recovery is explicit
+and bounded. QEMU re-verified (probe PASS, keyboard registered, no
+enumeration failures); the first-CC=4 trigger on silicon still needs the
+B650 serial log with the new per-endpoint snapshot lines.

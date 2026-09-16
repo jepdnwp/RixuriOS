@@ -442,20 +442,25 @@ void xhc_log_ep0_context_and_ring(size_t ctl, uint8_t slot_id) {
 #endif
 
 #if XHCI_CC4_SNAPSHOT
-/* Transaction-Error snapshot: decode the failing Setup (if any), the slot
- * and EP0 context, and the unconsumed EP0 ring tail. Read-only. */
+/* Transaction-Error snapshot for the FAILING endpoint (Linux-style
+ * completion forensics, read-only). EP0 keeps the Setup decode; other
+ * DCIs dump their own context and ring tail instead of EP0's, so an EP1
+ * CC=4 no longer misattributes EP0 state. */
 void xhc_cc4_snapshot(size_t ctl, xhci_runtime_t *rt, uint8_t slot_id,
-                      uint64_t first_phys, uint64_t last_phys) {
+                      uint8_t ep_id, uint64_t first_phys, uint64_t last_phys) {
     xhci_slot_runtime_t *slot;
     const rix_xhci_controller_t *c;
     uint32_t csz;
     volatile uint32_t *dev;
-    volatile uint32_t *ep0;
+    volatile uint32_t *ep;
     volatile rix_xhci_trb_t *first;
+    volatile rix_xhci_trb_t *ring;
+    uint64_t ring_phys;
+    uint16_t enqueue;
     uint64_t sp;
     uint64_t now;
     if (ctl >= xhc_count || slot_id == 0u ||
-        slot_id > xhc_controllers[ctl].max_slots)
+        slot_id > xhc_controllers[ctl].max_slots || ep_id >= 32u)
         return;
     c = &xhc_controllers[ctl];
     slot = &rt->slots[slot_id];
@@ -463,31 +468,44 @@ void xhc_cc4_snapshot(size_t ctl, xhci_runtime_t *rt, uint8_t slot_id,
     serial_write_dec(ctl);
     serial_write(" slot=");
     serial_write_dec(slot_id);
+    serial_write(" ep=");
+    serial_write_dec(ep_id);
     serial_write("\r\n");
     if (last_phys < first_phys ||
         last_phys - first_phys > 2u * sizeof(rix_xhci_trb_t))
         return;
     first = (volatile rix_xhci_trb_t *)(uintptr_t)first_phys;
-    sp = ((uint64_t)first->parameter_hi << 32) | first->parameter_lo;
-    serial_write("xHCI: setup brt=");
-    serial_write_hex(sp & 0xffu);
-    serial_write(" br=");
-    serial_write_hex((sp >> 8) & 0xffu);
-    serial_write(" wVal=");
-    serial_write_hex((sp >> 16) & 0xffffu);
-    serial_write(" wIdx=");
-    serial_write_hex((sp >> 32) & 0xffffu);
-    serial_write(" wLen=");
-    serial_write_hex((sp >> 48) & 0xffffu);
-    if (((sp >> 8) & 0xffu) == 6u) {
-        serial_write(" desc=");
-        serial_write(xhc_desc_name((uint8_t)((sp >> 24) & 0xffu)));
+    if (ep_id == 1u) {
+        sp = ((uint64_t)first->parameter_hi << 32) | first->parameter_lo;
+        serial_write("xHCI: setup brt=");
+        serial_write_hex(sp & 0xffu);
+        serial_write(" br=");
+        serial_write_hex((sp >> 8) & 0xffu);
+        serial_write(" wVal=");
+        serial_write_hex((sp >> 16) & 0xffffu);
+        serial_write(" wIdx=");
+        serial_write_hex((sp >> 32) & 0xffffu);
+        serial_write(" wLen=");
+        serial_write_hex((sp >> 48) & 0xffffu);
+        if (((sp >> 8) & 0xffu) == 6u) {
+            serial_write(" desc=");
+            serial_write(xhc_desc_name((uint8_t)((sp >> 24) & 0xffu)));
+        }
+        serial_write("\r\n");
+    } else {
+        serial_write("xHCI: xfer param=");
+        serial_write_hex(((uint64_t)first->parameter_hi << 32) |
+                         first->parameter_lo);
+        serial_write(" status=");
+        serial_write_hex(first->status);
+        serial_write(" control=");
+        serial_write_hex(first->control);
+        serial_write("\r\n");
     }
-    serial_write("\r\n");
     if (!slot->device_context_phys) return;
     csz = (c->hcc_params1 & XHCI_HCC_CSZ) != 0u ? 64u : 32u;
     dev = (volatile uint32_t *)(uintptr_t)slot->device_context_phys;
-    ep0 = dev + csz / 4u;
+    ep = dev + csz / 4u * (uint32_t)ep_id;
     serial_write("xHCI: slot route=");
     serial_write_hex(dev[0] & 0xfffffu);
     serial_write(" speed=");
@@ -501,28 +519,34 @@ void xhc_cc4_snapshot(size_t ctl, xhci_runtime_t *rt, uint8_t slot_id,
     serial_write(" state=");
     serial_write_dec((dev[3] >> 27) & 0x1fu);
     serial_write("\r\n");
-    serial_write("xHCI: ep0 state=");
-    serial_write_dec(ep0[0] & 0x7u);
+    serial_write("xHCI: ep state=");
+    serial_write_dec(ep[0] & 0x7u);
     serial_write(" cerr=");
-    serial_write_dec((ep0[1] >> 1) & 0x3u);
+    serial_write_dec((ep[1] >> 1) & 0x3u);
     serial_write(" type=");
-    serial_write_dec((ep0[1] >> 3) & 0x7u);
+    serial_write_dec((ep[1] >> 3) & 0x7u);
     serial_write(" mps=");
-    serial_write_dec((ep0[1] >> 16) & 0xffffu);
+    serial_write_dec((ep[1] >> 16) & 0xffffu);
     serial_write(" deq=");
-    serial_write_hex(((uint64_t)ep0[3] << 32) | (ep0[2] & ~0xfu));
+    serial_write_hex(((uint64_t)ep[3] << 32) | (ep[2] & ~0xfu));
     serial_write(" dcs=");
-    serial_write_dec(ep0[2] & 0x1u);
+    serial_write_dec(ep[2] & 0x1u);
     serial_write("\r\n");
-    {
-        volatile rix_xhci_trb_t *ring =
-            (volatile rix_xhci_trb_t *)(uintptr_t)slot->ep0_ring_phys;
-        uint16_t tail = slot->ep0_enqueue > 16u ? (uint16_t)(slot->ep0_enqueue - 16u) : 0u;
+    if (ep_id == 1u) {
+        ring_phys = slot->ep0_ring_phys;
+        enqueue = slot->ep0_enqueue;
+    } else {
+        ring_phys = slot->endpoints[ep_id].ring_phys;
+        enqueue = slot->endpoints[ep_id].enqueue;
+    }
+    if (ring_phys) {
+        uint16_t tail = enqueue > 16u ? (uint16_t)(enqueue - 16u) : 0u;
         uint16_t cap = XHCI_CMD_RING_TRBS - 1u;
-        serial_write("xHCI: ep0-tail enqueue=");
-        serial_write_dec(slot->ep0_enqueue);
+        ring = (volatile rix_xhci_trb_t *)(uintptr_t)ring_phys;
+        serial_write("xHCI: ep-tail enqueue=");
+        serial_write_dec(enqueue);
         serial_write("\r\n");
-        for (uint16_t i = tail; i < slot->ep0_enqueue && i < cap; ++i) {
+        for (uint16_t i = tail; i < enqueue && i < cap; ++i) {
             serial_write(" trb[");
             serial_write_dec(i);
             serial_write("]=");
@@ -542,7 +566,8 @@ void xhc_cc4_snapshot(size_t ctl, xhci_runtime_t *rt, uint8_t slot_id,
 }
 #else
 void xhc_cc4_snapshot(size_t ctl, xhci_runtime_t *rt, uint8_t slot_id,
-                      uint64_t first_phys, uint64_t last_phys) {
-    (void)ctl; (void)rt; (void)slot_id; (void)first_phys; (void)last_phys;
+                      uint8_t ep_id, uint64_t first_phys, uint64_t last_phys) {
+    (void)ctl; (void)rt; (void)slot_id; (void)ep_id; (void)first_phys;
+    (void)last_phys;
 }
 #endif

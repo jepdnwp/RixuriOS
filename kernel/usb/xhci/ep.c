@@ -16,6 +16,36 @@ static uint8_t xhc_ep_type(uint8_t endpoint_address, uint8_t attributes) {
     return 0;
 }
 
+/* Endpoint Context Interval field (Linux xhci_get_endpoint_interval):
+ * log2 of the service period in microframes. FS/LS interrupt bInterval
+ * is in frames: fls(bInterval*8)-1 clamped 3..10. HS/SS interrupt
+ * bInterval is already an exponent: clamp 1..16 minus 1. Bulk/control
+ * take 0. Programming raw bInterval (e.g. FS 10) would schedule every
+ * 2^10 = 1024 microframes = 128ms instead of ~8ms. */
+unsigned xhc_ep_interval(uint8_t speed, uint8_t ep_type, uint8_t binterval) {
+    unsigned e;
+    unsigned v;
+    if (ep_type != 3u) return 0u;
+    if (speed == 1u || speed == 2u) {
+        v = (unsigned)binterval * 8u;
+        e = 0u;
+        while (v > 1u) {
+            v >>= 1;
+            e++;
+        }
+        if (e < 3u) e = 3u;
+        if (e > 10u) e = 10u;
+        return e;
+    }
+    if (speed == 3u || speed == 4u || speed == 5u) {
+        e = binterval;
+        if (e < 1u) e = 1u;
+        if (e > 16u) e = 16u;
+        return e - 1u;
+    }
+    return 0u;
+}
+
 int xhci_configure_endpoint(size_t controller, uint8_t slot_id,
                             const rix_xhci_endpoint_config_t *config) {
     rix_xhci_controller_t *c;
@@ -29,13 +59,19 @@ int xhci_configure_endpoint(size_t controller, uint8_t slot_id,
     volatile uint32_t *ep;
     uint32_t entries;
     uint32_t esit = 0;
+    uint32_t interval;
+    uint16_t mps;
+    uint8_t burst = 0;
     uint64_t ring_phys;
     volatile rix_xhci_trb_t *ring;
     int dir;
     if (!config) return -1;
     type = config->attributes & 0x03u;
     if (type != 3u && type != 2u) return -1;
-    if (config->max_packet_size == 0u || config->interval == 0u) return -1;
+    /* Bulk endpoints carry no interval (Linux programs 0); only
+     * interrupt endpoints require a nonzero bInterval. */
+    if (config->max_packet_size == 0u) return -1;
+    if (type == 3u && config->interval == 0u) return -1;
     ep_num = (uint8_t)(config->endpoint_address & 0x0fu);
     if ((config->endpoint_address & 0x70u) != 0u || ep_num == 0u ||
         ep_num >= 15u)
@@ -68,22 +104,35 @@ int xhci_configure_endpoint(size_t controller, uint8_t slot_id,
         (entries << XHCI_SLOT_LAST_CTX_SHIFT);
     input[0] = 0;
     input[1] = XHCI_INPUT_ADD_SLOT | (1u << ep_id);
-    if (slot->speed >= 4u && type == 3u) {
-        esit = config->esit_payload
-            ? config->esit_payload
-            : (uint32_t)config->max_packet_size *
-                ((uint32_t)config->max_burst + 1u);
+    /* MPS is bits 10:0 of wMaxPacketSize (Linux usb_endpoint_maxp mask);
+     * HS additional transactions live in bits 12:11 and become Max Burst
+     * (Linux xhci_get_endpoint_max_burst); SS burst comes from the
+     * companion. Raw wMaxPacketSize must never land in the MPS field. */
+    mps = config->max_packet_size & (uint16_t)USB_ENDPOINT_MAXP_MASK;
+    if (slot->speed == 4u || slot->speed == 5u) {
+        burst = config->max_burst;
+    } else if (slot->speed == 3u && type == 3u) {
+        burst = (uint8_t)(((uint32_t)config->max_packet_size >> 11) & 0x03u);
+    }
+    if (type == 3u) {
+        /* Max ESIT payload for periodic endpoints (Linux
+         * usb_endpoint_max_periodic_payload); explicit SS companion
+         * payload wins when present. */
+        esit = (uint32_t)mps * ((uint32_t)burst + 1u);
+        if ((slot->speed == 4u || slot->speed == 5u) && config->esit_payload)
+            esit = config->esit_payload;
         if (esit > 0xffffu) esit = 0xffffu;
     }
-    ep[0] = (esit & 0xffffu) | ((uint32_t)config->interval << 16);
+    interval = xhc_ep_interval(slot->speed, type, config->interval);
+    ep[0] = (esit & 0xffffu) | (interval << 16);
     ep[1] = (3u << 1) | ((uint32_t)xhc_ep_type(config->endpoint_address,
                                                config->attributes)
                          << 3) |
-        ((uint32_t)config->max_burst << 8) |
-        ((uint32_t)config->max_packet_size << 16);
+        ((uint32_t)burst << 8) |
+        ((uint32_t)mps << 16);
     ep[2] = (uint32_t)ring_phys | XHCI_TRB_CYCLE;
     ep[3] = (uint32_t)(ring_phys >> 32);
-    ep[4] = 8u;
+    ep[4] = (type == 3u) ? (esit & 0xffffu) : 8u;
     {
         int rc = xhc_submit_command(controller, slot->input_context_phys,
                                     XHCI_TRB_TYPE(XHCI_TRB_CONFIGURE_ENDPOINT) |
@@ -100,6 +149,62 @@ int xhci_configure_endpoint(size_t controller, uint8_t slot_id,
     slot->endpoints[ep_id].type = type;
     slot->endpoints[ep_id].cycle = 1;
     slot->endpoints[ep_id].enqueue = 0;
+    slot->endpoints[ep_id].in_flight = 0;
+    slot->endpoints[ep_id].in_flight_first = 0;
+    slot->endpoints[ep_id].in_flight_last = 0;
+    return 0;
+}
+
+/* Reset a halted non-control endpoint (Linux endpoint-halt recovery:
+ * Reset Endpoint, then Set Transfer Ring Dequeue Pointer past the dead
+ * TD). HARD reset (no TSP): toggle restarts at DATA0, matching the
+ * device side after CLEAR_FEATURE(ENDPOINT_HALT). Skips the dead TD by
+ * restarting at the current enqueue/cycle; the failed TD already
+ * completed to its caller with an error and is never replayed. */
+int xhci_reset_endpoint(size_t controller, uint8_t slot_id,
+                        uint8_t endpoint_address) {
+    xhci_endpoint_runtime_t *ep_rt;
+    uint8_t ep_num;
+    uint8_t ep_id;
+    uint64_t deq;
+    int rc;
+    int dir;
+    ep_num = (uint8_t)(endpoint_address & 0x0fu);
+    dir = (endpoint_address & 0x80u) != 0u;
+    ep_id = (uint8_t)((uint8_t)(ep_num * 2u) + (dir ? 1u : 0u));
+    if ((endpoint_address & 0x70u) != 0u || ep_num == 0u || ep_id >= 32u)
+        return -1;
+    if (controller >= xhc_count || slot_id == 0u ||
+        slot_id > xhc_controllers[controller].max_slots)
+        return -1;
+    if (!xhc_controllers[controller].running ||
+        !xhc_runtimes[controller].slots[slot_id].allocated ||
+        !xhc_runtimes[controller].slots[slot_id].addressed)
+        return -2;
+    ep_rt = &xhc_runtimes[controller].slots[slot_id].endpoints[ep_id];
+    if (!ep_rt->ring_phys || ep_rt->type == 0u) return -2;
+    rc = xhc_submit_command(controller, 0,
+                            XHCI_TRB_TYPE(XHCI_TRB_RESET_ENDPOINT) |
+                                ((uint32_t)ep_id << XHCI_TRB_EP_SHIFT) |
+                                XHCI_TRB_SLOT_FOR(slot_id),
+                            0);
+    /* Context State means the endpoint was not halted; the ring below
+     * is still exactly where the runtime thinks it is. */
+    if (rc != 0 && rc != -(int)XHCI_COMP_CONTEXT_STATE_ERROR) return rc;
+    if (ep_rt->enqueue >= XHCI_CMD_RING_TRBS - 1u) {
+        ep_rt->enqueue = 0;
+        ep_rt->cycle ^= 1u;
+    }
+    deq = ep_rt->ring_phys + (uint64_t)ep_rt->enqueue * sizeof(rix_xhci_trb_t);
+    rc = xhc_submit_command(controller, deq | (ep_rt->cycle ? 1u : 0u),
+                            XHCI_TRB_TYPE(XHCI_TRB_SET_DEQUEUE_POINTER) |
+                                ((uint32_t)ep_id << XHCI_TRB_EP_SHIFT) |
+                                XHCI_TRB_SLOT_FOR(slot_id),
+                            0);
+    if (rc != 0) return rc;
+    ep_rt->in_flight = 0;
+    ep_rt->in_flight_first = 0;
+    ep_rt->in_flight_last = 0;
     return 0;
 }
 
@@ -133,6 +238,18 @@ int xhc_endpoint_transfer(size_t controller, uint8_t slot_id,
         return -2;
     ep_rt = &slot->endpoints[ep_id];
     if (!ep_rt->ring_phys || ep_rt->type != ep_type) return -2;
+    if (ep_rt->in_flight) {
+        /* A previous TD is still owned by the controller (e.g. a NAK-
+         * waiting interrupt-IN that outlived its wait). Never orphan
+         * another TD on top of it: keep waiting on the live TD instead
+         * of piling up zombie TDs that wrap the ring under the live
+         * dequeue. Returns -100 while still pending. */
+        int wrc = xhc_wait_transfer(controller, rt, ep_rt->in_flight_first,
+                                    ep_rt->in_flight_last, slot_id, ep_id,
+                                    length, actual_length);
+        if (wrc != XHCI_XFER_TIMEOUT) ep_rt->in_flight = 0;
+        return wrc;
+    }
     if (ep_rt->enqueue >= XHCI_CMD_RING_TRBS - 1u) {
         ring = (volatile rix_xhci_trb_t *)(uintptr_t)ep_rt->ring_phys;
         ring[XHCI_CMD_RING_TRBS - 1u].parameter_lo =
@@ -154,13 +271,18 @@ int xhc_endpoint_transfer(size_t controller, uint8_t slot_id,
     ring[index].parameter_hi = (uint32_t)(pa >> 32);
     ring[index].status = length;
     ring[index].control = XHCI_TRB_TYPE(XHCI_TRB_NORMAL) | XHCI_TRB_IOC |
+        (dir ? XHCI_TRB_ISP : 0u) |
         (ep_rt->cycle ? XHCI_TRB_CYCLE : 0u);
     __asm__ volatile("mfence" ::: "memory");
     xhc_record_doorbell(controller, slot_id, ep_id, ep_id);
     xhc_doorbell(controller, slot_id, ep_id);
+    ep_rt->in_flight_first = trb_phys;
+    ep_rt->in_flight_last = trb_phys;
+    ep_rt->in_flight = 1;
     {
         int rc = xhc_wait_transfer(controller, rt, trb_phys, trb_phys,
                                    slot_id, ep_id, length, actual_length);
+        if (rc != XHCI_XFER_TIMEOUT) ep_rt->in_flight = 0;
 #if XHCI_HID_TRACE
         /* Payload dump on successful interrupt-IN only (bulk stays quiet).
          * One line per completed report: keypress-rate traffic, and the
