@@ -60,6 +60,13 @@ static void mark_range(uint64_t base,uint64_t pages,int freeable){
         }
     }
 }
+static void mark_byte_range(uint64_t base,uint64_t size,int freeable){
+    if(!size||base>UINT64_MAX-size)return;
+    uint64_t offset=base&(RIXURI_PAGE_SIZE-1ULL);
+    if(size>UINT64_MAX-offset-(RIXURI_PAGE_SIZE-1ULL))return;
+    uint64_t pages=(size+offset+RIXURI_PAGE_SIZE-1ULL)/RIXURI_PAGE_SIZE;
+    mark_range(base,pages,freeable);
+}
 void pmm_init(const void*memory_map,uint64_t memory_map_size,uint64_t descriptor_size,uint64_t kernel_base,uint64_t kernel_end,uint64_t boot_info,uint64_t boot_info_size){
     for(size_t i=0;i<RIXURI_BITMAP_WORDS;i++){page_bitmap[i]=UINT64_MAX;managed_bitmap[i]=0;reserved_bitmap[i]=0;}
     total_pages_count=free_pages_count=reserved_pages_count=0;rix_spin_init(&pmm_lock);
@@ -86,9 +93,9 @@ void pmm_init(const void*memory_map,uint64_t memory_map_size,uint64_t descriptor
     }
     /* Never hand the low legacy region or boot metadata to the allocator. */
     mark_range(0,0x100000ULL/RIXURI_PAGE_SIZE,0);
-    if(kernel_end>kernel_base)mark_range(kernel_base,(kernel_end-kernel_base+RIXURI_PAGE_SIZE-1ULL)/RIXURI_PAGE_SIZE,0);
-    if(boot_info_size)mark_range(boot_info,(boot_info_size+RIXURI_PAGE_SIZE-1ULL)/RIXURI_PAGE_SIZE,0);
-    mark_range((uint64_t)(uintptr_t)memory_map,(memory_map_size+RIXURI_PAGE_SIZE-1ULL)/RIXURI_PAGE_SIZE,0);
+    if(kernel_end>kernel_base)mark_byte_range(kernel_base,kernel_end-kernel_base,0);
+    mark_byte_range(boot_info,boot_info_size,0);
+    mark_byte_range((uint64_t)(uintptr_t)memory_map,memory_map_size,0);
 }
 uint64_t pmm_alloc_page_below(uint64_t max_exclusive){
     uint64_t irq;rix_spin_lock_irqsave(&pmm_lock,&irq);
