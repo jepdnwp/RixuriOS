@@ -824,7 +824,7 @@ Implement xHCI registers, rings/TRBs/cycles, contexts, reset/address/configure, 
 
 ### Status
 
-**BROKEN for current-tree build integrity; otherwise PARTIAL and hardware BLOCKED.**
+**PARTIAL; physical diagnostic evidence now exists, but functional hardware qualification remains UNVERIFIED.**
 
 ### Implemented
 
@@ -850,7 +850,7 @@ A clean compile cannot resolve the profile source/types/functions. A full 16-ent
 | Unit | No TRB/ring/completion/timeout/reset/hotplug/DMA suite. | **MISSING**. |
 | Integration | Initialization path exists. | Generic QEMU had controllers=0. |
 | QEMU | `qemu_xhci_probe_test.py` requests NEC xHCI + keyboard. | No retained current PASS; **UNVERIFIED**. |
-| Physical | Inventory and failing PORTSC history only. | Functional operation **BLOCKED**. |
+| Physical | User-supplied serial photograph shows a real xHCI controller issuing EP0 context/command-ring operations, a `USB Transaction Error`, bounded `TRANSFER RETRY`, `RESET EP0`, and subsequent port reset/enable-slot activity. | Diagnostic/recovery path observed; successful device enumeration, keyboard interrupt-IN traffic, sustained I/O, and independent physical capture remain **UNVERIFIED**. |
 
 ### Validation gaps
 

@@ -2292,3 +2292,9 @@ git diff --check
 ```
 
 The test passed. This is host-only evidence for the bounded reassembly implementation; overlap trimming, sequence-number wraparound, retransmission timers, receive windows, blocking readiness, and physical network qualification remain UNVERIFIED.
+
+## 2026-09-16 — physical xHCI diagnostic photograph
+
+A user-supplied photograph from a physical target provides non-fabricated diagnostic evidence for the xHCI path. The visible serial output identifies EP0 context/ring operations and records `USB Transaction Error`, `TRANSFER RETRY`, `RESET EP0`, port reset/clear activity, and a subsequent enable-slot command. This confirms that the target reached the controller command/transfer error-recovery path; it does not by itself prove successful USB enumeration, keyboard interrupt-IN delivery, sustained transfer stability, or recovery after a second fault.
+
+The evidence is therefore recorded as **physical diagnostic evidence only**. Functional xHCI/HID qualification remains **UNVERIFIED** pending a timestamped raw serial capture showing PCI/controller identity, port status, successful descriptor/address/configuration completion, keyboard input delivery, and repeated attach/detach or recovery behavior.
