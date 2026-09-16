@@ -523,8 +523,12 @@ static int dispatch_external_tcp(rix_net_socket_table_t *table, rix_net_stack_t 
         if (socket->tcp.state != RIX_TCP_ESTABLISHED &&
             socket->tcp.state != RIX_TCP_CLOSE_WAIT)
             return 13;
-        if (header.sequence != socket->tcp.acknowledgment)
+        if (header.sequence != socket->tcp.acknowledgment) {
+            /* Keep the receive point stable and request retransmission of
+             * the missing prefix instead of silently waiting for a timeout. */
+            (void)tcp_send_ack(stack, socket, source_ip);
             return 14;
+        }
         size_t payload = rix_net_packet_length(packet);
         uint8_t fin = (header.flags & RIX_NET_TCP_FLAG_FIN) != 0u;
         if (payload &&
