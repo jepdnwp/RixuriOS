@@ -70,6 +70,7 @@
 #define XHCI_TRB_CONFIGURE_ENDPOINT 12u
 #define XHCI_TRB_EVALUATE_CONTEXT 13u
 #define XHCI_TRB_RESET_ENDPOINT 14u
+#define XHCI_TRB_SET_DEQUEUE_POINTER 16u
 #define XHCI_TRB_ENABLE_SLOT 9u
 #define XHCI_TRB_DISABLE_SLOT 10u
 #define XHCI_TRB_ADDRESS_DEVICE 11u
@@ -2567,6 +2568,23 @@ static int wait_transfer(const rix_xhci_controller_t *c, xhci_runtime_t *rt,
     return -100;
 }
 
+/* Reset Endpoint clears the host-side halt, but recovery must also select the
+ * exact replacement TD. Some controllers complete reset while retaining a
+ * stale dequeue position; Set TR Dequeue Pointer makes the next doorbell
+ * deterministic before the retry re-emits the control TD. */
+static int xhci_set_ep0_dequeue_for_retry(size_t controller, uint8_t slot_id,
+                                          uint16_t enqueue, uint8_t cycle) {
+    if (controller >= count || slot_id == 0u ||
+        slot_id > controllers[controller].max_slots || enqueue >= XHCI_CMD_RING_TRBS - 1u)
+        return -1;
+    const xhci_slot_runtime_t *slot = &runtimes[controller].slots[slot_id];
+    uint64_t dequeue = slot->ep0_ring_phys + (uint64_t)enqueue * sizeof(xhci_trb_t);
+    return submit_command(controller, dequeue | (cycle ? 1u : 0u),
+                          (XHCI_TRB_SET_DEQUEUE_POINTER << XHCI_TRB_TYPE_SHIFT) |
+                          ((uint32_t)1u << XHCI_TRB_EP_SHIFT) |
+                          ((uint32_t)slot_id << XHCI_TRB_SLOT_SHIFT), NULL);
+}
+
 static uint64_t xhci_dma_linear_pa(const void *buffer, uint64_t length) {
     if (!buffer || !length) return 0;
     uint64_t va = (uint64_t)(uintptr_t)buffer;
@@ -2683,14 +2701,18 @@ int xhci_control_transfer(size_t controller, uint8_t slot_id,
     int rc;
     for (unsigned attempt = 1; attempt <= 3u; ++attempt) {
         if (attempt > 1u) {
+            slot->ep0_enqueue = attempt_start;
+            slot->ep0_cycle = attempt_start_cycle;
+            size_t needed = setup->length != 0u ? 3u : 2u;
+            if ((size_t)slot->ep0_enqueue + needed > XHCI_CMD_RING_TRBS - 1u)
+                ep0_write_link(c, slot);
             int reset_rc = xhci_reset_ep0_for_retry(controller, slot_id);
             if (reset_rc != 0) return reset_rc;
+            int dequeue_rc = xhci_set_ep0_dequeue_for_retry(controller, slot_id,
+                                                             slot->ep0_enqueue,
+                                                             slot->ep0_cycle);
+            if (dequeue_rc != 0) return dequeue_rc;
         }
-        slot->ep0_enqueue = attempt_start;
-        slot->ep0_cycle = attempt_start_cycle;
-        size_t needed = setup->length != 0u ? 3u : 2u;
-        if ((size_t)slot->ep0_enqueue + needed > XHCI_CMD_RING_TRBS - 1u)
-            ep0_write_link(c, slot);
 #if XHCI_EP0_TRACE
         serial_write("xHCI: EP0 TRANSFER ATTEMPT ctl=");
         serial_write_dec(controller);

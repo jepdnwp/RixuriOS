@@ -2325,3 +2325,9 @@ This directly fixes the mismatch between the recovery comment and the command TR
 The next physical trace identified the remaining protocol mismatch: the port and slot context reported USB Full-Speed (`speed=1`), while the first EP0 context was configured with `mps=64`. The bootstrap control endpoint now starts Full-Speed devices at MPS 8, which is the value available before `bMaxPacketSize0` is read. The existing first-8-byte device-descriptor request then extracts `bMaxPacketSize0` and applies the real value through Evaluate Context before the full descriptor/configuration requests.
 
 High-Speed remains at MPS 64, SuperSpeed at 512, and Low-Speed at 8. This corrects the physical log's `speed=1`/`mps=64` mismatch and targets the preceding transaction error at its protocol boundary.
+
+## 2026-09-16 — xHCI EP0 Set TR Dequeue Pointer recovery
+
+The subsequent physical trace showed the corrected High-Speed bootstrap (`speed=3`, `mps=64`) and a successful Reset Endpoint command, but no completion for retry attempt 2. The output EP0 context still reported a running endpoint with a dequeue position that was not guaranteed to match the replacement TD. EP0 recovery now follows Reset Endpoint/TSP with an explicit Set TR Dequeue Pointer command to the exact replacement ring position and cycle state before the retry doorbell. This prevents controllers that retain a stale dequeue position from accepting the reset command yet ignoring the re-emitted TD.
+
+The change is bounded to the existing three-attempt EP0 recovery path and does not claim physical success until a post-fix log shows a successful retry completion.
