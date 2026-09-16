@@ -266,9 +266,9 @@ static void keyboard_poll_worker(void *arg){
      known_keyboards[k].slot,known_keyboards[k].endpoint,
      0,known_keyboards[k].report_id,kbd_report_buf,sizeof(kbd_report_buf),&actual);
     /* A halted endpoint (transaction/stall error) fails every later poll
-     * the same way until it is reset: one bounded Reset Endpoint +
-     * dequeue restart per failure, log throttled to 2s. The error itself
-     * is never masked — recovery only re-arms the next poll. Timeouts
+     * the same way until it is reset: at most one bounded Reset Endpoint
+     * + dequeue restart per 2s, with the log line. The error itself is
+     * never masked — recovery only re-arms the next poll. Timeouts
      * (-100) need no reset: single-flight keeps the live TD pending and
      * the next poll resumes waiting on it. */
     if(rc==-4||rc==-6){
@@ -277,9 +277,9 @@ static void keyboard_poll_worker(void *arg){
       xhci_recover_ns[k]=now;
       serial_write("xHCI: kbd endpoint recovery slot=");serial_write_dec(known_keyboards[k].slot);
       serial_write(" rc=");serial_write_dec((uint64_t)(rc<0?-rc:rc));serial_write("\r\n");
+      (void)xhci_reset_endpoint(known_keyboards[k].controller,known_keyboards[k].slot,
+                                known_keyboards[k].endpoint);
      }
-     (void)xhci_reset_endpoint(known_keyboards[k].controller,known_keyboards[k].slot,
-                               known_keyboards[k].endpoint);
     }
    }
    /* Hub port rescan every 16th round: hub children have no root-port

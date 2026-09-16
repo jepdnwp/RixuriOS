@@ -49,6 +49,12 @@
  * completion/wait_event; 5000ms-class command timeouts). */
 #define XHCI_POLL_LIMIT 1000000u
 #define XHCI_RESET_POLL_LIMIT 5000000u
+#define XHCI_INTR_POLL_LIMIT 25000u
+/* Interrupt-IN idle bound (~5ms): interrupt endpoints NAK while idle, so a
+ * full-length wait would busy-block the cooperative scheduler ~200ms per
+ * keyboard per loop with no key pressed. The TD stays live (single-flight)
+ * and later polls resume waiting on it, so nothing is lost by returning
+ * XHCI_XFER_TIMEOUT early. Control/bulk keep the full bound. */
 
 /* Native MMIO idiom (cf. e1000/rtl8125/nvme drivers): direct volatile
  * 32-bit access. 64-bit pointer registers (CRCR/DCBAAP/ERSTBA/ERDP) need
@@ -225,6 +231,10 @@ uint64_t xhc_dma_linear_pa(const void *buffer, uint64_t length);
 int xhc_wait_transfer(size_t ctl, xhci_runtime_t *rt, uint64_t first_phys,
                       uint64_t last_phys, uint8_t slot_id, uint8_t ep_id,
                       uint16_t requested, uint16_t *actual);
+int xhc_wait_transfer_limit(size_t ctl, xhci_runtime_t *rt, uint64_t first_phys,
+                            uint64_t last_phys, uint8_t slot_id, uint8_t ep_id,
+                            uint16_t requested, uint16_t *actual,
+                            uint32_t poll_limit);
 
 /* ---- ep.c (non-control endpoints) ---- */
 unsigned xhc_ep_interval(uint8_t speed, uint8_t ep_type, uint8_t binterval);

@@ -278,6 +278,10 @@ int xhc_endpoint_transfer(size_t controller, uint8_t slot_id,
         return -2;
     ep_rt = &slot->endpoints[ep_id];
     if (!ep_rt->ring_phys || ep_rt->type != ep_type) return -2;
+    /* Interrupt endpoints idle-poll with the short bound; bulk keeps the
+     * full bound. Both resume paths below use the same limit. */
+    uint32_t wait_limit =
+        (ep_type == 3u) ? XHCI_INTR_POLL_LIMIT : XHCI_POLL_LIMIT;
     if (ep_rt->in_flight) {
         /* A previous TD is still owned by the controller (e.g. a NAK-
          * waiting interrupt-IN that outlived its wait). Linux keeps such
@@ -287,9 +291,9 @@ int xhc_endpoint_transfer(size_t controller, uint8_t slot_id,
          * TD instead: with a single consumer this is the same steady
          * state (Linux interrupt URBs never time out either). Returns
          * -100 while still pending. */
-        int wrc = xhc_wait_transfer(controller, rt, ep_rt->in_flight_first,
-                                    ep_rt->in_flight_last, slot_id, ep_id,
-                                    length, actual_length);
+        int wrc = xhc_wait_transfer_limit(controller, rt, ep_rt->in_flight_first,
+                                          ep_rt->in_flight_last, slot_id, ep_id,
+                                          length, actual_length, wait_limit);
         if (wrc != XHCI_XFER_TIMEOUT) ep_rt->in_flight = 0;
         return wrc;
     }
@@ -323,8 +327,9 @@ int xhc_endpoint_transfer(size_t controller, uint8_t slot_id,
     ep_rt->in_flight_last = trb_phys;
     ep_rt->in_flight = 1;
     {
-        int rc = xhc_wait_transfer(controller, rt, trb_phys, trb_phys,
-                                   slot_id, ep_id, length, actual_length);
+        int rc = xhc_wait_transfer_limit(controller, rt, trb_phys, trb_phys,
+                                         slot_id, ep_id, length, actual_length,
+                                         wait_limit);
         if (rc != XHCI_XFER_TIMEOUT) ep_rt->in_flight = 0;
 #if XHCI_HID_TRACE
         /* Payload dump on successful interrupt-IN only (bulk stays quiet).

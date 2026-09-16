@@ -74,13 +74,16 @@ uint64_t xhc_dma_linear_pa(const void *buffer, uint64_t length) {
  * accounting). Matches the event's TRB pointer against any TRB of the TD,
  * plus slot and DCI. Short Packet counts as success for IN transfers.
  * Returns 0 on success, -completion_code on error, -100 on timeout. */
-int xhc_wait_transfer(size_t ctl, xhci_runtime_t *rt, uint64_t first_phys,
-                      uint64_t last_phys, uint8_t slot_id, uint8_t ep_id,
-                      uint16_t requested, uint16_t *actual) {
+int xhc_wait_transfer_limit(size_t ctl, xhci_runtime_t *rt, uint64_t first_phys,
+                            uint64_t last_phys, uint8_t slot_id, uint8_t ep_id,
+                            uint16_t requested, uint16_t *actual,
+                            uint32_t poll_limit) {
     const rix_xhci_controller_t *c = &xhc_controllers[ctl];
     volatile rix_xhci_trb_t *events =
         (volatile rix_xhci_trb_t *)(uintptr_t)c->event_ring_phys;
-    for (uint32_t i = 0; i < XHCI_POLL_LIMIT; ++i) {
+    if (poll_limit == 0u || poll_limit > XHCI_POLL_LIMIT)
+        poll_limit = XHCI_POLL_LIMIT;
+    for (uint32_t i = 0; i < poll_limit; ++i) {
         volatile rix_xhci_trb_t *event = &events[rt->event_dequeue];
         uint32_t control = event->control;
         uint32_t status;
@@ -126,6 +129,13 @@ int xhc_wait_transfer(size_t ctl, xhci_runtime_t *rt, uint64_t first_phys,
         return cc != 0u ? -(int)cc : -90;
     }
     return -100;
+}
+
+int xhc_wait_transfer(size_t ctl, xhci_runtime_t *rt, uint64_t first_phys,
+                      uint64_t last_phys, uint8_t slot_id, uint8_t ep_id,
+                      uint16_t requested, uint16_t *actual) {
+    return xhc_wait_transfer_limit(ctl, rt, first_phys, last_phys, slot_id,
+                                   ep_id, requested, actual, XHCI_POLL_LIMIT);
 }
 
 int xhci_control_transfer(size_t controller, uint8_t slot_id,

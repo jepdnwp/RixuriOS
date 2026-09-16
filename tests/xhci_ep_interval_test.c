@@ -32,6 +32,13 @@ int xhc_wait_transfer(size_t c, xhci_runtime_t *r, uint64_t f, uint64_t l,
     (void)c; (void)r; (void)f; (void)l; (void)s; (void)e; (void)q; (void)a;
     return -1;
 }
+int xhc_wait_transfer_limit(size_t c, xhci_runtime_t *r, uint64_t f, uint64_t l,
+                            uint8_t s, uint8_t e, uint16_t q, uint16_t *a,
+                            uint32_t lim) {
+    (void)c; (void)r; (void)f; (void)l; (void)s; (void)e; (void)q; (void)a;
+    (void)lim;
+    return -1;
+}
 void xhc_record_doorbell(size_t c, uint8_t s, uint8_t e, uint32_t v) {
     (void)c; (void)s; (void)e; (void)v;
 }

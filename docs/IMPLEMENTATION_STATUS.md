@@ -1019,3 +1019,12 @@ This fixed a real QEMU failure: the child address carried route 0, QEMU's
 lookup hit the hub's own path and returned TRB Error (caught via the new
 ADDR-END completion log). Verified: make test + make iso exit 0; direct
 keyboard and hub-behind-hub keyboard both register with zero failures.
+
+Worker hot-path hardening: interrupt-IN waits busy-blocked the
+cooperative scheduler ~200ms per keyboard per idle loop (full 1M poll
+bound while endpoints NAK with no key pressed). Interrupt transfers now
+use a short ~5ms bound (XHCI_INTR_POLL_LIMIT) with the TD kept live, so
+later polls resume waiting on it and key delivery is unaffected (sendkey
+byte 05 still captured); control/bulk keep the full bound. The keyboard
+recovery reset is throttled with its log line (at most one reset per 2s
+per keyboard) instead of resetting on every failing poll.
