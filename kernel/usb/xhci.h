@@ -94,6 +94,9 @@ int xhci_address_device(size_t controller, uint8_t slot, uint8_t port,
                         uint8_t speed, const rix_xhci_tt_info_t *tt);
 int xhci_device_attach(size_t controller, uint8_t port, rix_xhci_device_t *out);
 int xhci_device_detach(size_t controller, uint8_t slot);
+/* 1 when the slot is allocated (addressed or not), 0 otherwise. Lets
+ * consumers drop state bound to a dead slot instead of polling it. */
+int xhci_slot_active(size_t controller, uint8_t slot_id);
 void xhci_park_port(size_t controller, uint8_t port);
 void xhci_usb_state_transition(size_t controller, uint8_t slot, uint8_t new_state,
                                const char *reason);
