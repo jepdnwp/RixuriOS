@@ -49,4 +49,6 @@ int rixfs_clear_acl(rixfs_t *fs,uint64_t inode);
 int rixfs_sync(rixfs_t *fs);
 int rixfs_statfs(rixfs_t *fs,uint64_t *out_total,uint64_t *out_free,uint64_t *out_free_inodes);
 int rixfs_fsck(rix_block_device_t *device,uint64_t *checked_inodes,uint64_t *referenced_sectors);
+/* Repairs only a provably reconstructible allocation-bitmap mismatch. */
+int rixfs_fsck_repair(rix_block_device_t *device,uint64_t *repaired_sectors);
 void rixfs_unmount(rixfs_t *fs);

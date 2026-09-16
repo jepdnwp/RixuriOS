@@ -2241,3 +2241,18 @@ git diff --check
 ```
 
 The freestanding image build completed and QEMU reached `RIXURI:KERNEL_READY`, the ring-3 shell, and SMP smoke markers. QEMU ended with `qemu_rc=124` because the bounded command terminated the still-running kernel; this is not a failure marker. No injected NVMe timeout/reset occurred in this run, so controller recovery remains **UNVERIFIED on physical hardware and under fault injection**.
+
+## 2026-09-16 — conservative RixFS fsck repair
+
+`rixfs_fsck_repair()` now provides an explicit repair entry point that reconstructs only the allocation bitmap from validated inode extents and reserved metadata ranges. It refuses to modify the device when inode identity, extent bounds/ownership, directory reachability, or link counts are structurally invalid. Changed bitmap sectors are written and flushed; the API reports the number of repaired allocation bits.
+
+The host symlink/fsck regression now creates a bitmap-only orphan allocation, verifies ordinary fsck rejection, runs repair, verifies a clean fsck result, and confirms the existing clean image remains valid. The following checks passed:
+
+```text
+make symlink-test HOST_CC=gcc
+make statfs-test HOST_CC=gcc
+make test CROSS=x86_64-linux-gnu- HOST_CC=gcc
+git diff --check
+```
+
+This closes only bitmap reconstruction. Inode repair, directory reconstruction, journal replay/repair, power-loss durability, and physical media fault injection remain unimplemented or UNVERIFIED.

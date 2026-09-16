@@ -179,6 +179,10 @@ int main(void) {
         assert(rixfs_fsck(&fake_disk_dev, &checked, &refs) != 0);
         uint64_t rel = orphan / 8u;
         uint64_t bsec = bitmap_sector + rel / DISK_SECTOR_SIZE;
+        uint64_t repaired = 0;
+        assert(rixfs_fsck_repair(&fake_disk_dev, &repaired) == 0);
+        assert(repaired >= 1);
+        assert(rixfs_fsck(&fake_disk_dev, &checked, &refs) == 0);
         disk[bsec][rel % DISK_SECTOR_SIZE] &= (uint8_t)~(1u << (orphan % 8u));
         assert(rixfs_fsck(&fake_disk_dev, &checked, &refs) == 0);
     }
