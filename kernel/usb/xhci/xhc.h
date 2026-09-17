@@ -142,8 +142,11 @@ extern uint8_t xhc_last_selected[XHCI_MAX];
 /* Diagnostic histories (owned by debug.c). */
 #define XHCI_DIAG_HIST 64u
 typedef struct { uint64_t t; uint8_t ctl, slot, ep; uint32_t value; } xhc_db_hist_t;
+/* status is the raw event status dword (residual + completion code for
+ * transfer events, parameter + code for command completions); the dump
+ * decodes both, so a CC=4 shows whether anything arrived at all. */
 typedef struct {
-    uint64_t t; uint8_t ctl, type, cc, slot, ep; uint64_t param;
+    uint64_t t; uint8_t ctl, type, slot, ep; uint32_t status; uint64_t param;
 } xhc_ev_hist_t;
 extern xhc_db_hist_t xhc_db_hist[XHCI_DIAG_HIST];
 extern uint64_t xhc_db_hist_n;
@@ -258,8 +261,8 @@ const char *xhc_setup_req_name(uint8_t request_type, uint8_t request);
 const char *xhc_desc_name(uint8_t desc_type);
 const char *xhc_usb_state_name(uint8_t s);
 void xhc_record_doorbell(size_t ctl, uint8_t slot, uint8_t ep, uint32_t value);
-void xhc_record_event(size_t ctl, uint8_t type, uint8_t cc, uint8_t slot,
-                      uint8_t ep, uint64_t param);
+void xhc_record_event(size_t ctl, uint8_t type, uint32_t status,
+                      uint8_t slot, uint8_t ep, uint64_t param);
 void xhc_record_portsc(size_t ctl, uint8_t port, uint32_t raw);
 void xhc_dump_portsc_hist(size_t ctl, uint8_t port);
 void xhc_dump_histories(void);

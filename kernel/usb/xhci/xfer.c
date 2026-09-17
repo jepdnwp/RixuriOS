@@ -113,7 +113,8 @@ int xhc_wait_transfer_limit(size_t ctl, xhci_runtime_t *rt, uint64_t first_phys,
             continue;
         }
         xhc_acknowledge_event(ctl, rt);
-        xhc_record_event(ctl, (uint8_t)type, cc, event_slot, ep, parameter);
+        xhc_record_event(ctl, (uint8_t)type, status, event_slot, ep,
+                         parameter);
         if (type != XHCI_TRB_TRANSFER_EVENT) continue;
         if (parameter < first_phys || parameter > last_phys) continue;
         if ((parameter - first_phys) % sizeof(rix_xhci_trb_t) != 0u) continue;

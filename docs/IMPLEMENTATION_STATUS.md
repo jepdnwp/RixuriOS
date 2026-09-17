@@ -1105,3 +1105,24 @@ Pre-scheduler settle proof: with only a hub keyboard attached (empty
 NVMe), the keyboard registers during the settle — before "BOOT:
 scheduler begin" — and a later sendkey byte arrives intact. Input is
 ready at the first prompt without waiting on the worker.
+
+EP1 CC=4 forensics hardening (no root cause claimed yet — the failing
+silicon log is still the missing evidence): the event history now keeps
+the raw status dword so every transfer event shows residual + code;
+the CC=4 snapshot dumps the output endpoint context fully (interval,
+burst, mult, ESIT, avg), the producer-vs-TRB cycle check, live
+PORTSC/USBSTS, and the last doorbell rung for that endpoint; snapshots
+are throttled to one per slot per 5s (error codes never masked).
+Review of the new code caught three real bugs before silicon did: the
+throttle suppressed the very first snapshot while the clock is under
+5s, ESIT was decoded from the state bits, and ep_info/tx_info no
+longer match Linux (ESIT-high missing, ESIT-low in the avg field, raw
+ESIT stepping on mult bits) — now Linux-exact, pinned by a host test
+that fires the snapshot against crafted MMIO/context/ring memory and
+asserts every field plus throttle and cold-start. QEMU cannot produce
+a transfer CC=4 on demand (a deleted device goes silently quiet, which
+itself is a useful differential: present-device CC=4s are not unplug
+signatures). What silicon must send: the CC4-SNAPSHOT block, whose new
+lines discriminate link-down (PLS), halted endpoint (state=2),
+residual==requested (never answered) vs partial (died mid-transfer),
+and doorbell/DCI mismatch.

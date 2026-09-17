@@ -150,7 +150,11 @@ int xhci_configure_endpoint(size_t controller, uint8_t slot_id,
         if (esit > 0xffffu) esit = 0xffffu;
     }
     interval = xhc_ep_interval(slot->speed, type, config->interval);
-    ep[0] = (esit & 0xffffu) | (interval << 16);
+    /* Linux xhci_endpoint_init layout exactly: ESIT-high lives in
+     * ep_info bits 31:24, interval in 23:16, mult in 9:8 (0 for
+     * non-isochronous). ORing a raw esit into bits 15:0 would step on
+     * the mult field for payloads with bits 8-9 set. */
+    ep[0] = (((esit >> 16) & 0xffu) << 24) | (interval << 16);
     ep[1] = (3u << 1) | ((uint32_t)xhc_ep_type(config->endpoint_address,
                                                config->attributes)
                          << 3) |
@@ -158,7 +162,11 @@ int xhci_configure_endpoint(size_t controller, uint8_t slot_id,
         ((uint32_t)mps << 16);
     ep[2] = (uint32_t)ring_phys | XHCI_TRB_CYCLE;
     ep[3] = (uint32_t)(ring_phys >> 32);
-    ep[4] = (type == 3u) ? (esit & 0xffffu) : 8u;
+    /* Linux tx_info exactly: ESIT payload low in bits 31:16, average TRB
+     * length (= ESIT payload for periodic) in bits 15:0. Bulk keeps the
+     * long-proven 8. */
+    ep[4] = (type == 3u) ? (((esit & 0xffffu) << 16) | (esit & 0xffffu))
+                         : 8u;
     {
         int rc = xhc_submit_command(controller, slot->input_context_phys,
                                     XHCI_TRB_TYPE(XHCI_TRB_CONFIGURE_ENDPOINT) |

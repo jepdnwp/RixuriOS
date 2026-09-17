@@ -97,7 +97,8 @@ int xhc_wait_command(size_t ctl, xhci_runtime_t *rt, uint64_t command_phys,
             continue;
         }
         xhc_acknowledge_event(ctl, rt);
-        xhc_record_event(ctl, (uint8_t)type, completion, slot, 0, parameter);
+        xhc_record_event(ctl, (uint8_t)type, event->status, slot, 0,
+                         parameter);
         if (type != XHCI_TRB_COMMAND_COMPLETION || parameter != command_phys)
             continue;
         rt->last_cmd_done_ns = time_monotonic_ns();

@@ -138,12 +138,12 @@ void xhc_record_doorbell(size_t ctl, uint8_t slot, uint8_t ep,
     xhc_db_hist_n++;
 }
 
-void xhc_record_event(size_t ctl, uint8_t type, uint8_t cc, uint8_t slot,
-                      uint8_t ep, uint64_t param) {
+void xhc_record_event(size_t ctl, uint8_t type, uint32_t status,
+                      uint8_t slot, uint8_t ep, uint64_t param) {
     xhc_ev_hist[xhc_ev_hist_n % XHCI_DIAG_HIST].t = time_monotonic_ns();
     xhc_ev_hist[xhc_ev_hist_n % XHCI_DIAG_HIST].ctl = (uint8_t)ctl;
     xhc_ev_hist[xhc_ev_hist_n % XHCI_DIAG_HIST].type = type;
-    xhc_ev_hist[xhc_ev_hist_n % XHCI_DIAG_HIST].cc = cc;
+    xhc_ev_hist[xhc_ev_hist_n % XHCI_DIAG_HIST].status = status;
     xhc_ev_hist[xhc_ev_hist_n % XHCI_DIAG_HIST].slot = slot;
     xhc_ev_hist[xhc_ev_hist_n % XHCI_DIAG_HIST].ep = ep;
     xhc_ev_hist[xhc_ev_hist_n % XHCI_DIAG_HIST].param = param;
@@ -204,6 +204,7 @@ void xhc_dump_histories(void) {
     serial_write("\r\n");
     for (uint64_t i = 0; i < n; ++i) {
         const xhc_ev_hist_t *h = &xhc_ev_hist[(base + i) % XHCI_DIAG_HIST];
+        uint8_t cc = (uint8_t)XHCI_GET_COMP_CODE(h->status);
         serial_write(" ev t=");
         serial_write_dec(h->t);
         serial_write(" ctl=");
@@ -211,9 +212,11 @@ void xhc_dump_histories(void) {
         serial_write(" type=");
         serial_write_dec(h->type);
         serial_write(" cc=");
-        serial_write_dec(h->cc);
+        serial_write_dec(cc);
         serial_write(" ");
-        serial_write(xhc_cc_name(h->cc));
+        serial_write(xhc_cc_name(cc));
+        serial_write(" resid=");
+        serial_write_hex(XHCI_EVENT_TRB_LEN(h->status));
         serial_write(" slot=");
         serial_write_dec(h->slot);
         serial_write(" ep=");
@@ -442,10 +445,13 @@ void xhc_log_ep0_context_and_ring(size_t ctl, uint8_t slot_id) {
 #endif
 
 #if XHCI_CC4_SNAPSHOT
-/* Transaction-Error snapshot for the FAILING endpoint (Linux-style
- * completion forensics, read-only). EP0 keeps the Setup decode; other
- * DCIs dump their own context and ring tail instead of EP0's, so an EP1
- * CC=4 no longer misattributes EP0 state. */
+/* First-CC=4 forensics, throttled to one dump per slot per 5s (a
+ * persistently failing endpoint would otherwise flood the serial log
+ * on every poll; the error code itself is never masked). Read-only:
+ * failing TRB, OUTPUT endpoint context (what the controller accepted),
+ * live PORTSC/USBSTS, and the last doorbell rung for this endpoint. */
+static uint64_t xhc_cc4_last_ns[XHCI_MAX][256];
+static uint8_t xhc_cc4_fired[XHCI_MAX][256];
 void xhc_cc4_snapshot(size_t ctl, xhci_runtime_t *rt, uint8_t slot_id,
                       uint8_t ep_id, uint64_t first_phys, uint64_t last_phys) {
     xhci_slot_runtime_t *slot;
@@ -457,11 +463,23 @@ void xhc_cc4_snapshot(size_t ctl, xhci_runtime_t *rt, uint8_t slot_id,
     volatile rix_xhci_trb_t *ring;
     uint64_t ring_phys;
     uint16_t enqueue;
+    uint8_t rport;
     uint64_t sp;
     uint64_t now;
     if (ctl >= xhc_count || slot_id == 0u ||
         slot_id > xhc_controllers[ctl].max_slots || ep_id >= 32u)
         return;
+    now = time_monotonic_ns();
+    /* The first snapshot for a slot always fires (cold table); later
+     * ones are throttled. A zeroed table must not suppress the boot's
+     * first failure while the monotonic clock is still under 5s. */
+    if (ctl < XHCI_MAX) {
+        if (xhc_cc4_fired[ctl][slot_id] &&
+            now - xhc_cc4_last_ns[ctl][slot_id] < 5000000000ULL)
+            return;
+        xhc_cc4_fired[ctl][slot_id] = 1;
+        xhc_cc4_last_ns[ctl][slot_id] = now;
+    }
     c = &xhc_controllers[ctl];
     slot = &rt->slots[slot_id];
     serial_write("xHCI: CC4-SNAPSHOT ctl=");
@@ -527,10 +545,30 @@ void xhc_cc4_snapshot(size_t ctl, xhci_runtime_t *rt, uint8_t slot_id,
     serial_write_dec((ep[1] >> 3) & 0x7u);
     serial_write(" mps=");
     serial_write_dec((ep[1] >> 16) & 0xffffu);
+    serial_write(" burst=");
+    serial_write_dec((ep[1] >> 8) & 0xffu);
+    serial_write(" interval=");
+    serial_write_dec((ep[0] >> 16) & 0xffu);
+    serial_write(" mult=");
+    serial_write_dec((ep[0] >> 8) & 0x3u);
+    serial_write(" esit=");
+    serial_write_dec((((ep[0] >> 24) & 0xffu) << 16) |
+                     ((ep[4] >> 16) & 0xffffu));
+    serial_write(" avg=");
+    serial_write_dec(ep[4] & 0xffffu);
     serial_write(" deq=");
     serial_write_hex(((uint64_t)ep[3] << 32) | (ep[2] & ~0xfu));
     serial_write(" dcs=");
     serial_write_dec(ep[2] & 0x1u);
+    serial_write("\r\n");
+    /* Producer cycle we believe in vs the cycle bit on the failing TRB:
+     * a mismatch means the controller already consumed past it (stale
+     * TD replay) or we rang a TRB the controller does not own. */
+    serial_write("xHCI: ring cycle=");
+    serial_write_dec(ep_id == 1u ? slot->ep0_cycle
+                                 : slot->endpoints[ep_id].cycle);
+    serial_write(" trb-cycle=");
+    serial_write_dec((first->control & XHCI_TRB_CYCLE) != 0u);
     serial_write("\r\n");
     if (ep_id == 1u) {
         ring_phys = slot->ep0_ring_phys;
@@ -562,6 +600,54 @@ void xhc_cc4_snapshot(size_t ctl, xhci_runtime_t *rt, uint8_t slot_id,
     serial_write(" usb_state=");
     serial_write_dec(slot->usb_state);
     serial_write("\r\n");
+    /* Live controller/port state at the failure: a port that fell out
+     * of U0 (PLS != 0) or a halted/error controller explains a CC=4
+     * with no endpoint involvement. For hub children the root port
+     * carries the link, never the hub-relative number. */
+    rport = slot->tt_parent_slot != 0u ? slot->root_port : slot->port;
+    if (rport != 0u && rport <= c->max_ports) {
+        volatile uint8_t *base = (volatile uint8_t *)(uintptr_t)c->mmio_va;
+        volatile uint32_t *preg = (volatile uint32_t *)(base + c->cap_length +
+            XHCI_PORTSC_BASE + (uint32_t)(rport - 1u) * XHCI_PORT_STRIDE);
+        volatile uint8_t *op = base + c->cap_length;
+        uint32_t portsc = *preg;
+        uint32_t usbsts = *(volatile uint32_t *)(op + XHCI_USBSTS);
+        serial_write("xHCI: PORTSC=");
+        serial_write_hex(portsc);
+        serial_write(" CCS=");
+        serial_write_dec((portsc & XHCI_PORT_CCS) != 0u);
+        serial_write(" PED=");
+        serial_write_dec((portsc & XHCI_PORT_PED) != 0u);
+        serial_write(" PLS=");
+        serial_write_dec((portsc & XHCI_PORT_PLS_MASK) >> 5);
+        serial_write(" PP=");
+        serial_write_dec((portsc & XHCI_PORT_PP) != 0u);
+        serial_write(" speed=");
+        serial_write_dec((portsc & XHCI_PORT_SPEED_MASK) >>
+                         XHCI_PORT_SPEED_SHIFT);
+        serial_write(" USBSTS=");
+        serial_write_hex(usbsts);
+        serial_write(" HCH=");
+        serial_write_dec((usbsts & XHCI_STS_HCH) != 0u);
+        serial_write(" HCE=");
+        serial_write_dec((usbsts & XHCI_STS_HCE) != 0u);
+        serial_write("\r\n");
+    }
+    /* Last doorbell rung for this exact endpoint: proves which DCI the
+     * host kicked (doorbell value must equal the DCI). */
+    for (uint64_t i = xhc_db_hist_n, scanned = 0;
+         i > 0u && scanned < XHCI_DIAG_HIST; --i, ++scanned) {
+        const xhc_db_hist_t *h = &xhc_db_hist[(i - 1u) % XHCI_DIAG_HIST];
+        if (h->ctl == (uint8_t)ctl && h->slot == slot_id &&
+            h->ep == ep_id) {
+            serial_write("xHCI: last-db v=");
+            serial_write_hex(h->value);
+            serial_write(" t=");
+            serial_write_dec(h->t);
+            serial_write("\r\n");
+            break;
+        }
+    }
     xhc_dump_histories();
 }
 #else
