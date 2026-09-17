@@ -59,9 +59,10 @@ int xhci_reset_endpoint(size_t c, uint8_t s, uint8_t e) {
 void serial_write(const char *s) { (void)s; }
 void serial_write_hex(uint64_t v) { (void)v; }
 void serial_write_dec(uint64_t v) { (void)v; }
-uint64_t pmm_alloc_page_below(uint64_t m) { (void)m; return 0; }
+uint64_t pmm_alloc_page_below(uint64_t m) { (void)m; return 0x1000u; }
 void pmm_free_page(uint64_t p) { (void)p; }
-void *vmm_phys_ptr(uint64_t p) { (void)p; return 0; }
+static uint8_t stub_page[4096];
+void *vmm_phys_ptr(uint64_t p) { return p == 0x1000u ? stub_page : 0; }
 int xhci_slot_active(size_t c, uint8_t s) { (void)c; (void)s; return 0; }
 int block_register(void *d) { (void)d; return -1; }
 
