@@ -44,8 +44,10 @@ uint64_t xhc_ep0_emit(size_t ctl, xhci_slot_runtime_t *slot,
 }
 
 /* Physical address of a linear DMA buffer. Fails closed (0) when any page
- * is unmapped or the range is not physically contiguous, since a single
- * data TRB cannot describe discontiguous memory. */
+ * is unmapped, the range is not physically contiguous, or it spans a
+ * 64 KiB boundary (xHCI 4.11.7.1: one data TRB cannot; Linux splits such
+ * transfers, this driver aligns its buffers so the check only guards
+ * against future callers regressing it). */
 uint64_t xhc_dma_linear_pa(const void *buffer, uint64_t length) {
     uint64_t va;
     uint64_t pa;
@@ -67,6 +69,7 @@ uint64_t xhc_dma_linear_pa(const void *buffer, uint64_t length) {
             return 0;
         if (page == last) break;
     }
+    if (xhc_pa_crosses_64k(pa, length)) return 0;
     return pa;
 }
 
@@ -344,7 +347,10 @@ int xhci_enumerate_device(size_t controller, uint8_t slot_id,
                           rix_usb_endpoint_info_t *endpoints,
                           size_t endpoint_capacity, size_t *interface_count,
                           size_t *endpoint_count) {
-    uint8_t buf[64];
+    /* Static: enumerate runs to completion synchronously (worker and
+     * pre-scheduler settle never overlap), and a 64-byte stack buffer
+     * could straddle 64 KiB while this aligned one cannot. */
+    static uint8_t buf[64] __attribute__((aligned(64)));
     uint16_t actual = 0;
     int rc;
     uint8_t mps0;

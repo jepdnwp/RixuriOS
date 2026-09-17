@@ -59,15 +59,19 @@ static void klog_write_hex(uint64_t v) {
 }
 
 #define RIX_XHCI_CONFIG_CAPACITY 4096u
-static uint8_t xhci_configuration[RIX_XHCI_CONFIG_CAPACITY];
-static uint8_t xhci_hid_report[2048];
+/* Transfer buffers are aligned to their own size so none can straddle a
+ * 64 KiB boundary (xHCI 4.11.7.1 single-TRB rule; enforced by
+ * xhc_dma_linear_pa). A size-aligned object always fits in one 64 KiB
+ * page. */
+static uint8_t xhci_configuration[RIX_XHCI_CONFIG_CAPACITY] __attribute__((aligned(4096)));
+static uint8_t xhci_hid_report[2048] __attribute__((aligned(2048)));
 static rix_usb_interface_info_t xhci_interfaces[RIX_USB_MAX_INTERFACES];
 static rix_usb_endpoint_info_t xhci_endpoints[RIX_USB_MAX_ENDPOINTS];
 
 #define RIX_MAX_KEYBOARDS 4u
 typedef struct { uint8_t used; size_t controller; uint8_t slot; uint8_t endpoint; uint8_t report_id; uint8_t iface; } keyboard_info_t;
 static keyboard_info_t known_keyboards[RIX_MAX_KEYBOARDS];
-static uint8_t kbd_report_buf[64];
+static uint8_t kbd_report_buf[64] __attribute__((aligned(64)));
 static int xhci_enumerate_and_configure(size_t controller, const rix_xhci_device_t *device){
  rix_usb_device_descriptor_t usb_device;rix_usb_configuration_info_t configuration;
  size_t interface_count=0,endpoint_count=0;

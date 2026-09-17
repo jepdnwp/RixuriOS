@@ -112,7 +112,7 @@ int usb_hub_get_descriptor(size_t controller, uint8_t slot, void *buffer,
 
 int usb_hub_port_status(size_t controller, uint8_t slot, uint8_t port,
                         uint16_t *status, uint16_t *change) {
-    static uint8_t buf[4];
+    static uint8_t buf[4] __attribute__((aligned(4)));
     uint16_t actual = 0;
     int rc;
     if (!status || !change || port == 0u) return -1;

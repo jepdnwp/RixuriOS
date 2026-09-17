@@ -1077,6 +1077,17 @@ against real device behavior on every boot. A scripted-peer host test
 (stall-then-healthy) proves the retry state machine returns success
 with the tag advanced.
 
+64 KiB DMA boundary (xHCI 4.11.7.1, prime EP1 CC=4 suspect): one data
+TRB must not span a 64 KiB boundary; Linux splits such transfers,
+this driver keeps single-TRB TDs and aligns every transfer buffer to
+its own size instead (a size-aligned object always fits one page).
+xhc_dma_linear_pa now also rejects crossings fail-closed, and BOT
+CBW/CSW/data all move through fixed offsets of one DMA page (the old
+stack CBW/CSW could straddle too). The current build was lucky (nm
+shows no crossing), but any relink could push kbd_report_buf across —
+systematic, all slots, EP1-only, exactly the reported shape. Pinned by
+a boundary-math host test; QEMU HID + storage paths re-verified after.
+
 USB stick as root filesystem: the stick registers a block device
 (usb0..usb3) whose submit maps BIOs to single-sector BOT transfers
 (plus SYNCHRONIZE CACHE for flush) with per-call DMA staging, because

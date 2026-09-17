@@ -62,6 +62,20 @@
 #define XHCI_MMIO_READ32(base, off) (*(volatile uint32_t *)((base) + (off)))
 #define XHCI_MMIO_WRITE32(base, off, v) (*(volatile uint32_t *)((base) + (off)) = (v))
 
+/* Pure 64 KiB-boundary test for transfer buffers (xHCI 4.11.7.1: one
+ * data TRB must not span a 64 KiB boundary; Linux splits such transfers
+ * in queue_bulk_tx via TRB_MAX_BUFF_*. This driver keeps single-TRB TDs
+ * by design, so buffers must not cross instead — enforced by
+ * xhc_dma_linear_pa, guaranteed by aligning every transfer buffer to
+ * its own size). */
+static inline int xhc_pa_crosses_64k(uint64_t pa, uint64_t length) {
+    uint64_t end;
+    if (length == 0u) return 0;
+    if (pa > UINT64_MAX - (length - 1u)) return 1;
+    end = pa + length - 1u;
+    return (pa & ~0xffffULL) != (end & ~0xffffULL);
+}
+
 /* Transfer wait timeout code (see xhc_wait_transfer): the TD stays owned
  * by the controller, so callers must not orphan another TD on top of it. */
 #define XHCI_XFER_TIMEOUT (-100)

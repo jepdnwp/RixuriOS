@@ -43,7 +43,7 @@ static int usb_storage_transaction(size_t controller, uint8_t slot,
                                    int data_in);
 /* Single 512-byte staging sector (.bss image memory is physically
  * contiguous, satisfying the DMA linearity check). */
-static uint8_t sector_stage[USB_STORAGE_SECTOR];
+static uint8_t sector_stage[USB_STORAGE_SECTOR] __attribute__((aligned(512)));
 
 void usb_storage_put_be32(uint8_t *p, uint32_t v) {
     p[0] = (uint8_t)(v >> 24);
@@ -247,41 +247,47 @@ static int bulk_exact(size_t controller, uint8_t slot, uint8_t ep,
  * CAPACITY(8) and single-sector READ/WRITE/SYNC (512/0). Larger sizes
  * fail closed.
  *
- * DMA staging: transfer buffers come from callers that may hand stack
- * slices straddling a physical page boundary (the block cache does), so
- * the payload always moves through a freshly allocated DMA page. The
- * page is per-call, so this stays correct under SMP concurrency with no
- * new locks; transfers never yield, so no other task can interleave. */
+ * DMA staging: every wire buffer (CBW, payload, CSW) lives in one
+ * freshly allocated DMA page at fixed offsets (CBW@0, CSW@128,
+ * payload@512). Caller buffers may be stack slices straddling physical
+ * page or 64 KiB boundaries (the block cache hands exactly those), and
+ * the local CBW/CSW arrays are stack too — none of that can reach a
+ * TRB. The page is per-call, so this stays correct under SMP
+ * concurrency with no new locks; transfers never yield, so no other
+ * task can interleave. */
+#define BOT_STAGE_CBW 0u
+#define BOT_STAGE_CSW 128u
+#define BOT_STAGE_DATA 512u
 int usb_storage_command(size_t controller, uint8_t slot,
                         uint8_t interface_number, uint8_t bulk_in,
                         uint8_t bulk_out, uint32_t *tag, const uint8_t *cdb,
                         uint8_t cdb_len, void *data, uint32_t data_len,
                         int data_in) {
     uint64_t stage = 0;
-    uint8_t *xfer = (uint8_t *)data;
+    uint8_t *page = 0;
     int rc;
     if (!tag || !cdb || cdb_len == 0u || cdb_len > 16u ||
         interface_number >= 32u || bulk_in == 0u || bulk_out == 0u)
         return -1;
     if (data_len > USB_STORAGE_SECTOR) return -1;
     if (data_len != 0u && !data) return -1;
-    if (data_len != 0u) {
-        /* Below 4 GiB: safe for xHCIs without 64-bit addressing. */
-        stage = pmm_alloc_page_below(0x100000000ULL);
-        if (!stage) return -20;
-        xfer = (uint8_t *)vmm_phys_ptr(stage);
-        if (!xfer) {
-            pmm_free_page(stage);
-            return -20;
-        }
-        if (!data_in) __builtin_memcpy(xfer, data, data_len);
+    /* Below 4 GiB: safe for xHCIs without 64-bit addressing. A page can
+     * never straddle 64 KiB, so every offset below is TRB-safe. */
+    stage = pmm_alloc_page_below(0x100000000ULL);
+    if (!stage) return -20;
+    page = (uint8_t *)vmm_phys_ptr(stage);
+    if (!page) {
+        pmm_free_page(stage);
+        return -20;
     }
+    if (!data_in && data_len != 0u)
+        __builtin_memcpy(page + BOT_STAGE_DATA, data, data_len);
     rc = usb_storage_transaction(controller, slot, interface_number,
                                  bulk_in, bulk_out, tag, cdb, cdb_len,
-                                 xfer, data_len, data_in);
-    if (data_in && data_len != 0u && data)
-        __builtin_memcpy(data, xfer, data_len);
-    if (stage) pmm_free_page(stage);
+                                 page, data_len, data_in);
+    if (rc == 0 && data_in && data_len != 0u && data)
+        __builtin_memcpy(data, page + BOT_STAGE_DATA, data_len);
+    pmm_free_page(stage);
     return rc;
 }
 
@@ -289,10 +295,11 @@ static int usb_storage_transaction(size_t controller, uint8_t slot,
                                    uint8_t interface_number, uint8_t bulk_in,
                                    uint8_t bulk_out, uint32_t *tag,
                                    const uint8_t *cdb, uint8_t cdb_len,
-                                   uint8_t *xfer, uint32_t data_len,
+                                   uint8_t *page, uint32_t data_len,
                                    int data_in) {
-    uint8_t cbw[BOT_CBW_SIZE];
-    uint8_t csw[BOT_CSW_SIZE];
+    uint8_t *cbw = page + BOT_STAGE_CBW;
+    uint8_t *csw = page + BOT_STAGE_CSW;
+    uint8_t *xfer = page + BOT_STAGE_DATA;
     uint32_t my_tag;
     int rc;
     unsigned attempt;
@@ -300,9 +307,12 @@ static int usb_storage_transaction(size_t controller, uint8_t slot,
         uint16_t csw_actual = 0;
         uint16_t chunk;
         uint32_t done = 0;
+        unsigned i;
         my_tag = *tag + 1u;
         if (my_tag == 0u) my_tag = 1u;
         *tag = my_tag;
+        for (i = 0; i < BOT_CBW_SIZE; ++i) cbw[i] = 0;
+        for (i = 0; i < BOT_CSW_SIZE; ++i) csw[i] = 0;
         usb_storage_build_cbw(cbw, my_tag, data_len, data_in, 0,
                               cdb_len, cdb);
         rc = bulk_exact(controller, slot, bulk_out, cbw, BOT_CBW_SIZE, 0);
@@ -330,7 +340,6 @@ static int usb_storage_transaction(size_t controller, uint8_t slot,
             }
             done += chunk;
         }
-        for (unsigned i = 0; i < BOT_CSW_SIZE; ++i) csw[i] = 0;
         rc = xhci_bulk_transfer(controller, slot, bulk_in, csw,
                                 BOT_CSW_SIZE, &csw_actual);
         if (rc != 0) {
